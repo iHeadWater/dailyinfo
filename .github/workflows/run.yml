@@ -1,0 +1,36 @@
+name: Daily News Scraper
+
+on:
+  schedule:
+    - cron: '45 */4 * * *' # 每4小时运行一次，建议错峰设置
+  workflow_dispatch:      # 允许手动点击运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # 重要：允许脚本修改 history.json 后写回仓库
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Scraper
+        run: |
+          python scraper.py
+
+      - name: Commit and push history
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add history.json
+          git commit -m "Update read history [skip ci]" || exit 0
+          git push
