@@ -14,9 +14,10 @@ RSS_PATHS = [
 
 # 2. RSSHub 镜像池：如果主站 rsshub.app 访问不了，自动切换到镜像站
 MIRRORS = [
-    "https://rsshub.app", 
-    "https://rss.rssforever.com",
-    "https://rsshub.moeyy.cn"
+    "https://rsshub.app",
+    "https://rsshub.rssforever.com",
+    "https://rsshub.blog",
+    "https://rsshub.net"
 ]
 
 def fetch_with_retry():
