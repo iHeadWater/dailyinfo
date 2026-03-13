@@ -54,7 +54,7 @@ def main():
     # 注意：北京时间周一早上 8:00 对应 UTC 周一 0:00
     weekday = datetime.datetime.now().weekday()
     
-    if weekday == 4: 
+    if weekday == 0: 
         print("🚀 检测到今天是周一，正在汇总本周素材并生成周报...")
         
         # 读取池子里的内容
