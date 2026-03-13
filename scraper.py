@@ -82,4 +82,28 @@ def main():
         print(f"今天周{weekday+1}，仅完成素材入库，周一统一发布。")
 
 if __name__ == "__main__":
-    main()
+    # --- 【测试模式：全量强制运行】 ---
+    print("🚀 测试模式启动：正在强制抓取并同步...")
+    
+    # 1. 抓取逻辑（由于 history.json 之前可能记住了链接，
+    # 如果你想强制重抓这周所有，可以手动在 GitHub 删掉 history.json 再跑）
+    current_pool = fetch_and_pool()
+    
+    # 2. 无论今天周几，都强制触发发送
+    if not current_pool:
+        print("⚠️ 警告：池子仍然是空的，可能是 RSS 源没有匹配到关键字。")
+    else:
+        print(f"📦 当前池子共有 {len(current_pool)} 条素材，准备出货...")
+        
+        # 3. 生成报告
+        report = summarize_weekly(current_pool)
+        
+        # 4. 发送 Notion
+        bj_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime('%Y-%m-%d')
+        upload_to_notion(report, f"【测试发布】AI水文周报 | {bj_date}")
+        
+        # 5. 测试期间为了反复看效果，可以【暂时不清空】池子
+        # 等你觉得排版完美了，再把下面这行取消注释，或者手动改回正式版逻辑
+        # with open("weekly_pool.json", "w") as f: json.dump([], f)
+        
+        print("✨ 测试任务完成！请检查 Notion。")
