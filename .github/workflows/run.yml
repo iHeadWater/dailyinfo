@@ -2,14 +2,15 @@ name: Daily News Scraper
 
 on:
   schedule:
-    - cron: '*/20 * * * *' 
-  workflow_dispatch:        # 保留这个，方便你手动点按钮
+    # 每天北京时间 08:45 (UTC 00:45)
+    - cron: '45 0 * * *'
+  workflow_dispatch: 
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write     # 重要：允许脚本修改 history.json 后写回仓库
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,9 +21,8 @@ jobs:
           python-version: '3.10'
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          
+        run: pip install -r requirements.txt
+
       - name: Run Scraper
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
@@ -35,5 +35,5 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add history.json weekly_pool.json
-          git commit -m "Update history and pool [skip ci]" || exit 0
+          git commit -m "Update weekly pool [skip ci]" || exit 0
           git push
