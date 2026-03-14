@@ -116,28 +116,29 @@ def upload_to_notion(content, title):
     return res.status_code == 200
 
 if __name__ == "__main__":
-    print("🚀 《ai水文信息战》自动化引擎启动...")
+    # 1. 每天都会执行抓取并存入 weekly_pool.json
+    print("--- 每日素材采集开始 ---")
+    current_pool = fetch_and_pool() 
     
-    # 1. 抓取并汇总
-    articles = fetch_and_pool()
+    # 2. 获取北京时间判断周几
+    bj_time = datetime.datetime.utcnow() + datetime.timedelta(hours=8)
+    weekday = bj_time.weekday() # 0 是周一
     
-    # 2. 判断逻辑：测试期间我们只要运行就出货
-    # 等你测试好了，把下面这行改为 if datetime.datetime.now().weekday() == 0:
-    if True: 
-        print(f"📦 发现 {len(articles)} 条素材，正在生成并发布...")
-        report = summarize_weekly(articles)
-        
-        if report:
-            bj_date = (datetime.datetime.utcnow() + datetime.timedelta(hours=8)).strftime('%Y-%m-%d')
-            success = upload_to_notion(report, f"AI水文周报 | {bj_date} (创刊号)")
+    print(f"当前北京时间: {bj_time.strftime('%Y-%m-%d %H:%M')}, 星期{weekday+1}")
+
+    # 3. 只有周一 08:30 那次运行会进入发布逻辑
+    if weekday == 0: 
+        print("🚀 检测到周一发布日，正在生成周报...")
+        if current_pool:
+            report = summarize_weekly(current_pool)
+            success = upload_to_notion(report, f"AI水文周报 | {bj_time.strftime('%Y-%m-%d')}")
             
             if success:
-                print("✅ 同步成功！正在执行阅后即焚...")
-                # 只有发布成功才清空池子
-                with open("weekly_pool.json", "w", encoding='utf-8') as f: 
+                # 只有成功发布到 Notion 才清空池子
+                with open("weekly_pool.json", "w", encoding='utf-8') as f:
                     json.dump([], f)
-                print("🔥 池子已重置，等待下周素材。")
-            else:
-                print("❌ Notion 同步失败，请检查环境变量。")
+                print("🔥 本周素材池已阅后即焚，开启新一周循环。")
         else:
-            print("⚠️ 池子为空，本次任务无内容产出。")
+            print("⚠️ 池子是空的，无法生成周报。")
+    else:
+        print(f"今天星期{weekday+1}，仅完成素材采集。周一早上 08:30 准时交稿！")
