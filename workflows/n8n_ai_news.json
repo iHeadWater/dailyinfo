@@ -1,0 +1,207 @@
+{
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "1",
+      "name": "手动触发 (测试)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.rss2json.com/v1/api.json?rss_url=https://smolai.net/feed",
+        "options": {}
+      },
+      "id": "2",
+      "name": "获取最新 AI 资讯",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.items;\nif (!items || items.length === 0) return [];\n// 只取最新的一篇文章做深度解读\nconst latestArticle = items[0];\nreturn [{ json: { url: latestArticle.link, title: latestArticle.title } }];"
+      },
+      "id": "3",
+      "name": "提取最新一篇文章",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://r.jina.ai/' + $json.url }}",
+        "options": {}
+      },
+      "id": "4",
+      "name": "Jina 抓取全文",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================\n// LLM 配置：根据需求选择模型和供应商\n// 修改下面的配置来切换不同的模型\n// ============================================\n\nconst llmConfig = {\n  // 当前支持的模型配置\n  kimi: {\n    provider: \"kimi\",\n    apiUrl: \"https://api.moonshot.cn/v1/chat/completions\",\n    model: \"moonshot-v1-8k\",\n    // credential 名称（需要在 n8n UI 中创建对应的 credentials）\n    credentialName: \"llmApiKey\"\n  },\n  deepseek: {\n    provider: \"deepseek\",\n    apiUrl: \"https://api.deepseek.com/v1/chat/completions\",\n    model: \"deepseek-chat\",\n    credentialName: \"llmApiKey\"\n  },\n  openai: {\n    provider: \"openai\",\n    apiUrl: \"https://api.openai.com/v1/chat/completions\",\n    model: \"gpt-4o-mini\",\n    credentialName: \"llmApiKey\"\n  }\n};\n\n// 选择当前使用的模型：kimi | deepseek | openai\nconst currentModel = llmConfig.kimi;\n\nreturn [{\n  json: {\n    apiUrl: currentModel.apiUrl,\n    model: currentModel.model,\n    credentialName: currentModel.credentialName,\n    provider: currentModel.provider\n  }\n}];"
+      },
+      "id": "config",
+      "name": "LLM 配置",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.apiUrl }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $credentials.llmApiKey.key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "={{ $json.model }}"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [\n  {\n    \"role\": \"system\",\n    \"content\": \"你是一位顶级的 AI 领域资深主编。请阅读下文，深度重写为微信公众号长文。必须包含：1. 核心观点(50字内) 2. 技术细节剖析 3. 行业影响与 AI for Science 交叉应用分析。使用 Markdown 格式。\"\n  },\n  {\n    \"role\": \"user\",\n    \"content\": $('Jina 抓取全文').first().json.data\n  }\n] }}"
+            },
+            {
+              "name": "temperature",
+              "value": 0.7
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5",
+      "name": "LLM 深度重写",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [800, 300],
+      "notes": "使用 $credentials.llmApiKey.key 引用安全存储的 API Key"
+    },
+    {
+      "parameters": {
+        "jsCode": "const date = new Date().toISOString().split('T')[0];\n// LLM 返回的文章内容\nconst article = $input.first().json.choices[0].message.content;\n\n// 获取使用的模型名称（用于标注）\nconst modelName = $('LLM 配置').first().json.model || 'unknown';\n\nreturn [{\n  json: {\n    fileName: `/data_output/dailyinfo_ai_${date}.md`,\n    model: modelName,\n    generatedAt: new Date().toISOString()\n  },\n  binary: {\n    data: {\n      data: Buffer.from(article).toString('base64'),\n      mimeType: 'text/markdown',\n      fileName: `dailyinfo_ai_${date}.md`\n    }\n  }\n}];"
+      },
+      "id": "6",
+      "name": "准备存盘数据",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "={{ $json.fileName }}",
+        "dataPropertyName": "data",
+        "options": {
+          "append": false
+        }
+      },
+      "id": "7",
+      "name": "保存 Markdown",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "手动触发 (测试)": {
+      "main": [
+        [
+          {
+            "node": "获取最新 AI 资讯",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "获取最新 AI 资讯": {
+      "main": [
+        [
+          {
+            "node": "提取最新一篇文章",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "提取最新一篇文章": {
+      "main": [
+        [
+          {
+            "node": "Jina 抓取全文",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM 配置": {
+      "main": [
+        [
+          {
+            "node": "LLM 深度重写",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jina 抓取全文": {
+      "main": [
+        [
+          {
+            "node": "LLM 深度重写",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM 深度重写": {
+      "main": [
+        [
+          {
+            "node": "准备存盘数据",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "准备存盘数据": {
+      "main": [
+        [
+          {
+            "node": "保存 Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "credentials": {
+    "llmApiKey": {
+      "id": "1",
+      "name": "LLM API Key"
+    }
+  }
+}

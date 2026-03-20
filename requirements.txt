@@ -1,3 +1,0 @@
-feedparser
-requests
-openai
