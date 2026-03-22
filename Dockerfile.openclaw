@@ -1,0 +1,17 @@
+FROM openclaw/gateway:latest
+
+USER root
+
+RUN apt-get update && apt-get install -y \
+    golang \
+    git \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV GOPATH=/opt/go
+ENV PATH=$PATH:/opt/go/bin
+
+RUN go install github.com/Hyaxia/blogwatcher/cmd/blogwatcher@latest
+
+USER openclaw

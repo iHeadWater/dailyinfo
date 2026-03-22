@@ -1,7 +1,7 @@
 <!--
  * @Author: Wenyu Ouyang
  * @Date: 2026-03-20
- * @LastEditTime: 2026-03-20
+ * @LastEditTime: 2026-03-22
  * @LastEditors: Wenyu Ouyang
  * @Description: DailyInfo: 面向 AI for Science 的自动化科研信息聚合系统
  * @FilePath: /dailyinfo/README.md
@@ -10,33 +10,98 @@
 
 # DailyInfo 🌊
 
-基于 n8n + Jina Reader + Kimi API 构建的本地化 AI 资讯深度精读流水线。
+基于 n8n + OpenClaw + Jina Reader + Kimi API 构建的本地化 AI 资讯深度精读流水线。
 
-## 🏗️ 架构设计 (解耦模式)
+## 🏗️ 架构设计 (统一容器化编排)
 
-1. **数据抓取**：n8n 定时读取特定信源（如 smolai）的 RSS。
-2. **全文解析**：调用 `r.jina.ai` 穿透反爬虫机制，抓取干净的 Markdown 全文。
-3. **深度重写**：调用 Kimi API（Moonshot），将全文重写为微信公众号级别的深度结构化长文。
-4. **本地落盘**：n8n 将最终长文保存至 `~/.openclaw/workspace/n8n_data/dailyinfo_ai_YYYY-MM-DD.md`。
-5. **前台分发**：由 OpenClaw 直接读取本地文件并推送到 Slack 的 `#deeplearning` 频道。
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Docker Compose Wrapper                        │
+│  ┌──────────────────┐         ┌──────────────────────────┐    │
+│  │    n8n Service    │         │   openclaw-gateway       │    │
+│  │   (5678:5678)     │ ←────→  │   (18789:18789)          │    │
+│  │                   │  共享   │                          │    │
+│  │  定时任务/工作流   │ Workspace│  前台交互中枢/技能调度器  │    │
+│  └────────┬─────────┘         └────────────┬─────────────┘    │
+│           │                                │                   │
+└───────────┼────────────────────────────────┼───────────────────┘
+            │                                │
+    ┌───────▼───────────────────────────────▼───────┐
+    │         ~/.openclaw/workspace                  │
+    │   ├── n8n_data/      (AI News 原始与精读稿)   │
+    │   └── ...                                       │
+    └─────────────────────────────────────────────────┘
+```
+
+1. **OpenClaw 前台交互中枢**：作为技能调度与前台交互的核心，统一管理 Skills（如 blogwatcher），并负责与 Slack 等渠道的数据分发。
+2. **数据抓取**：n8n 定时读取特定信源 RSS，调用 Jina Reader 抓取全文。
+3. **深度重写**：调用 Kimi API，将全文重写为微信公众号级别的深度结构化长文。
+4. **本地落盘**：n8n 将最终长文保存至共享 Workspace。
+5. **前台分发**：OpenClaw 直接读取共享 Workspace 文件并推送到 Slack。
+
+**数据协同**：n8n 和 OpenClaw 通过共享的 `~/.openclaw/workspace` 目录实现无缝数据流转，全程无需额外传输层。
 
 ## 📁 仓库目录结构
 
 ```
 dailyinfo/
 ├── README.md                          # 项目说明书
+├── docker-compose.yml                 # 统一编排配置（n8n + OpenClaw）
+├── Dockerfile.openclaw                 # OpenClaw 定制镜像构建文件
 ├── prompts/
 │   └── ai_news_rewriter.txt          # Kimi 的"主编"灵魂提示词
-└── workflows/
-    ├── n8n_ai_news.json              # n8n 的自动化工作流图纸
-    └── credentials-template.md        # API Key 安全存储配置指南
+├── workflows/
+│   ├── n8n_ai_news.json              # n8n 的自动化工作流图纸
+│   └── credentials-template.md        # API Key 安全存储配置指南
+└── openclaw_skills/
+    └── blogwatcher/
+        └── SKILL.md                   # blogwatcher 技能定义
 ```
 
 ## 🚀 部署指南
 
-1. 在本地启动 n8n 容器，并确保挂载了 OpenClaw 的 `workspace` 目录。
-2. 将 `workflows/n8n_ai_news.json` 导入 n8n。
-3. 按照 `workflows/credentials-template.md` 创建 LLM API Key 凭证。
+### 一键启动（推荐）
+
+```bash
+docker-compose up -d --build
+```
+
+此命令将：
+- 构建定制化的 `my-openclaw-gateway` 镜像（包含 Go 环境和 blogwatcher 工具）
+- 启动 n8n 服务（端口 5678）
+- 启动 OpenClaw Gateway 服务（端口 18789）
+- 自动配置两者共享的 bridge 网络
+
+### 验证服务状态
+
+```bash
+# 检查容器运行状态
+docker-compose ps
+
+# 查看日志
+docker-compose logs -f n8n
+docker-compose logs -f openclaw-gateway
+```
+
+### 访问服务
+
+- **n8n 工作台**：http://localhost:5678
+- **OpenClaw Gateway**：http://localhost:18789
+
+### 导入 n8n 工作流
+
+1. 访问 http://localhost:5678
+2. 点击左侧菜单 → **Workflows** → **Import from File**
+3. 选择 `workflows/n8n_ai_news.json`
+
+详细 API Key 配置参见 [credentials-template.md](workflows/credentials-template.md)
+
+### 环境清理
+
+```bash
+docker-compose down      # 停止服务（保留数据卷）
+docker-compose down -v   # 停止服务并删除数据卷
+```
 
 ## 🧩 三大核心业务板块 (Core Modules)
 
@@ -44,77 +109,13 @@ dailyinfo/
 
 **业务流向**：n8n 监控 smolai RSS → Jina Reader 抓全文 → Kimi 深度重写 → 保存 Markdown → OpenClaw 推 Slack
 
-**技术亮点**：使用 Jina Reader API 穿透反爬，用 Kimi 生成公众号级别的深度解读。
-
-#### 🔧 部署步骤
-
-**Step 1: 准备输出目录**
-
-```bash
-mkdir -p ~/.openclaw/workspace/n8n_data
-```
-
-**Step 2: 导入 n8n 工作流**
-
-1. 启动 n8n：`docker run -d --name n8n -p 5678:5678 -v ~/.openclaw/workspace:/home/node/workspace n8nio/n8n`
-2. 访问 http://localhost:5678
-3. 点击左侧菜单 → **Workflows** → **Import from File**
-4. 选择 `workflows/n8n_ai_news.json`
-
-**Step 3: 配置 LLM API Key（安全方式）**
-
-> ⚠️ 工作流使用 n8n Credentials 安全存储 API Key，**不再明文写入配置文件**。
-
-1. 访问 http://localhost:5678 → **Settings** → **Credentials**
-2. 点击 **Add Credential** → 选择 **HTTP Query Auth**
-3. 填写：
-   - **Name**: `LLM API Key`
-   - **Query Parameter Name**: `key`
-   - **Query Parameter Value**: `你的API密钥`
-4. 保存后，打开工作流 → 双击 **"LLM 深度重写"** 节点 → 选择 `LLM API Key` 凭证
-
-详细步骤参见 [credentials-template.md](workflows/credentials-template.md)
-
-**Step 4: 切换模型（可选）**
-
-工作流支持多模型切换。编辑 **"LLM 配置"** 节点中的 `currentModel`：
-
-```javascript
-const currentModel = llmConfig.kimi;     // Kimi (默认)
-// const currentModel = llmConfig.deepseek; // DeepSeek
-// const currentModel = llmConfig.openai;   // OpenAI GPT
-```
-
-| 模型 | Model Name | 特点 |
-|------|------------|------|
-| Kimi | `moonshot-v1-8k` | 默认推荐 |
-| DeepSeek | `deepseek-chat` | 性价比高 |
-| OpenAI | `gpt-4o-mini` | 需科学上网 |
-
-**Step 5: 配置定时触发（可选）**
-
-1. 在工作流中添加 **Schedule** 节点（替代手动触发）
-2. 设置 Cron 表达式，如每天早上 8:00：`0 8 * * *`
-
-**Step 6: 修改保存路径（可选）**
-
-在 **"准备存盘数据"** 节点的 `jsCode` 中，修改 `fileName` 路径：
-```javascript
-const fileName = `/data_output/dailyinfo_ai_${date}.md`;
-// 实际路径: ~/.openclaw/workspace/data_output/dailyinfo_ai_2026-03-20.md
-```
-
-#### 📝 Prompt 管理
-
-`prompts/ai_news_rewriter.txt` 是 LLM 的"主编灵魂提示词"。
-
-**使用方式**：将文件内容完整复制到 n8n 工作流中 **"LLM 深度重写"** 节点的 `messages[0].content` 位置。
-
-**迭代优化**：直接编辑该文件，修改后再复制到 n8n 即可。提示词决定输出质量，可根据输出效果持续调优。
+**技术亮点**：使用 Jina Reader API 穿透反爬，用 Kimi 生成公众号级别的深度解读。OpenClaw 可通过 blogwatcher Skill 自动调动扫描任务，增强内容发现能力。
 
 ### 模块二：文献巡航与人机协同中枢 (Literature Review & Fetching)
 
 **业务流向**：n8n 定时聚合顶刊 RSS → 大模型翻译摘要 → Slack 推送 → 人工挑选 → OpenClaw 调动 Skill 下载 → 智能精读
+
+**OpenClaw Skill 介入**：OpenClaw 可根据用户指令，自动调用文献下载 Skill，完成从筛选到下载的全链路自动化。
 
 ### 模块三：流域孪生数据与气象播报 (Digital Twin Data Push)
 
@@ -123,7 +124,9 @@ const fileName = `/data_output/dailyinfo_ai_${date}.md`;
 ## 🛠️ 技术栈选型 (Tech Stack)
 
 - **自动化引擎**：n8n (Dockerized)
+- **交互中枢**：OpenClaw Gateway + Skills (Dockerized)
 - **全文抓取**：Jina Reader API
 - **LLM 重写**：Kimi API (Moonshot)
-- **交互中枢**：OpenClaw + Slack
-- **持久化**：本地文件系统 (Markdown)
+- **内容监控**：blogwatcher (内置于 OpenClaw 镜像)
+- **消息分发**：Slack
+- **持久化**：本地文件系统 (共享 Workspace)

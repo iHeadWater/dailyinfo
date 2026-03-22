@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: dailyinfo_n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - ~/.openclaw/workspace:/home/node/workspace
+    restart: unless-stopped
+    networks:
+      - dailyinfo_net
+
+  openclaw-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.openclaw
+    image: my-openclaw-gateway:latest
+    container_name: dailyinfo_openclaw
+    ports:
+      - "18789:18789"
+    volumes:
+      - ~/.openclaw:/home/openclaw/.openclaw
+    restart: unless-stopped
+    networks:
+      - dailyinfo_net
+
+networks:
+  dailyinfo_net:
+    driver: bridge
