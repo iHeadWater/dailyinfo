@@ -26,3 +26,10 @@ build/
 # 临时文件
 *.tmp
 *.log
+
+# 环境变量（防止 API Key 泄露）
+.env
+
+# 本地数据卷
+workspace/
+data/

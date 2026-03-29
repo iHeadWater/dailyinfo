@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "defaults": {
+    "model": "anthropic/claude-3.5-sonnet",
+    "lookback_hours": 24,
+    "prompt_template": "one_line_summary",
+    "freshrss_user": "owen"
+  },
+  "feeds": [
+    {
+      "name": "nature",
+      "display_name": "Nature",
+      "feed_id": 2,
+      "category": "papers",
+      "enabled": true
+    }
+  ],
+  "prompt_templates": {
+    "one_line_summary": "请为以下 {count} 篇 {display_name} 最新文章各生成一句话中文摘要，突出核心发现或贡献：\n\n{article_list}\n\n请严格按以下 Markdown 格式返回：\n\n## 📚 {display_name} 今日简报 ({date}) - {count}篇文章\n\n1. **文章标题**\n   > 一句话中文摘要\n\n2. **文章标题**\n   > 一句话中文摘要\n\n...\n\n最后添加一段 **🔭 Today's Highlight** 总结今日最值得关注的研究方向。"
+  },
+  "slack_channels": {
+    "papers": "#paper",
+    "ai_news": "#deeplearning"
+  }
+}

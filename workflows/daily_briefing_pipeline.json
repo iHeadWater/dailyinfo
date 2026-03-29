@@ -1,0 +1,286 @@
+{
+  "name": "Daily Briefing Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24,
+              "triggerAtHour": 6
+            }
+          ]
+        },
+        "timezone": "Asia/Shanghai"
+      },
+      "id": "cron-trigger",
+      "name": "Daily 6AM Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst configPath = '/home/node/config/feeds.json';\n\ntry {\n  const raw = fs.readFileSync(configPath, 'utf-8');\n  const config = JSON.parse(raw);\n  const defaults = config.defaults || {};\n  const templates = config.prompt_templates || {};\n\n  const enabledFeeds = (config.feeds || []).filter(f => f.enabled);\n\n  return enabledFeeds.map(feed => ({\n    json: {\n      name: feed.name,\n      display_name: feed.display_name,\n      feed_id: feed.feed_id,\n      category: feed.category,\n      model: feed.model || defaults.model || 'anthropic/claude-3.5-sonnet',\n      lookback_hours: feed.lookback_hours || defaults.lookback_hours || 24,\n      prompt_template: templates[feed.prompt_template || defaults.prompt_template] || templates['one_line_summary'],\n      freshrss_user: feed.freshrss_user || defaults.freshrss_user || 'owen'\n    }\n  }));\n} catch (err) {\n  return [{ json: { error: 'Failed to read feeds.json: ' + err.message, feeds: [] } }];\n}"
+      },
+      "id": "read-config",
+      "name": "Read feeds.json",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        },
+        "batchSize": 1
+      },
+      "id": "split-batches",
+      "name": "Loop Over Feeds",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sqlite3 = require('sqlite3').verbose();\nconst feed = $input.first().json;\nconst dbPath = `/freshrss-data/users/${feed.freshrss_user}/db.sqlite`;\n\nreturn new Promise((resolve) => {\n  const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {\n    if (err) {\n      resolve([{ json: { ...feed, entries: [], error: err.message } }]);\n      return;\n    }\n  });\n\n  const cutoffSeconds = Math.floor(Date.now() / 1000) - feed.lookback_hours * 60 * 60;\n\n  db.all(\n    'SELECT title, link, date FROM entry WHERE id_feed = ? AND date > ? ORDER BY date DESC',\n    [feed.feed_id, cutoffSeconds],\n    (err, rows) => {\n      if (err) {\n        resolve([{ json: { ...feed, entries: [], error: err.message } }]);\n      } else {\n        resolve([{ json: { ...feed, entries: rows || [] } }]);\n      }\n      db.close();\n    }\n  );\n});"
+      },
+      "id": "query-db",
+      "name": "Query FreshRSS DB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-articles",
+              "leftValue": "={{ $json.entries.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        }
+      },
+      "id": "check-articles",
+      "name": "Has Articles?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const feed = $input.first().json;\nconst entries = feed.entries;\nconst date = new Date().toISOString().split('T')[0];\n\nconst articleList = entries.map((e, i) => `${i + 1}. ${e.title}`).join('\\n');\n\nlet prompt = feed.prompt_template\n  .replace(/\\{count\\}/g, entries.length.toString())\n  .replace(/\\{display_name\\}/g, feed.display_name)\n  .replace(/\\{article_list\\}/g, articleList)\n  .replace(/\\{date\\}/g, date);\n\nreturn [{\n  json: {\n    ...feed,\n    prompt: prompt,\n    date: date,\n    count: entries.length\n  }\n}];"
+      },
+      "id": "build-prompt",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://github.com/OuyangWenyu/dailyinfo"
+            },
+            {
+              "name": "X-Title",
+              "value": "DailyInfo Briefing Pipeline"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.model }}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "call-openrouter",
+      "name": "Call OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1450, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const feed = $('Build Prompt').first().json;\nconst response = $input.first().json;\nconst content = response.choices[0].message.content;\nconst date = feed.date;\nconst category = feed.category;\nconst name = feed.name;\n\nconst filePath = `/home/node/workspace/briefings/${category}/${name}_briefing_${date}.md`;\n\n// Ensure directory exists\nconst fs = require('fs');\nconst dir = `/home/node/workspace/briefings/${category}`;\nif (!fs.existsSync(dir)) {\n  fs.mkdirSync(dir, { recursive: true });\n}\n\nreturn [{\n  json: {\n    filePath: filePath,\n    content: content,\n    feed_name: name,\n    category: category,\n    date: date\n  }\n}];"
+      },
+      "id": "prepare-save",
+      "name": "Prepare Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst fs = require('fs');\n\nfs.writeFileSync(data.filePath, data.content, 'utf-8');\n\nreturn [{\n  json: {\n    success: true,\n    filePath: data.filePath,\n    feed_name: data.feed_name,\n    category: data.category,\n    date: data.date\n  }\n}];"
+      },
+      "id": "save-file",
+      "name": "Save Briefing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1850, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const feed = $input.first().json;\n// Log skipped feed (no articles)\nreturn [{\n  json: {\n    skipped: true,\n    feed_name: feed.name,\n    display_name: feed.display_name,\n    reason: 'No articles in lookback window'\n  }\n}];"
+      },
+      "id": "skip-log",
+      "name": "Skip (No Articles)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 400]
+    }
+  ],
+  "connections": {
+    "Daily 6AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read feeds.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read feeds.json": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Feeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Feeds": {
+      "main": [
+        [
+          {
+            "node": "Query FreshRSS DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query FreshRSS DB": {
+      "main": [
+        [
+          {
+            "node": "Has Articles?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Articles?": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (No Articles)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "Prepare Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Save": {
+      "main": [
+        [
+          {
+            "node": "Save Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Briefing": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Feeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip (No Articles)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Feeds",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}

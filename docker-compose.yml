@@ -1,13 +1,23 @@
-version: "3.8"
-
 services:
   n8n:
     image: n8nio/n8n:latest
     container_name: dailyinfo_n8n
     ports:
       - "5678:5678"
+    env_file:
+      - .env
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=production
+      - GENERIC_TIMEZONE=Asia/Shanghai
+      - N8N_ENV_VARS_IN_DEC=true  # 👈 关键：允许工作流读取环境变量
     volumes:
+      - ~/.n8n:/home/node/.n8n
       - ~/.openclaw/workspace:/home/node/workspace
+      - ~/.freshrss/data:/freshrss-data:ro
+      - ./config:/home/node/config:ro
     restart: unless-stopped
     networks:
       - dailyinfo_net
@@ -21,7 +31,21 @@ services:
     ports:
       - "18789:18789"
     volumes:
-      - ~/.openclaw:/home/openclaw/.openclaw
+      - ~/.openclaw:/home/node/.openclaw
+      - ~/.openclaw/credentials/notion/api_key:/home/node/.config/notion/api_key:ro
+    restart: unless-stopped
+    networks:
+      - dailyinfo_net
+
+  freshrss:
+    image: freshrss/freshrss:latest
+    container_name: dailyinfo_freshrss
+    ports:
+      - "8081:80"
+    volumes:
+      - ~/.freshrss/data:/var/www/FreshRSS/data
+    environment:
+      - TZ=Asia/Shanghai
     restart: unless-stopped
     networks:
       - dailyinfo_net
