@@ -59,16 +59,16 @@
 └─────────────────────────┼───────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│           📤 推送层：OpenClaw + macOS LaunchAgent（独立于 n8n）      │
+│           📤 推送层：OpenClaw Cron（容器内定时，独立于 n8n）         │
 │  ┌──────────────────────────────────────────────────────────┐      │
-│  │  每 5 分钟扫描 briefings/ 目录                            │      │
+│  │  OpenClaw 内置 cron 定时任务（07:00 / 07:05 CST）        │      │
 │  │                                                           │      │
-│  │  发现新文件 → OpenClaw 推送到 Slack：                     │      │
+│  │  发现新文件 → OpenClaw Agent 推送到 Slack：               │      │
 │  │    • briefings/papers/*   → #paper                        │      │
 │  │    • briefings/ai_news/*  → #deeplearning                 │      │
 │  │    • 超长内容自动分段推送                                 │      │
 │  │                                                           │      │
-│  │  推送后归档到 pushed/<category>/ + 更新 .push.log         │      │
+│  │  推送后归档到 pushed/<category>/                           │      │
 │  └──────────────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -87,7 +87,7 @@
 | 层 | 职责 | 不做什么 |
 |----|------|---------|
 | **n8n** | 查数据 → AI 处理 → 存文件 | ❌ 不推送 Slack |
-| **OpenClaw + LaunchAgent** | 扫描文件 → 推送 Slack → 归档 | ❌ 不调用 AI |
+| **OpenClaw Cron** | 扫描文件 → 推送 Slack → 归档 | ❌ 不调用 AI |
 
 ---
 
@@ -130,7 +130,6 @@ dailyinfo/
     ├── pushed/                           # 推送后归档
     │   ├── papers/
     │   └── ai_news/
-    └── .push.log                         # 推送日志
 ```
 
 **数据流生命周期**：
@@ -266,33 +265,38 @@ docker compose ps
 4. 激活工作流：
    - 点击右上角 "Activate" 按钮
 
-#### 3.3 配置定时推送（macOS）
+#### 3.3 定时推送（OpenClaw Cron，无需额外配置）
 
-推送由 OpenClaw + macOS LaunchAgent 实现，与 n8n 工作流完全解耦。
+推送由 OpenClaw 容器内置的 cron 系统实现，与 n8n 工作流完全解耦。**无需 macOS LaunchAgent**。
 
-```bash
-# 创建 LaunchAgent plist 文件（需手动创建，代码库中未包含）
-# 文件路径：~/Library/LaunchAgents/com.dailyinfo.push.plist
-# plist 中配置：每 5 分钟执行推送脚本
+cron 任务已预配置在 `~/.openclaw/cron/jobs.json` 中：
 
-# 加载 LaunchAgent
-launchctl load ~/Library/LaunchAgents/com.dailyinfo.push.plist
-
-# 验证
-launchctl list | grep dailyinfo
-```
+| 任务 | 时间（CST） | 目录 | Slack 频道 |
+|------|-------------|------|-----------|
+| `papers-daily-push` | 07:00 | `briefings/papers/` | #paper |
+| `ainews-daily-push` | 07:05 | `briefings/ai_news/` | #deeplearning |
 
 **推送逻辑**：
 ```
-扫描 workspace/briefings/ 下各 category 子目录
+OpenClaw Agent 扫描 briefings/<category>/ 目录
     ↓
-对比 .push.log，发现新文件
+发现 .md 文件 → 读取内容
     ↓
-通过 OpenClaw 推送到对应 Slack 频道：
-  - briefings/papers/*   → #paper
-  - briefings/ai_news/*  → #deeplearning
+推送到对应 Slack 频道（超长自动分段）
     ↓
-归档到 pushed/<category>/ + 更新 .push.log
+推送成功后归档到 pushed/<category>/
+（推送失败则保留原位，下次重试）
+```
+
+```bash
+# 查看 cron 任务状态
+docker exec dailyinfo_openclaw openclaw cron list
+
+# 手动触发测试
+docker exec dailyinfo_openclaw openclaw cron run --expect-final --timeout 120000 <job-id>
+
+# 查看执行历史
+docker exec dailyinfo_openclaw openclaw cron runs --id <job-id> --limit 5
 ```
 
 ---
@@ -336,22 +340,23 @@ launchctl list | grep dailyinfo
 🔭 **Today's Highlight**: 今日最值得关注的研究方向是...
 ```
 
-### 流程二：自动推送（独立于 n8n）
+### 流程二：自动推送（OpenClaw Cron，独立于 n8n）
 
-**触发**：macOS LaunchAgent，每 5 分钟检查
+**触发**：OpenClaw 内置 cron，每天 07:00 / 07:05（Asia/Shanghai）
 
 **逻辑**：
 ```
-扫描 workspace/briefings/{papers,ai_news}/ 下的新文件
+OpenClaw Agent 扫描 briefings/<category>/ 下的 .md 文件
     ↓
 读取简报内容
     ↓
-OpenClaw 推送到对应 Slack 频道
-  - papers/*   → #paper
-  - ai_news/*  → #deeplearning
+推送到对应 Slack 频道
+  - papers/*   → #paper (C07N60S2M9B)
+  - ai_news/*  → #deeplearning (C0562HGN6LV)
   - 超长消息自动分段
     ↓
-更新 .push.log + 归档到 pushed/
+推送成功 → 归档到 pushed/<category>/
+推送失败 → 保留原位等待下次重试
 ```
 
 ---
@@ -405,17 +410,21 @@ ls -lt ~/.openclaw/workspace/briefings/ai_news/
 cat ~/.openclaw/workspace/briefings/papers/nature_briefing_2026-03-29.md
 ```
 
-### Slack 推送
+### OpenClaw Cron 推送
 
 ```bash
-# 查看推送日志
-tail -f ~/.openclaw/workspace/.push.log
+# 查看 cron 任务列表
+docker exec dailyinfo_openclaw openclaw cron list
 
-# 停止自动推送
-launchctl unload ~/Library/LaunchAgents/com.dailyinfo.push.plist
+# 查看最近执行记录
+docker exec dailyinfo_openclaw openclaw cron runs --id <job-id> --limit 5
 
-# 启动自动推送
-launchctl load ~/Library/LaunchAgents/com.dailyinfo.push.plist
+# 手动触发推送（调试用）
+docker exec dailyinfo_openclaw openclaw cron run --expect-final --timeout 120000 <job-id>
+
+# 禁用/启用某个推送任务
+docker exec dailyinfo_openclaw openclaw cron disable <job-id>
+docker exec dailyinfo_openclaw openclaw cron enable <job-id>
 ```
 
 ---
@@ -479,9 +488,9 @@ launchctl load ~/Library/LaunchAgents/com.dailyinfo.push.plist
 
 **检查点：**
 1. briefings/ 目录下是否有新文件：`ls -lt ~/.openclaw/workspace/briefings/papers/`
-2. LaunchAgent 是否运行：`launchctl list | grep dailyinfo`
-3. 推送日志：`tail ~/.openclaw/workspace/.push.log`
-4. OpenClaw Slack 集成是否正常
+2. OpenClaw cron 任务状态：`docker exec dailyinfo_openclaw openclaw cron list`
+3. 最近推送记录：`docker exec dailyinfo_openclaw openclaw cron runs --id <job-id> --limit 3`
+4. OpenClaw 是否连接 Slack：`docker compose logs openclaw-gateway | tail -20`
 
 ### Q: 容器重启后数据丢失？
 
@@ -499,7 +508,7 @@ docker inspect dailyinfo_freshrss | grep -A 10 "Mounts"
 - **自动化引擎**：n8n (Docker + env 变量注入)
 - **AI 模型**：OpenRouter (Claude 3.5 Sonnet / GPT-4o)
 - **推送中枢**：OpenClaw Gateway (Socket Mode Slack)
-- **定时推送**：macOS LaunchAgent
+- **定时推送**：OpenClaw Cron（容器内，无需宿主机调度）
 - **容器编排**：Docker Compose
 - **配置管理**：feeds.json (配置驱动，零代码扩展)
 

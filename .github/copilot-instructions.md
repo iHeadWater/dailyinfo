@@ -4,9 +4,9 @@
 
 **DailyInfo** 是一个面向 **AI for Science** 研究者的学术情报自动聚合与推送系统。
 
-核心流程：**FreshRSS 采集 → n8n AI 摘要生成（存文件） → OpenClaw Slack 推送**
+核心流程：**FreshRSS 采集 → n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Slack**
 
-设计原则：**配置驱动**（feeds.json）+ **职责分离**（n8n 只管生成文件，OpenClaw 只管推送）
+设计原则：**配置驱动**（feeds.json）+ **职责分离**（n8n 只管生成文件，OpenClaw Cron 只管推送）
 
 ---
 
@@ -19,7 +19,7 @@ FreshRSS（统一 RSS 采集）
     ↓ SQLite DB (~/.freshrss/data/users/owen/db.sqlite)
 n8n（处理层 —— 只生成文件，不推送 Slack）
     ↓ Markdown 文件 (workspace/briefings/<category>/)
-OpenClaw + macOS LaunchAgent（推送层 —— 独立于 n8n）
+OpenClaw Cron（推送层 —— 容器内定时，独立于 n8n）
     ↓ Slack #paper / #deeplearning
 ```
 
@@ -74,10 +74,13 @@ dailyinfo/
 - **步骤**：读取 feeds.json → 循环每个 enabled feed → 查 FreshRSS SQLite → 有文章则 AI 摘要 → 保存到 `briefings/<category>/<name>_briefing_<date>.md`
 - **不做**：不推送 Slack（由 OpenClaw 负责）
 
-### Slack 推送（macOS LaunchAgent + OpenClaw）
-- **触发**：每 5 分钟轮询
-- **逻辑**：扫描 briefings/ → 新文件通过 OpenClaw 推送 → 归档到 pushed/
-- **频道映射**：papers → #paper，ai_news → #deeplearning
+### Slack 推送（OpenClaw Cron，容器内定时）
+- **触发**：OpenClaw 内置 cron（07:00 papers / 07:05 ai_news，Asia/Shanghai）
+- **逻辑**：扫描 briefings/<category>/ → 读取 .md 文件 → 推送到 Slack → 成功后归档到 pushed/
+- **频道映射**：papers → #paper (C07N60S2M9B)，ai_news → #deeplearning (C0562HGN6LV)
+- **失败处理**：推送失败则保留原位，下次 cron 重试
+- **配置文件**：`~/.openclaw/cron/jobs.json`
+- **CLI 管理**：`docker exec dailyinfo_openclaw openclaw cron list/run/runs/disable/enable`
 
 ---
 
@@ -87,7 +90,7 @@ dailyinfo/
 - **工作流编排**：n8n（Cron + Code + HTTP Request 节点）
 - **AI/LLM**：OpenRouter API（Claude 3.5 Sonnet）
 - **Slack 推送**：OpenClaw Gateway（Socket Mode）
-- **调度**：n8n Cron（容器内）+ macOS LaunchAgent（宿主机）
+- **调度**：n8n Cron（06:00 生成简报）+ OpenClaw Cron（07:00 推送到 Slack）
 - **配置管理**：feeds.json（配置驱动，零代码扩展）
 
 ---
