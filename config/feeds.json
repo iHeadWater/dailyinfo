@@ -13,6 +13,27 @@
       "feed_id": 2,
       "category": "papers",
       "enabled": true
+    },
+    {
+      "name": "nature_communications",
+      "display_name": "Nature Communications",
+      "feed_id": 3,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "scientific_data",
+      "display_name": "Scientific Data",
+      "feed_id": 8,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "science_advances",
+      "display_name": "Science Advances",
+      "feed_id": 16,
+      "category": "papers",
+      "enabled": true
     }
   ],
   "prompt_templates": {
