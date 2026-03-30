@@ -145,13 +145,24 @@ OpenClaw 读取 → Slack 推送                                   [推送]
 
 ## 📋 配置文件：config/feeds.json
 
-这是系统的核心配置，所有数据源在此定义。目前已配置 **11 个 RSS 源**：
+这是系统的核心配置，所有数据源在此定义。目前已配置 **35 个 RSS 源**（33 papers + 2 ai_news）：
 
-| 类别 | 名称 | feed_id |
-|------|------|---------|
-| papers | Nature, Nature Communications, Scientific Data, Science Advances | 2, 3, 8, 16 |
-| papers | Science News, Nature Machine Intelligence, Nature Reviews Physics | 6, 9, 10 |
-| papers | PNAS, Science | 13, 15 |
+| 类别 | 期刊/来源 | feed_id |
+|------|-----------|---------|
+| papers | Nature, Nature Communications, Scientific Data | 2, 3, 8 |
+| papers | Science, Science Advances, Science News | 15, 16, 6 |
+| papers | PNAS | 13 |
+| papers | Nature Machine Intelligence, Nature Reviews Physics | 9, 10 |
+| papers | Nature Sustainability, Nature Geoscience, Nature Climate Change | 18, 19, 21 |
+| papers | Nature Reviews Earth & Environment | 20 |
+| papers | Nature Water | 34 |
+| papers | AIES, BAMS | 22, 23 |
+| papers | ESSD（暂时无文章，Copernicus RSS bug） | 24 |
+| papers | GMD, NHESS | 25, 26 |
+| papers | JAMES, Earth and Space Science, GRL, Reviews of Geophysics, Earth's Future | 27–31 |
+| papers | Remote Sensing of Environment, Global and Planetary Change | 32, 33 |
+| papers | HESS, Journal of Hydrometeorology (JHM), Water Resources Research | 35, 36, 37 |
+| papers | Hydrological Processes, Water Research, Advances in Water Resources, Journal of Hydrology | 38–41 |
 | ai_news | SmolAI News (`lookback_hours: 48`) | 17 |
 | ai_news | arXiv CS.AI（分批：10篇/批 × 5批） | 7 |
 
@@ -215,6 +226,8 @@ OpenClaw 读取 → Slack 推送                                   [推送]
 | `max_articles_per_batch` | 分批处理时每批文章数（不设则不分批） | 不分批 |
 | `max_batches` | 最多生成几批（与上一字段配合使用） | `10` |
 
+> **高量期刊建议设置批处理**：Elsevier 期刊（Water Research、Journal of Hydrology、RSE 等）可能单日发布 15-100 篇，建议设置 `max_articles_per_batch: 15, max_batches: 2`，避免超大 prompt 导致 API 错误或费用激增。
+
 **分批文件命名**：设置 `max_articles_per_batch` 后，每批生成独立文件：
 ```
 arxiv_cs_ai_briefing_2026-03-30_batch1.md
@@ -273,13 +286,17 @@ docker compose ps
 
 1. 选择 **SQLite** 数据库
 2. 创建管理员账号（用户名需与 `feeds.json` 中的 `freshrss_user` 一致，默认 `owen`）
-3. 添加 RSS 订阅并记录每个 feed 的 `feed_id`（当前已订阅的源见 `config/feeds.json`）：
-   - Nature: `https://www.nature.com/nature.rss`
-   - Nature Communications: `https://www.nature.com/ncomms.rss`
-   - Science: `https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science`
-   - PNAS: `https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=PNAS`
-   - arXiv CS.AI: `https://rss.arxiv.org/rss/cs.AI`
-   - SmolAI News: `https://news.smol.ai/rss.xml`
+3. 添加 RSS 订阅并记录每个 feed 的 `feed_id`（当前已订阅的源见 `config/feeds.json`）。
+   完整 RSS URL 列表（35 个源）：
+   - Nature 系列：`https://www.nature.com/nature.rss`、`https://www.nature.com/ncomms.rss`、`https://www.nature.com/sdata.rss`、`https://www.nature.com/natmachintell.rss`、`https://www.nature.com/natrevphys.rss`、`https://www.nature.com/natsustain.rss`、`https://www.nature.com/ngeo.rss`、`https://www.nature.com/natrevearthenviron.rss`、`https://www.nature.com/nclimate.rss`、`https://www.nature.com/natwater.rss`
+   - Science 系列：`https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science`、`https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv`、`https://www.science.org/rss/news_current.xml`
+   - PNAS：`https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=PNAS`
+   - Copernicus：`https://gmd.copernicus.org/xml/rss2_0.xml`、`https://nhess.copernicus.org/articles/xml/rss2_0.xml`、`https://essd.copernicus.org/articles/xml/rss2_0.xml`（当前有 XML bug）、`https://hydrol-earth-syst-sci.net/xml/rss2_0.xml`
+   - AGU/Wiley：`https://agupubs.onlinelibrary.wiley.com/feed/19422466/most-recent`（JAMES）及各 `onlinelibrary.wiley.com/rss/journal/` 地址
+   - Elsevier ScienceDirect：`https://rss.sciencedirect.com/publication/science/` 系列
+   - AMS：`https://journals.ametsoc.org/journalissuetocrss/journals/` 系列
+   - arXiv CS.AI：`https://rss.arxiv.org/rss/cs.AI`
+   - SmolAI News：`https://news.smol.ai/rss.xml`
 4. 将 `feed_id` 填入 `config/feeds.json`
 
 #### 3.2 n8n（自动化引擎）
