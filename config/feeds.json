@@ -36,12 +36,56 @@
       "enabled": true
     },
     {
+      "name": "science_news",
+      "display_name": "Science News",
+      "feed_id": 6,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "nature_machine_intelligence",
+      "display_name": "Nature Machine Intelligence",
+      "feed_id": 9,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "nature_reviews_physics",
+      "display_name": "Nature Reviews Physics",
+      "feed_id": 10,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "pnas",
+      "display_name": "PNAS",
+      "feed_id": 13,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "science",
+      "display_name": "Science",
+      "feed_id": 15,
+      "category": "papers",
+      "enabled": true
+    },
+    {
       "name": "smolai_news",
       "display_name": "SmolAI News",
       "feed_id": 17,
       "category": "ai_news",
       "enabled": true,
       "lookback_hours": 48
+    },
+    {
+      "name": "arxiv_cs_ai",
+      "display_name": "arXiv CS.AI",
+      "feed_id": 7,
+      "category": "ai_news",
+      "enabled": true,
+      "max_articles_per_batch": 10,
+      "max_batches": 5
     }
   ],
   "prompt_templates": {

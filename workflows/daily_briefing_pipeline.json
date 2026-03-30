@@ -18,7 +18,10 @@
       "name": "Daily 6AM Trigger",
       "type": "n8n-nodes-base.cron",
       "typeVersion": 1,
-      "position": [250, 300]
+      "position": [
+        250,
+        300
+      ]
     },
     {
       "parameters": {
@@ -28,7 +31,10 @@
       "name": "Read feeds.json",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [450, 300]
+      "position": [
+        450,
+        300
+      ]
     },
     {
       "parameters": {
@@ -41,7 +47,10 @@
       "name": "Loop Over Feeds",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [650, 300]
+      "position": [
+        650,
+        300
+      ]
     },
     {
       "parameters": {
@@ -51,7 +60,10 @@
       "name": "Query FreshRSS DB",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [850, 300]
+      "position": [
+        850,
+        300
+      ]
     },
     {
       "parameters": {
@@ -78,17 +90,23 @@
       "name": "Has Articles?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1050, 300]
+      "position": [
+        1050,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const feed = $input.first().json;\nconst entries = feed.entries;\nconst date = new Date().toISOString().split('T')[0];\n\nconst articleList = entries.map((e, i) => `${i + 1}. ${e.title}`).join('\\n');\n\nlet prompt = feed.prompt_template\n  .replace(/\\{count\\}/g, entries.length.toString())\n  .replace(/\\{display_name\\}/g, feed.display_name)\n  .replace(/\\{article_list\\}/g, articleList)\n  .replace(/\\{date\\}/g, date);\n\nreturn [{\n  json: {\n    ...feed,\n    prompt: prompt,\n    date: date,\n    count: entries.length\n  }\n}];"
+        "jsCode": "const feed = $input.first().json;\nconst entries = feed.entries;\nconst date = new Date().toISOString().split('T')[0];\n\nconst maxPerBatch = feed.max_articles_per_batch || null;\nconst maxBatches = feed.max_batches || 10;\n\nif (!maxPerBatch) {\n  // No batching — original behavior\n  const articleList = entries.map((e, i) => `${i + 1}. ${e.title}`).join('\\n');\n  let prompt = feed.prompt_template\n    .replace(/\\{count\\}/g, entries.length.toString())\n    .replace(/\\{display_name\\}/g, feed.display_name)\n    .replace(/\\{article_list\\}/g, articleList)\n    .replace(/\\{date\\}/g, date);\n  return [{ json: { ...feed, prompt, date, count: entries.length, batch_index: null, total_batches: 1 } }];\n}\n\n// Batching mode: split into chunks of maxPerBatch\nconst batches = [];\nfor (let i = 0; i < entries.length && batches.length < maxBatches; i += maxPerBatch) {\n  batches.push(entries.slice(i, i + maxPerBatch));\n}\n\nreturn batches.map((batchEntries, idx) => {\n  const articleList = batchEntries.map((e, i) => `${i + 1}. ${e.title}`).join('\\n');\n  let prompt = feed.prompt_template\n    .replace(/\\{count\\}/g, batchEntries.length.toString())\n    .replace(/\\{display_name\\}/g, feed.display_name)\n    .replace(/\\{article_list\\}/g, articleList)\n    .replace(/\\{date\\}/g, date);\n  return {\n    json: {\n      ...feed,\n      prompt,\n      date,\n      count: batchEntries.length,\n      batch_index: idx + 1,\n      total_batches: batches.length\n    }\n  };\n});"
       },
       "id": "build-prompt",
       "name": "Build Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1250, 200]
+      "position": [
+        1250,
+        200
+      ]
     },
     {
       "parameters": {
@@ -125,17 +143,23 @@
       "name": "Call OpenRouter",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
-      "position": [1450, 200]
+      "position": [
+        1450,
+        200
+      ]
     },
     {
       "parameters": {
-        "jsCode": "const feed = $('Build Prompt').first().json;\nconst response = $input.first().json;\nconst content = response.choices[0].message.content;\nconst date = feed.date;\nconst category = feed.category;\nconst name = feed.name;\n\nconst filePath = `/home/node/workspace/briefings/${category}/${name}_briefing_${date}.md`;\n\n// Ensure directory exists\nconst fs = require('fs');\nconst dir = `/home/node/workspace/briefings/${category}`;\nif (!fs.existsSync(dir)) {\n  fs.mkdirSync(dir, { recursive: true });\n}\n\nreturn [{\n  json: {\n    filePath: filePath,\n    content: content,\n    feed_name: name,\n    category: category,\n    date: date\n  }\n}];"
+        "jsCode": "// Use .item (not .first()) to get the paired Build Prompt item for this batch\nconst feed = $('Build Prompt').item.json;\nconst response = $input.first().json;\nconst content = response.choices[0].message.content;\nconst date = feed.date;\nconst category = feed.category;\nconst name = feed.name;\nconst batchIndex = feed.batch_index;\n\n// Add batch suffix for batched feeds (e.g. arxiv_cs_ai_briefing_2026-03-30_batch1.md)\nconst batchSuffix = batchIndex !== null ? `_batch${batchIndex}` : '';\nconst filePath = `/home/node/workspace/briefings/${category}/${name}_briefing_${date}${batchSuffix}.md`;\n\nconst fs = require('fs');\nconst dir = `/home/node/workspace/briefings/${category}`;\nif (!fs.existsSync(dir)) {\n  fs.mkdirSync(dir, { recursive: true });\n}\n\nreturn [{\n  json: {\n    filePath: filePath,\n    content: content,\n    feed_name: name,\n    category: category,\n    date: date,\n    batch_index: batchIndex\n  }\n}];"
       },
       "id": "prepare-save",
       "name": "Prepare Save",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1650, 200]
+      "position": [
+        1650,
+        200
+      ]
     },
     {
       "parameters": {
@@ -145,7 +169,10 @@
       "name": "Save Briefing",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1850, 200]
+      "position": [
+        1850,
+        200
+      ]
     },
     {
       "parameters": {
@@ -155,7 +182,10 @@
       "name": "Skip (No Articles)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1250, 400]
+      "position": [
+        1250,
+        400
+      ]
     }
   ],
   "connections": {
@@ -282,5 +312,6 @@
   },
   "staticData": null,
   "tags": [],
-  "pinData": {}
+  "pinData": {},
+  "id": "daily-briefing-pipeline"
 }
