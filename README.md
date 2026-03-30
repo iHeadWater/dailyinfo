@@ -145,7 +145,17 @@ OpenClaw 读取 → Slack 推送                                   [推送]
 
 ## 📋 配置文件：config/feeds.json
 
-这是系统的核心配置，所有数据源在此定义。
+这是系统的核心配置，所有数据源在此定义。目前已配置 **11 个 RSS 源**：
+
+| 类别 | 名称 | feed_id |
+|------|------|---------|
+| papers | Nature, Nature Communications, Scientific Data, Science Advances | 2, 3, 8, 16 |
+| papers | Science News, Nature Machine Intelligence, Nature Reviews Physics | 6, 9, 10 |
+| papers | PNAS, Science | 13, 15 |
+| ai_news | SmolAI News (`lookback_hours: 48`) | 17 |
+| ai_news | arXiv CS.AI（分批：10篇/批 × 5批） | 7 |
+
+**配置示例**：
 
 ```json
 {
@@ -163,6 +173,15 @@ OpenClaw 读取 → Slack 推送                                   [推送]
       "feed_id": 2,
       "category": "papers",
       "enabled": true
+    },
+    {
+      "name": "arxiv_cs_ai",
+      "display_name": "arXiv CS.AI",
+      "feed_id": 7,
+      "category": "ai_news",
+      "enabled": true,
+      "max_articles_per_batch": 10,
+      "max_batches": 5
     }
   ]
 }
@@ -193,6 +212,16 @@ OpenClaw 读取 → Slack 推送                                   [推送]
 | `lookback_hours` | 查询多少小时内的文章 | `24` |
 | `prompt_template` | 使用的提示词模板 key | `one_line_summary` |
 | `freshrss_user` | FreshRSS 用户名 | `owen` |
+| `max_articles_per_batch` | 分批处理时每批文章数（不设则不分批） | 不分批 |
+| `max_batches` | 最多生成几批（与上一字段配合使用） | `10` |
+
+**分批文件命名**：设置 `max_articles_per_batch` 后，每批生成独立文件：
+```
+arxiv_cs_ai_briefing_2026-03-30_batch1.md
+arxiv_cs_ai_briefing_2026-03-30_batch2.md
+...
+```
+OpenClaw 推送时逐文件发送，天然间隔，适合 arXiv 等高频更新源。
 
 ---
 
@@ -244,11 +273,13 @@ docker compose ps
 
 1. 选择 **SQLite** 数据库
 2. 创建管理员账号（用户名需与 `feeds.json` 中的 `freshrss_user` 一致，默认 `owen`）
-3. 添加 RSS 订阅并记录每个 feed 的 `feed_id`：
-   - Nature: `https://feeds.nature.com/nature/rss/current`
+3. 添加 RSS 订阅并记录每个 feed 的 `feed_id`（当前已订阅的源见 `config/feeds.json`）：
+   - Nature: `https://www.nature.com/nature.rss`
+   - Nature Communications: `https://www.nature.com/ncomms.rss`
    - Science: `https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science`
    - PNAS: `https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=PNAS`
    - arXiv CS.AI: `https://rss.arxiv.org/rss/cs.AI`
+   - SmolAI News: `https://news.smol.ai/rss.xml`
 4. 将 `feed_id` 填入 `config/feeds.json`
 
 #### 3.2 n8n（自动化引擎）
@@ -384,16 +415,24 @@ docker compose down
 ### FreshRSS 管理
 
 ```bash
-# 手动刷新 RSS
+# 手动刷新所有 RSS 订阅
 docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/actualize-user.php --user owen
 
-# 查看某个 feed 的文章
-docker exec dailyinfo_freshrss sqlite3 /var/www/FreshRSS/data/users/owen/db.sqlite \
-  "SELECT title FROM entry WHERE id_feed = 2 ORDER BY date DESC LIMIT 5"
+# 查看某个 feed 的文章（通过 n8n 容器，因 FreshRSS 容器无 sqlite3）
+docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
+const sqlite3 = require('sqlite3');
+const db = new sqlite3.Database('/freshrss-data/users/owen/db.sqlite');
+db.all('SELECT title FROM entry WHERE id_feed=2 ORDER BY date DESC LIMIT 5',
+  (err, rows) => { rows.forEach(r => console.log(r.title)); db.close(); });
+"
 
-# 查看所有 feed_id
-docker exec dailyinfo_freshrss sqlite3 /var/www/FreshRSS/data/users/owen/db.sqlite \
-  "SELECT id, name FROM feed"
+# 查看所有 feed_id 和文章数
+docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
+const sqlite3 = require('sqlite3');
+const db = new sqlite3.Database('/freshrss-data/users/owen/db.sqlite');
+db.all('SELECT f.id, f.name, COUNT(e.id) as n FROM feed f LEFT JOIN entry e ON e.id_feed=f.id GROUP BY f.id',
+  (err, rows) => { rows.forEach(r => console.log(r.id, r.name, r.n)); db.close(); });
+"
 ```
 
 ### n8n 工作流
