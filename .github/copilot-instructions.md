@@ -6,21 +6,26 @@
 
 核心流程：**FreshRSS 采集 → n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Slack**
 
-设计原则：**配置驱动**（feeds.json）+ **职责分离**（n8n 只管生成文件，OpenClaw 只管推送）
+另有独立的**技术趋势流水线**：**n8n 直接调用 GitHub/HuggingFace API → AI 摘要 → 推送到 Slack #code**
+
+设计原则：**配置驱动**（feeds.json / scrapers.json）+ **职责分离**（n8n 只管生成文件，OpenClaw 只管推送）
 
 ---
 
 ## 架构（三层 + 配置）
 
 ```
-config/feeds.json（配置中心，定义所有数据源）
-    ↓
-FreshRSS（统一 RSS 采集）
-    ↓ SQLite DB (~/.freshrss/data/users/owen/db.sqlite)
+config/feeds.json（RSS 配置中心，定义所有 RSS 数据源）
+config/scrapers.json（API 配置中心，GitHub + HuggingFace）
+     ↓
+FreshRSS（统一 RSS 采集） / n8n 直接 API 调用
+     ↓ SQLite DB / API 响应
 n8n（处理层 —— 只生成文件，不推送 Slack）
-    ↓ Markdown 文件 (workspace/briefings/<category>/)
+  工作流 1: daily_briefing_pipeline.json（06:00，RSS → 学术简报）
+  工作流 2: code_trending_pipeline.json（06:15，API → 技术趋势）
+     ↓ Markdown 文件 (workspace/briefings/<category>/)
 OpenClaw Cron（推送层 —— 容器内定时，独立于 n8n）
-    ↓ Slack #paper / #deeplearning
+     ↓ Slack #paper / #deeplearning / #code
 ```
 
 ---
@@ -42,9 +47,11 @@ dailyinfo/
 ├── docker-compose.yml                      # 服务编排入口
 ├── Dockerfile.openclaw                     # 自定义 OpenClaw 镜像
 ├── config/
-│   └── feeds.json                          # 📋 数据源配置（核心，35 个源）
+│   ├── feeds.json                          # 📋 RSS 数据源配置（35 个源）
+│   └── scrapers.json                       # 📋 API 数据源配置（GitHub + HuggingFace）
 ├── workflows/
-│   ├── daily_briefing_pipeline.json        # 统一工作流（n8n 导入用）
+│   ├── daily_briefing_pipeline.json        # n8n 工作流：RSS 学术简报（06:00）
+│   ├── code_trending_pipeline.json         # n8n 工作流：技术趋势简报（06:15）
 │   └── credentials-template.md             # n8n Credentials 配置指南
 └── prompts/
     └── ai_news_rewriter.txt                # AI 深度改写提示词（预留）
@@ -59,6 +66,17 @@ dailyinfo/
 每个 feed 必须包含：`name`, `display_name`, `feed_id`, `category`, `enabled`。
 字段顺序：`version` → `defaults` → `feeds` → `prompt_templates` → `slack_channels`。
 `category` 只允许：`papers` 或 `ai_news`。
+
+## scrapers.json 配置规范
+
+API 类数据源配置（非 RSS），目前有 **4 个源**（均为 `code` 类别）。
+
+每个 source 包含：`name`, `display_name`, `category`, `enabled`, `api_url`, `response_path`。
+`category` 目前为 `code`，对应 `briefings/code/` 输出目录和 Slack #code 频道。
+
+**GitHub Search API**：URL 中 `{two_days_ago}` 模板变量由 n8n 工作流在运行时替换。
+**HuggingFace API**：排序参数必须用 `sort=trendingScore&direction=-1`（不是 `sort=trending`）。
+**GitHub Token**（可选）：在 `.env` 中设置 `GITHUB_TOKEN` 可提升 API 限制从 60 次/小时到 5000 次/小时。
 
 **可覆盖字段**（在 feed 级别覆盖 defaults）：
 - `lookback_hours`：查询多少小时内的文章（默认 24）
@@ -76,7 +94,9 @@ dailyinfo/
 
 ---
 
-## n8n 工作流（daily_briefing_pipeline.json）
+## n8n 工作流
+
+### daily_briefing_pipeline.json（RSS 学术简报）
 
 - **触发**：每日 06:00（Asia/Shanghai）
 - **节点链**：`Read feeds.json` → `Loop Over Feeds` → `Query FreshRSS DB` → `Has Articles?` → `Build Prompt` → `Call OpenRouter` → `Prepare Save` → `Save Briefing`
@@ -84,12 +104,19 @@ dailyinfo/
 - **输出文件**：`/home/node/workspace/briefings/<category>/<name>_briefing_<date>[_batch<N>].md`
 - **n8n 导入要求**：workflow JSON 必须有顶层 `"id"` 字段，否则报 `SQLITE_CONSTRAINT: NOT NULL`
 
+### code_trending_pipeline.json（技术趋势简报）
+
+- **触发**：每日 06:15（Asia/Shanghai）
+- **节点链**：`Read scrapers.json` → `Loop Over Sources` → `Fetch API` → `Has Items?` → `Build Prompt` → `Call OpenRouter` → `Save Briefing`
+- **URL 模板**：`{two_days_ago}` 在运行时替换为 2 天前的日期（YYYY-MM-DD）
+- **输出文件**：`/home/node/workspace/briefings/code/code_trending_<date>.md`
+
 ---
 
 ## OpenClaw Cron（推送层）
 
-- **任务**：`papers-daily-push`（07:00）→ #paper；`ainews-daily-push`（07:05）→ #deeplearning
-- **Slack 频道**：#paper = `C07N60S2M9B`，#deeplearning = `C0562HGN6LV`
+- **任务**：`papers-daily-push`（07:00）→ #paper；`ainews-daily-push`（07:05）→ #deeplearning；`code-daily-push`（07:10）→ #code
+- **Slack 频道**：#paper = `C07N60S2M9B`，#deeplearning = `C0562HGN6LV`，#code = `C0228MSP884`
 - **关键陷阱**：`delivery.mode` 必须为 `"none"`，否则报错 "Delivering to Slack requires target"。**不要直接编辑** `~/.openclaw/cron/jobs.json`（重启会覆盖），必须用 CLI：
   ```bash
   docker exec dailyinfo_openclaw openclaw cron edit <job-id> --no-deliver
@@ -165,6 +192,7 @@ n8n 通过 `N8N_ENV_VARS_IN_DEC=true` + `env_file` 注入；工作流用 `{{ $en
 ~/.openclaw/workspace/
     briefings/papers/                # n8n 输出：论文简报
     briefings/ai_news/               # n8n 输出：AI 新闻简报
+    briefings/code/                  # n8n 输出：技术趋势简报
     pushed/                          # 推送后归档
 ```
 
