@@ -71,6 +71,34 @@
       "enabled": true
     },
     {
+      "name": "nature_sustainability",
+      "display_name": "Nature Sustainability",
+      "feed_id": 18,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "nature_geoscience",
+      "display_name": "Nature Geoscience",
+      "feed_id": 19,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "nature_reviews_earth_environ",
+      "display_name": "Nature Reviews Earth & Environment",
+      "feed_id": 20,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "nature_climate_change",
+      "display_name": "Nature Climate Change",
+      "feed_id": 21,
+      "category": "papers",
+      "enabled": true
+    },
+    {
       "name": "smolai_news",
       "display_name": "SmolAI News",
       "feed_id": 17,
