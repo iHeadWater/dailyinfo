@@ -34,6 +34,14 @@
       "feed_id": 16,
       "category": "papers",
       "enabled": true
+    },
+    {
+      "name": "smolai_news",
+      "display_name": "SmolAI News",
+      "feed_id": 17,
+      "category": "ai_news",
+      "enabled": true,
+      "lookback_hours": 48
     }
   ],
   "prompt_templates": {
