@@ -16,16 +16,17 @@
 
 ```
 config/feeds.json（RSS 配置中心，定义所有 RSS 数据源）
-config/scrapers.json（API 配置中心，GitHub + HuggingFace）
+config/scrapers.json（API/抓取配置中心，GitHub + HuggingFace + DUT 4 站点）
      ↓
-FreshRSS（统一 RSS 采集） / n8n 直接 API 调用
-     ↓ SQLite DB / API 响应
+FreshRSS（统一 RSS 采集） / n8n 直接 API 调用 / n8n HTTP 抓取
+     ↓ SQLite DB / API 响应 / HTML
 n8n（处理层 —— 只生成文件，不推送 Slack）
   工作流 1: daily_briefing_pipeline.json（06:00，RSS → 学术简报）
   工作流 2: code_trending_pipeline.json（06:15，API → 技术趋势）
+  工作流 3: university_news_pipeline.json（06:30，HTML 抓取 → 高校资讯）
      ↓ Markdown 文件 (workspace/briefings/<category>/)
 OpenClaw Cron（推送层 —— 容器内定时，独立于 n8n）
-     ↓ Slack #paper / #deeplearning / #code
+     ↓ Slack #paper / #deeplearning / #code / #resource
 ```
 
 ---
@@ -48,10 +49,11 @@ dailyinfo/
 ├── Dockerfile.openclaw                     # 自定义 OpenClaw 镜像
 ├── config/
 │   ├── feeds.json                          # 📋 RSS 数据源配置（35 个源）
-│   └── scrapers.json                       # 📋 API 数据源配置（GitHub + HuggingFace）
+│   └── scrapers.json                       # 📋 API/抓取数据源配置（GitHub + HuggingFace + DUT 4 站点）
 ├── workflows/
 │   ├── daily_briefing_pipeline.json        # n8n 工作流：RSS 学术简报（06:00）
 │   ├── code_trending_pipeline.json         # n8n 工作流：技术趋势简报（06:15）
+│   ├── university_news_pipeline.json       # n8n 工作流：大工院所资讯（06:30）
 │   └── credentials-template.md             # n8n Credentials 配置指南
 └── prompts/
     └── ai_news_rewriter.txt                # AI 深度改写提示词（预留）
@@ -69,14 +71,23 @@ dailyinfo/
 
 ## scrapers.json 配置规范
 
-API 类数据源配置（非 RSS），目前有 **4 个源**（均为 `code` 类别）。
+API/抓取类数据源配置（非 RSS），目前有 **8 个源**：
+- `code` 类别（4 个）：GitHub Search API + HuggingFace 模型/数据集/Spaces
+- `resource` 类别（4 个）：大工各院所官网（HTML 抓取）
 
-每个 source 包含：`name`, `display_name`, `category`, `enabled`, `api_url`, `response_path`。
-`category` 目前为 `code`，对应 `briefings/code/` 输出目录和 Slack #code 频道。
+每个 source 包含：`name`, `display_name`, `category`, `enabled`, `source_type`（api/scrape）。
 
 **GitHub Search API**：URL 中 `{two_days_ago}` 模板变量由 n8n 工作流在运行时替换。
 **HuggingFace API**：排序参数必须用 `sort=trendingScore&direction=-1`（不是 `sort=trending`）。
 **GitHub Token**（可选）：在 `.env` 中设置 `GITHUB_TOKEN` 可提升 API 限制从 60 次/小时到 5000 次/小时。
+
+**DUT 网站 HTML 选择器（已验证）**：
+- `dlut_news_academic`（news.dlut.edu.cn/xsky.htm）：`ul.nylistn > li.bg-mask`
+- `dlut_sche`（sche.dlut.edu.cn）：`div.sublist ul > li`（含 `span.date`）
+- `dlut_futureschool`（futureschool.dlut.edu.cn）：`div.list ul > li`（含 `div.time`, `div.name`）
+- `dlut_scidep`（scidep.dlut.edu.cn/zytz.htm）：`ul.tz-ul > li`（含 `div.tz-ul-date`, `div.tz-ul-tt`）
+
+**注意**：这些站点 HTML 结构各异，university_news_pipeline.json 用 JS Code 节点正则解析，勿改用 HTML Extract 节点。
 
 **可覆盖字段**（在 feed 级别覆盖 defaults）：
 - `lookback_hours`：查询多少小时内的文章（默认 24）
@@ -111,12 +122,20 @@ API 类数据源配置（非 RSS），目前有 **4 个源**（均为 `code` 类
 - **URL 模板**：`{two_days_ago}` 在运行时替换为 2 天前的日期（YYYY-MM-DD）
 - **输出文件**：`/home/node/workspace/briefings/code/code_trending_<date>.md`
 
+### university_news_pipeline.json（大工院所资讯）
+
+- **触发**：每日 06:30（Asia/Shanghai）
+- **节点链**：`Read scrapers.json (category=resource)` → `Loop Over Sources` → `Fetch HTML (HTTP Request)` → `Parse HTML (Code/JS)` → `Has Items?` → `Build Prompt` → `Call OpenRouter` → `Save Briefing`
+- **HTML 解析**：各站点结构不同，Code 节点用正则表达式提取 title/date/url
+- **输出文件**：`/home/node/workspace/briefings/resource/{site_name}_{date}.md`
+- **n8n 导入要求**：POST 时只传 `name/nodes/connections/settings`，不含 `id`（与 daily_briefing_pipeline 不同）
+
 ---
 
 ## OpenClaw Cron（推送层）
 
-- **任务**：`papers-daily-push`（07:00）→ #paper；`ainews-daily-push`（07:05）→ #deeplearning；`code-daily-push`（07:10）→ #code
-- **Slack 频道**：#paper = `C07N60S2M9B`，#deeplearning = `C0562HGN6LV`，#code = `C0228MSP884`
+- **任务**：`papers-daily-push`（07:00）→ #paper；`ainews-daily-push`（07:05）→ #deeplearning；`code-daily-push`（07:10）→ #code；`resource-daily-push`（07:15）→ #resource
+- **Slack 频道**：#paper = `C07N60S2M9B`，#deeplearning = `C0562HGN6LV`，#code = `C0228MSP884`，#resource = `C022CTEDJJ0`
 - **关键陷阱**：`delivery.mode` 必须为 `"none"`，否则报错 "Delivering to Slack requires target"。**不要直接编辑** `~/.openclaw/cron/jobs.json`（重启会覆盖），必须用 CLI：
   ```bash
   docker exec dailyinfo_openclaw openclaw cron edit <job-id> --no-deliver
@@ -193,6 +212,7 @@ n8n 通过 `N8N_ENV_VARS_IN_DEC=true` + `env_file` 注入；工作流用 `{{ $en
     briefings/papers/                # n8n 输出：论文简报
     briefings/ai_news/               # n8n 输出：AI 新闻简报
     briefings/code/                  # n8n 输出：技术趋势简报
+    briefings/resource/              # n8n 输出：大工院所资讯
     pushed/                          # 推送后归档
 ```
 

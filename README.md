@@ -39,6 +39,9 @@
 │  │  API 直接抓取（n8n code_trending_pipeline）               │      │
 │  │  • GitHub Search API（近 2 天 stars>20 新项目）           │      │
 │  │  • HuggingFace API（趋势模型/数据集/Spaces）             │      │
+│  │                                                           │      │
+│  │  网页抓取（n8n university_news_pipeline）                 │      │
+│  │  • 大连理工大学各院所官网（SSR HTML，JS 解析）            │      │
 │  └──────────────────────┬───────────────────────────────────┘      │
 │                         │ SQLite / API 响应                          │
 └─────────────────────────┼───────────────────────────────────────────┘
@@ -54,13 +57,19 @@
 │  │  每天 06:15 → 读取 scrapers.json → 循环每个 API 源：      │      │
 │  │    调用 GitHub/HF API → AI 摘要 → 保存 briefings/code/   │      │
 │  │                                                           │      │
+│  │  工作流 3：university_news_pipeline.json                  │      │
+│  │  每天 06:30 → 读取 scrapers.json → 循环每个 DUT 站点：    │      │
+│  │    HTTP 抓取 HTML → JS 解析提取 → AI 摘要                │      │
+│  │    → 保存 briefings/resource/                            │      │
+│  │                                                           │      │
 │  │  ⚠️ n8n 不涉及 Slack，只负责"采集 → AI 处理 → 存文件"    │      │
 │  └──────────────────────┬───────────────────────────────────┘      │
 │                         │ 文件系统（持久化）                          │
 │                         │ workspace/briefings/                       │
 │                         │   ├── papers/     ← 论文简报               │
 │                         │   ├── ai_news/    ← AI 新闻简报            │
-│                         │   └── code/       ← 技术趋势简报           │
+│                         │   ├── code/       ← 技术趋势简报           │
+│                         │   └── resource/   ← 高校资讯简报           │
 └─────────────────────────┼───────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -72,6 +81,7 @@
 │  │    • briefings/papers/*   → #paper       (07:00)         │      │
 │  │    • briefings/ai_news/*  → #deeplearning (07:05)        │      │
 │  │    • briefings/code/*     → #code         (07:10)        │      │
+│  │    • briefings/resource/* → #resource     (07:15)        │      │
 │  │    • 超长内容自动分段推送                                 │      │
 │  │                                                           │      │
 │  │  推送后归档到 pushed/<category>/                           │      │
@@ -111,10 +121,11 @@ dailyinfo/
 │   └── copilot-instructions.md       # Copilot CLI 项目上下文
 ├── config/
 │   ├── feeds.json                    # 📋 RSS 数据源配置（35 个源）
-│   └── scrapers.json                 # 📋 API 数据源配置（GitHub + HuggingFace）
+│   └── scrapers.json                 # 📋 API/抓取数据源配置（GitHub + HuggingFace + DUT）
 ├── workflows/
 │   ├── daily_briefing_pipeline.json  # n8n 工作流：RSS 学术简报
 │   ├── code_trending_pipeline.json   # n8n 工作流：技术趋势简报
+│   ├── university_news_pipeline.json # n8n 工作流：大工院所新闻
 │   └── credentials-template.md       # n8n Credentials 配置指南
 └── prompts/
     └── ai_news_rewriter.txt          # AI 深度改写提示词模板（预留）
@@ -135,12 +146,15 @@ dailyinfo/
     │   │   └── science_briefing_2026-03-29.md
     │   ├── ai_news/                      # AI 新闻简报
     │   │   └── smolai_briefing_2026-03-29.md
-    │   └── code/                         # 技术趋势简报（GitHub/HuggingFace）
-    │       └── code_trending_2026-03-30.md
+    │   ├── code/                         # 技术趋势简报（GitHub/HuggingFace）
+    │   │   └── code_trending_2026-03-30.md
+    │   └── resource/                     # 高校资讯简报（大工院所）
+    │       └── dlut_scidep_2026-03-30.md
     ├── pushed/                           # 推送后归档
     │   ├── papers/
     │   ├── ai_news/
-    │   └── code/
+    │   ├── code/
+    │   └── resource/
 ```
 
 **数据流生命周期**：
@@ -349,7 +363,8 @@ docker compose ps
    - Settings → Import from File
    - 选择 `workflows/daily_briefing_pipeline.json`（学术简报）
    - 再次 Import，选择 `workflows/code_trending_pipeline.json`（技术趋势）
-4. 激活两个工作流：
+   - 再次 Import，选择 `workflows/university_news_pipeline.json`（大工院所资讯）
+4. 激活三个工作流：
    - 点击右上角 "Activate" 按钮
 
 #### 3.3 定时推送（OpenClaw Cron，无需额外配置）
@@ -363,6 +378,7 @@ cron 任务已预配置在 `~/.openclaw/cron/jobs.json` 中：
 | `papers-daily-push` | 07:00 | `briefings/papers/` | #paper |
 | `ainews-daily-push` | 07:05 | `briefings/ai_news/` | #deeplearning |
 | `code-daily-push` | 07:10 | `briefings/code/` | #code |
+| `resource-daily-push` | 07:15 | `briefings/resource/` | #resource |
 
 **推送逻辑**：
 ```
@@ -458,9 +474,36 @@ docker exec dailyinfo_openclaw openclaw cron runs --id <job-id> --limit 5
 
 **可选优化**：设置 `GITHUB_TOKEN` 环境变量可将 GitHub API 限制从 60 次/小时提升到 5000 次/小时。
 
-### 流程三：自动推送（OpenClaw Cron，独立于 n8n）
+### 流程三：大工院所资讯抓取（06:30 AM）
 
-**触发**：OpenClaw 内置 cron，每天 07:00 / 07:05（Asia/Shanghai）
+**工作流**：`university_news_pipeline.json`
+**触发**：n8n Cron 节点，每天 06:30（Asia/Shanghai）执行
+
+**数据源**（配置在 `config/scrapers.json`，category=resource）：
+
+| 站点 | URL | HTML 选择器 |
+|------|-----|------------|
+| 学校新闻网（学术科研） | news.dlut.edu.cn/xsky.htm | `ul.nylistn > li.bg-mask` |
+| 建设工程学院 | sche.dlut.edu.cn | `div.sublist ul > li` |
+| 未来技术学院 | futureschool.dlut.edu.cn | `div.list ul > li` |
+| 科研院（重要通知） | scidep.dlut.edu.cn/zytz.htm | `ul.tz-ul > li` |
+
+**步骤**：
+```
+1. Read scrapers.json（filter: category=resource）
+2. Loop Over Sources
+   ├─ HTTP Request → 获取页面 HTML
+   ├─ Code 节点（JS）→ 正则解析提取 title/date/url
+   ├─ Has Items? → 有内容 → Build Prompt → Call OpenRouter → Save Briefing
+   │                          └─ 保存到 workspace/briefings/resource/{site}_{date}.md
+   └─ 无内容 → Skip
+```
+
+**技术说明**：各站点 HTML 结构不同，使用 JavaScript Code 节点（而非 HTML Extract 节点）进行正则解析，更可靠。
+
+### 流程四：自动推送（OpenClaw Cron，独立于 n8n）
+
+**触发**：OpenClaw 内置 cron，每天 07:00–07:15（Asia/Shanghai）
 
 **逻辑**：
 ```
@@ -469,9 +512,10 @@ OpenClaw Agent 扫描 briefings/<category>/ 下的 .md 文件
 读取简报内容
     ↓
 推送到对应 Slack 频道
-  - papers/*   → #paper (C07N60S2M9B)
-  - ai_news/*  → #deeplearning (C0562HGN6LV)
-  - code/*     → #code (C0228MSP884)
+  - papers/*   → #paper (C07N60S2M9B)         [07:00]
+  - ai_news/*  → #deeplearning (C0562HGN6LV)  [07:05]
+  - code/*     → #code (C0228MSP884)           [07:10]
+  - resource/* → #resource (C022CTEDJJ0)       [07:15]
   - 超长消息自动分段
     ↓
 推送成功 → 归档到 pushed/<category>/
