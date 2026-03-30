@@ -183,6 +183,62 @@
       "enabled": true
     },
     {
+      "name": "nature_water",
+      "display_name": "Nature Water",
+      "feed_id": 34,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "hess",
+      "display_name": "Hydrology and Earth System Sciences (HESS)",
+      "feed_id": 35,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "jhm",
+      "display_name": "Journal of Hydrometeorology (JHM)",
+      "feed_id": 36,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "wrr",
+      "display_name": "Water Resources Research (WRR)",
+      "feed_id": 37,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "hydrological_processes",
+      "display_name": "Hydrological Processes",
+      "feed_id": 38,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "water_research",
+      "display_name": "Water Research",
+      "feed_id": 39,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "advances_water_resources",
+      "display_name": "Advances in Water Resources",
+      "feed_id": 40,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "journal_hydrology",
+      "display_name": "Journal of Hydrology",
+      "feed_id": 41,
+      "category": "papers",
+      "enabled": true
+    },
+    {
       "name": "smolai_news",
       "display_name": "SmolAI News",
       "feed_id": 17,
