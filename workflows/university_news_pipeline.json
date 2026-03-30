@@ -1,0 +1,249 @@
+{
+  "id": "university-news-pipeline",
+  "name": "University News Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Daily 6:30 Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst config = JSON.parse(fs.readFileSync('/home/node/config/scrapers.json', 'utf8'));\nconst resourceSources = config.sources.filter(s => s.category === 'resource' && s.enabled !== false);\nreturn resourceSources.map(s => ({ json: s }));"
+      },
+      "id": "read-scrapers",
+      "name": "Read scrapers.json",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "loop-sources",
+      "name": "Loop Over Sources",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "headers": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              }
+            ]
+          }
+        }
+      },
+      "id": "fetch-html",
+      "name": "Fetch HTML",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse HTML based on site selector and extract news items\nconst source = $('Loop Over Sources').item.json;\nconst html = $input.item.json.data || $input.item.json.body || $input.item.json;\nconst name = source.name;\nconst baseUrl = source.base_url || '';\nconst maxItems = source.max_items || 10;\n\nlet items = [];\n\nif (name === 'dlut_scidep') {\n  // ul.tz-ul > li: date in tz-ul-date, title in tz-ul-tt, href in a\n  const liRegex = /<li[^>]*>\\s*<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>[\\s\\S]*?<div[^>]*class=[\"'][^\"']*tz-ul-date[^\"']*[\"'][^>]*>(.*?)<\\/div>[\\s\\S]*?<div[^>]*class=[\"'][^\"']*tz-ul-tt[^\"']*[\"'][^>]*>([^<]+)<\\/div>[\\s\\S]*?<\\/a>\\s*<\\/li>/gi;\n  let m;\n  while ((m = liRegex.exec(html)) !== null && items.length < maxItems) {\n    const href = m[1];\n    const dateRaw = m[2].replace(/<[^>]+>/g, '').trim();\n    const title = m[3].trim();\n    const url = href.startsWith('http') ? href : baseUrl + href;\n    items.push({ title, date: dateRaw, url });\n  }\n} else if (name === 'dlut_sche') {\n  // div.sublist ul > li: a[href] + text, span.date\n  const liRegex = /<li[^>]*style[^>]*>\\s*<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>([^<]+)<\\/a>\\s*<span[^>]*class=[\"'][^\"']*date[^\"']*[\"'][^>]*>([^<]+)<\\/span>/gi;\n  let m;\n  while ((m = liRegex.exec(html)) !== null && items.length < maxItems) {\n    const href = m[1];\n    const title = m[2].trim();\n    const date = m[3].trim();\n    const url = href.startsWith('http') ? href : baseUrl + href;\n    items.push({ title, date, url });\n  }\n} else if (name === 'dlut_futureschool') {\n  // div.list ul > li: a[href+title], div.time, div.name\n  const liRegex = /<li[^>]*>[\\s\\S]*?<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>[\\s\\S]*?<div[^>]*class=[\"'][^\"']*time[^\"']*[\"'][^>]*>([^<]+)<\\/div>[\\s\\S]*?<div[^>]*class=[\"'][^\"']*name[^\"']*[\"'][^>]*>([^<]+)<\\/div>[\\s\\S]*?<\\/a>[\\s\\S]*?<\\/li>/gi;\n  let m;\n  while ((m = liRegex.exec(html)) !== null && items.length < maxItems) {\n    const href = m[1];\n    const date = m[2].trim();\n    const title = m[3].trim();\n    const url = href.startsWith('http') ? href : baseUrl + href;\n    items.push({ title, date, url });\n  }\n} else if (name === 'dlut_news_academic') {\n  // ul.nylistn > li.bg-mask: time span + text content\n  const liRegex = /<li[^>]*class=[\"'][^\"']*bg-mask[^\"']*[\"'][^>]*>[\\s\\S]*?<time[^>]*><span>(\\d+)<\\/span>([^<]+)<\\/time>[\\s\\S]*?<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>([\\s\\S]*?)<\\/a>[\\s\\S]*?<\\/li>/gi;\n  let m;\n  while ((m = liRegex.exec(html)) !== null && items.length < maxItems) {\n    const day = m[1];\n    const yearMonth = m[2].trim();\n    const href = m[3];\n    const rawText = m[4].replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim();\n    // Extract title - often starts with 【...】 prefix\n    const title = rawText.substring(0, 80);\n    const date = yearMonth + '-' + day.padStart(2, '0');\n    const url = href.startsWith('http') ? href : baseUrl + href;\n    items.push({ title, date, url });\n  }\n}\n\nif (items.length === 0) {\n  return [{ json: { source: source, items: [], hasItems: false } }];\n}\n\nreturn [{ json: { source: source, items: items, hasItems: true } }];"
+      },
+      "id": "parse-html",
+      "name": "Parse HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-items",
+              "leftValue": "={{ $json.hasItems }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-items",
+      "name": "Has Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { source, items } = $input.item.json;\nconst config = JSON.parse(require('fs').readFileSync('/home/node/config/scrapers.json', 'utf8'));\nconst promptTemplate = config.prompt_templates.university_news;\n\nconst itemsText = items.map((item, i) => \n  `${i+1}. [${item.date}] ${item.title}\\n   链接：${item.url}`\n).join('\\n');\n\nconst sourceLabel = `【${source.display_name}】`;\nconst prompt = promptTemplate.replace('{items}', sourceLabel + '\\n' + itemsText);\n\nreturn [{ json: { source, items, prompt } }];"
+      },
+      "id": "build-prompt",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $('Read scrapers.json').item.json.defaults?.model || 'anthropic/claude-3.5-sonnet' }}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ],\n  \"max_tokens\": 1200\n}",
+        "options": {}
+      },
+      "id": "call-openrouter",
+      "name": "Call OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, 200],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "openrouter-api",
+          "name": "OpenRouter API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const prevData = $('Build Prompt').item.json;\nconst { source, items } = prevData;\nconst aiResponse = $input.item.json;\nconst summary = aiResponse.choices?.[0]?.message?.content || '';\n\nconst date = new Date().toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }).replace(/\\//g, '-');\nconst isoDate = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });\n\nconst content = `# ${source.display_name} — ${isoDate}\\n\\n${summary}\\n\\n---\\n*共 ${items.length} 条，来源：${source.url}*\\n`;\n\nconst fileName = `${source.name}_${isoDate}.md`;\nconst filePath = `/home/node/workspace/briefings/resource/${fileName}`;\n\nreturn [{ json: { filePath, content, sourceName: source.display_name } }];"
+      },
+      "id": "prepare-save",
+      "name": "Prepare Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { filePath, content } = $input.item.json;\nconst fs = require('fs');\nconst dir = filePath.substring(0, filePath.lastIndexOf('/'));\nif (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });\nfs.writeFileSync(filePath, content, 'utf8');\nreturn [{ json: { saved: true, filePath } }];"
+      },
+      "id": "save-briefing",
+      "name": "Save Briefing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1980, 200]
+    },
+    {
+      "parameters": {},
+      "id": "skip-no-items",
+      "name": "Skip (No Items)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1320, 420]
+    }
+  ],
+  "connections": {
+    "Daily 6:30 Trigger": {
+      "main": [
+        [{ "node": "Read scrapers.json", "type": "main", "index": 0 }]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [{ "node": "Read scrapers.json", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read scrapers.json": {
+      "main": [
+        [{ "node": "Loop Over Sources", "type": "main", "index": 0 }]
+      ]
+    },
+    "Loop Over Sources": {
+      "main": [
+        [{ "node": "Fetch HTML", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch HTML": {
+      "main": [
+        [{ "node": "Parse HTML", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse HTML": {
+      "main": [
+        [{ "node": "Has Items?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Has Items?": {
+      "main": [
+        [{ "node": "Build Prompt", "type": "main", "index": 0 }],
+        [{ "node": "Skip (No Items)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [{ "node": "Call OpenRouter", "type": "main", "index": 0 }]
+      ]
+    },
+    "Call OpenRouter": {
+      "main": [
+        [{ "node": "Prepare Save", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Save": {
+      "main": [
+        [{ "node": "Save Briefing", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Briefing": {
+      "main": [
+        [{ "node": "Loop Over Sources", "type": "main", "index": 0 }]
+      ]
+    },
+    "Skip (No Items)": {
+      "main": [
+        [{ "node": "Loop Over Sources", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "university-news-v1",
+  "triggerCount": 0,
+  "tags": []
+}
