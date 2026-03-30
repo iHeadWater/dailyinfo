@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "defaults": {
+    "model": "anthropic/claude-3.5-sonnet",
+    "enabled": true
+  },
+  "sources": [
+    {
+      "name": "github_trending",
+      "display_name": "GitHub Trending",
+      "source_type": "api",
+      "category": "code",
+      "enabled": true,
+      "url": "https://api.github.com/search/repositories",
+      "method": "GET",
+      "headers": {
+        "Accept": "application/vnd.github.v3+json",
+        "User-Agent": "DailyInfo-Bot"
+      },
+      "auth_env": "GITHUB_TOKEN",
+      "params": {
+        "q": "created:>{two_days_ago} stars:>20",
+        "sort": "stars",
+        "order": "desc",
+        "per_page": 25
+      },
+      "extract": {
+        "items_path": "items",
+        "fields": {
+          "name": "full_name",
+          "description": "description",
+          "stars": "stargazers_count",
+          "language": "language",
+          "url": "html_url"
+        }
+      },
+      "max_items": 25
+    },
+    {
+      "name": "huggingface_models",
+      "display_name": "HuggingFace Trending Models",
+      "source_type": "api",
+      "category": "code",
+      "enabled": true,
+      "url": "https://huggingface.co/api/models",
+      "method": "GET",
+      "params": {
+        "sort": "trendingScore",
+        "direction": "-1",
+        "limit": 20
+      },
+      "extract": {
+        "fields": {
+          "name": "id",
+          "task": "pipeline_tag",
+          "likes": "likes",
+          "downloads": "downloads"
+        }
+      },
+      "max_items": 20
+    },
+    {
+      "name": "huggingface_datasets",
+      "display_name": "HuggingFace Trending Datasets",
+      "source_type": "api",
+      "category": "code",
+      "enabled": true,
+      "url": "https://huggingface.co/api/datasets",
+      "method": "GET",
+      "params": {
+        "sort": "trendingScore",
+        "direction": "-1",
+        "limit": 10
+      },
+      "extract": {
+        "fields": {
+          "name": "id",
+          "likes": "likes",
+          "downloads": "downloads"
+        }
+      },
+      "max_items": 10
+    },
+    {
+      "name": "huggingface_spaces",
+      "display_name": "HuggingFace Trending Spaces",
+      "source_type": "api",
+      "category": "code",
+      "enabled": true,
+      "url": "https://huggingface.co/api/spaces",
+      "method": "GET",
+      "params": {
+        "sort": "trendingScore",
+        "direction": "-1",
+        "limit": 10
+      },
+      "extract": {
+        "fields": {
+          "name": "id",
+          "likes": "likes",
+          "sdk": "sdk"
+        }
+      },
+      "max_items": 10
+    }
+  ],
+  "prompt_templates": {
+    "code_trending": "你是一位资深技术编辑。请为以下技术趋势项目各生成一句话中文摘要（突出核心功能/亮点）：\n\n{items}\n\n返回格式：按原始分组，每个项目一行，格式为：\n**项目名** — 一句话描述\n\n要求：简洁精准，突出技术价值和创新点。"
+  },
+  "slack_channels": {
+    "code": "#code",
+    "resource": "#resource"
+  }
+}

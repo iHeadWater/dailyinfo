@@ -1,0 +1,318 @@
+{
+  "id": "code-trending-pipeline",
+  "name": "Code Trending Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "15 6 * * *"
+            }
+          ]
+        }
+      },
+      "name": "Daily 6:15 Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst configPath = '/home/node/config/scrapers.json';\n\ntry {\n  const raw = fs.readFileSync(configPath, 'utf-8');\n  const config = JSON.parse(raw);\n  const defaults = config.defaults || {};\n  const promptTemplates = config.prompt_templates || {};\n\n  const enabledSources = (config.sources || []).filter(\n    s => s.enabled !== false && s.category === 'code'\n  );\n\n  return enabledSources.map(source => ({\n    json: {\n      ...source,\n      model: source.model || defaults.model || 'anthropic/claude-3.5-sonnet',\n      prompt_template: promptTemplates[source.prompt_template_key] || promptTemplates.code_trending || ''\n    }\n  }));\n} catch (err) {\n  console.error('Failed to read scrapers.json:', err.message);\n  return [];\n}"
+      },
+      "name": "Read scrapers.json",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "name": "Loop Over Sources",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        650,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $input.first().json;\nconst https = require('https');\nconst http = require('http');\n\nfunction httpGet(url, headers = {}) {\n  return new Promise((resolve, reject) => {\n    const mod = url.startsWith('https') ? https : http;\n    const req = mod.get(url, { headers }, (res) => {\n      let data = '';\n      res.on('data', chunk => data += chunk);\n      res.on('end', () => {\n        try { resolve(JSON.parse(data)); }\n        catch(e) { reject(new Error('JSON parse error: ' + data.substring(0, 200))); }\n      });\n    });\n    req.on('error', reject);\n    req.setTimeout(30000, () => { req.destroy(); reject(new Error('Timeout')); });\n  });\n}\n\ntry {\n  // Build URL with params\n  const params = source.params || {};\n  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];\n  const twoDaysAgo = new Date(Date.now() - 2 * 86400000).toISOString().split('T')[0];\n\n  const urlParams = new URLSearchParams();\n  for (const [key, val] of Object.entries(params)) {\n    const resolved = String(val).replace(/\\{yesterday\\}/g, yesterday).replace(/\\{two_days_ago\\}/g, twoDaysAgo);\n    urlParams.set(key, resolved);\n  }\n\n  const fullUrl = source.url + '?' + urlParams.toString();\n\n  // Build headers\n  const headers = { ...(source.headers || {}), 'User-Agent': 'DailyInfo-Bot/1.0' };\n\n  // Add auth if configured\n  if (source.auth_env) {\n    const token = $env[source.auth_env];\n    if (token) {\n      headers['Authorization'] = 'token ' + token;\n    }\n  }\n\n  const data = await httpGet(fullUrl, headers);\n\n  // Extract items\n  const extract = source.extract || {};\n  let rawItems = extract.items_path ? data[extract.items_path] : data;\n\n  if (!Array.isArray(rawItems)) {\n    rawItems = [];\n  }\n\n  // Apply max_items limit\n  const maxItems = source.max_items || 25;\n  rawItems = rawItems.slice(0, maxItems);\n\n  // Map fields\n  const fields = extract.fields || {};\n  const items = rawItems.map(item => {\n    const mapped = {};\n    for (const [outKey, srcKey] of Object.entries(fields)) {\n      mapped[outKey] = item[srcKey] !== undefined ? item[srcKey] : null;\n    }\n    return mapped;\n  });\n\n  return [{\n    json: {\n      source_name: source.name,\n      display_name: source.display_name,\n      category: source.category,\n      model: source.model,\n      items: items,\n      items_count: items.length,\n      fetch_url: fullUrl\n    }\n  }];\n} catch (err) {\n  console.error(`Failed to fetch ${source.name}:`, err.message);\n  return [{\n    json: {\n      source_name: source.name,\n      display_name: source.display_name,\n      category: source.category,\n      model: source.model,\n      items: [],\n      items_count: 0,\n      error: err.message\n    }\n  }];\n}"
+      },
+      "name": "Fetch API Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        850,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.items_count }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "name": "Has Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst items = data.items;\nconst displayName = data.display_name;\n\n// Format items for AI prompt based on source type\nlet itemsList;\nif (data.source_name === 'github_trending') {\n  itemsList = items.map((item, i) => {\n    const lang = item.language ? ` [${item.language}]` : '';\n    const desc = item.description || 'No description';\n    return `${i + 1}. **${item.name}**${lang} (⭐ ${item.stars}) — ${desc}\\n   ${item.url || ''}`;\n  }).join('\\n');\n} else if (data.source_name === 'huggingface_models') {\n  itemsList = items.map((item, i) => {\n    const task = item.task ? ` (${item.task})` : '';\n    return `${i + 1}. **${item.name}**${task} — ❤️ ${item.likes || 0}, ⬇️ ${item.downloads || 0}`;\n  }).join('\\n');\n} else if (data.source_name === 'huggingface_datasets') {\n  itemsList = items.map((item, i) => {\n    return `${i + 1}. **${item.name}** — ❤️ ${item.likes || 0}, ⬇️ ${item.downloads || 0}`;\n  }).join('\\n');\n} else if (data.source_name === 'huggingface_spaces') {\n  itemsList = items.map((item, i) => {\n    const sdk = item.sdk ? ` [${item.sdk}]` : '';\n    return `${i + 1}. **${item.name}**${sdk} — ❤️ ${item.likes || 0}`;\n  }).join('\\n');\n} else {\n  itemsList = items.map((item, i) => `${i + 1}. ${JSON.stringify(item)}`).join('\\n');\n}\n\nconst prompt = `你是一位资深技术编辑。请为以下 ${displayName} 的每个项目生成一句话中文摘要（突出核心功能/亮点）。\\n\\n${itemsList}\\n\\n要求：\\n- 保留原始编号和项目名\\n- 每个项目一行，格式为：编号. **项目名** — 一句话中文描述\\n- 简洁精准，突出技术价值和创新点\\n- 如果是代码项目，说明解决什么问题\\n- 如果是模型/数据集，说明适用场景`;\n\nconst date = new Date().toISOString().split('T')[0];\n\nreturn [{\n  json: {\n    source_name: data.source_name,\n    display_name: data.display_name,\n    category: data.category,\n    model: data.model,\n    prompt: prompt,\n    items_count: data.items_count,\n    date: date\n  }\n}];"
+      },
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1250,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://github.com/OuyangWenyu/dailyinfo"
+            },
+            {
+              "name": "X-Title",
+              "value": "DailyInfo Code Trending Pipeline"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $json.model }}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "name": "Call OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1450,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Build Prompt').item.json;\nconst response = $input.first().json;\nconst content = response.choices[0].message.content;\nconst date = source.date;\nconst category = source.category;\nconst name = source.source_name;\n\nconst fileName = `${name}_trending_${date}.md`;\nconst dirPath = `/home/node/workspace/briefings/${category}`;\nconst filePath = `${dirPath}/${fileName}`;\n\n// Build final markdown with header\nconst header = `# ${source.display_name} — ${date}\\n\\n`;\nconst finalContent = header + content + '\\n';\n\nreturn [{\n  json: {\n    filePath: filePath,\n    dirPath: dirPath,\n    content: finalContent,\n    source_name: name,\n    category: category,\n    date: date,\n    items_count: source.items_count\n  }\n}];"
+      },
+      "name": "Prepare Save",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1650,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst fs = require('fs');\nconst path = require('path');\n\n// Ensure directory exists\nif (!fs.existsSync(data.dirPath)) {\n  fs.mkdirSync(data.dirPath, { recursive: true });\n}\n\nfs.writeFileSync(data.filePath, data.content, 'utf-8');\n\nreturn [{\n  json: {\n    success: true,\n    filePath: data.filePath,\n    source_name: data.source_name,\n    category: data.category,\n    date: data.date,\n    items_count: data.items_count\n  }\n}];"
+      },
+      "name": "Save Briefing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1850,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $input.first().json;\nconsole.log(`Skipped ${source.source_name}: no items or fetch error`);\nreturn [{ json: { skipped: source.source_name, reason: source.error || 'no items' } }];"
+      },
+      "name": "Skip (No Items)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1250,
+        450
+      ]
+    },
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        250,
+        500
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 6:15 Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read scrapers.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read scrapers.json": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Sources": {
+      "main": [
+        [
+          {
+            "node": "Fetch API Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch API Data": {
+      "main": [
+        [
+          {
+            "node": "Has Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Items?": {
+      "main": [
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (No Items)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "Prepare Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Save": {
+      "main": [
+        [
+          {
+            "node": "Save Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Briefing": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip (No Items)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read scrapers.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "timezone": "Asia/Shanghai"
+  },
+  "staticData": null,
+  "tags": [],
+  "pinData": {}
+}
