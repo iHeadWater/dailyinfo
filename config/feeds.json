@@ -173,14 +173,18 @@
       "display_name": "Remote Sensing of Environment",
       "feed_id": 32,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "max_articles_per_batch": 15,
+      "max_batches": 2
     },
     {
       "name": "global_planetary_change",
       "display_name": "Global and Planetary Change",
       "feed_id": 33,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "max_articles_per_batch": 15,
+      "max_batches": 2
     },
     {
       "name": "nature_water",
@@ -222,21 +226,27 @@
       "display_name": "Water Research",
       "feed_id": 39,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "max_articles_per_batch": 15,
+      "max_batches": 2
     },
     {
       "name": "advances_water_resources",
       "display_name": "Advances in Water Resources",
       "feed_id": 40,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "max_articles_per_batch": 15,
+      "max_batches": 2
     },
     {
       "name": "journal_hydrology",
       "display_name": "Journal of Hydrology",
       "feed_id": 41,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "max_articles_per_batch": 15,
+      "max_batches": 2
     },
     {
       "name": "smolai_news",
