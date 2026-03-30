@@ -99,6 +99,91 @@
       "enabled": true
     },
     {
+      "name": "aies",
+      "display_name": "AI in Earth Sciences (AIES)",
+      "feed_id": 22,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "bams",
+      "display_name": "Bulletin of the American Meteorological Society",
+      "feed_id": 23,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "essd",
+      "display_name": "Earth System Science Data (ESSD)",
+      "feed_id": 24,
+      "category": "papers",
+      "enabled": false,
+      "_comment": "RSS feed has invalid XML characters, FreshRSS cannot parse"
+    },
+    {
+      "name": "gmd",
+      "display_name": "Geoscientific Model Development (GMD)",
+      "feed_id": 25,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "nhess",
+      "display_name": "Natural Hazards and Earth System Sciences (NHESS)",
+      "feed_id": 26,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "james",
+      "display_name": "Journal of Advances in Modeling Earth Systems (JAMES)",
+      "feed_id": 27,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "earth_space_science",
+      "display_name": "Earth and Space Science",
+      "feed_id": 28,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "grl",
+      "display_name": "Geophysical Research Letters (GRL)",
+      "feed_id": 29,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "reviews_geophysics",
+      "display_name": "Reviews of Geophysics",
+      "feed_id": 30,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "earths_future",
+      "display_name": "Earth's Future",
+      "feed_id": 31,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "remote_sensing_environ",
+      "display_name": "Remote Sensing of Environment",
+      "feed_id": 32,
+      "category": "papers",
+      "enabled": true
+    },
+    {
+      "name": "global_planetary_change",
+      "display_name": "Global and Planetary Change",
+      "feed_id": 33,
+      "category": "papers",
+      "enabled": true
+    },
+    {
       "name": "smolai_news",
       "display_name": "SmolAI News",
       "feed_id": 17,
