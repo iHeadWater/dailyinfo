@@ -117,8 +117,7 @@
       "display_name": "Earth System Science Data (ESSD)",
       "feed_id": 24,
       "category": "papers",
-      "enabled": false,
-      "_comment": "RSS feed has invalid XML characters, FreshRSS cannot parse"
+      "enabled": true
     },
     {
       "name": "gmd",
