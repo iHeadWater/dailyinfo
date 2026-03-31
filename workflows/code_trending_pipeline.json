@@ -1,5 +1,4 @@
 {
-  "id": "code-trending-pipeline",
   "name": "Code Trending Pipeline",
   "nodes": [
     {
@@ -14,12 +13,13 @@
         }
       },
       "name": "Daily 6:15 Trigger",
-      "type": "n8n-nodes-base.cron",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
       "position": [
         250,
         300
-      ]
+      ],
+      "id": "4ec58884-5755-4eee-a11c-ee53e5bd791e"
     },
     {
       "parameters": {
@@ -31,7 +31,8 @@
       "position": [
         450,
         300
-      ]
+      ],
+      "id": "dd497500-b50b-4f90-aa95-362f3fce298d"
     },
     {
       "parameters": {
@@ -44,7 +45,8 @@
       "position": [
         650,
         300
-      ]
+      ],
+      "id": "a18c6af5-0309-41c8-b7eb-4a15c8e92def"
     },
     {
       "parameters": {
@@ -56,7 +58,8 @@
       "position": [
         850,
         300
-      ]
+      ],
+      "id": "cc172959-a9b3-44e2-b2f1-911a538ea7b9"
     },
     {
       "parameters": {
@@ -76,7 +79,8 @@
       "position": [
         1050,
         300
-      ]
+      ],
+      "id": "ccf185a9-4dc6-4696-a208-a495f5b5e982"
     },
     {
       "parameters": {
@@ -88,7 +92,8 @@
       "position": [
         1250,
         200
-      ]
+      ],
+      "id": "1c103e0b-8831-4ef2-bf8a-c869dc6e6ff5"
     },
     {
       "parameters": {
@@ -127,7 +132,8 @@
       "position": [
         1450,
         200
-      ]
+      ],
+      "id": "0d0ba3ae-83e3-409d-ba2f-76bfc2ad7be6"
     },
     {
       "parameters": {
@@ -139,7 +145,8 @@
       "position": [
         1650,
         200
-      ]
+      ],
+      "id": "ddc99c42-9848-4daa-a666-6a5a5e7b5bea"
     },
     {
       "parameters": {
@@ -151,7 +158,8 @@
       "position": [
         1850,
         200
-      ]
+      ],
+      "id": "50a5e7ca-7ca1-41cb-8f92-3723266e0137"
     },
     {
       "parameters": {
@@ -163,7 +171,8 @@
       "position": [
         1250,
         450
-      ]
+      ],
+      "id": "091a9cb2-442b-4b47-94ca-da8e004a9146"
     },
     {
       "parameters": {},
@@ -173,7 +182,8 @@
       "position": [
         250,
         500
-      ]
+      ],
+      "id": "5258ce69-a5ba-4abc-a672-56d02dbb910e"
     }
   ],
   "connections": {
@@ -310,9 +320,7 @@
     "executionOrder": "v1",
     "saveManualExecutions": true,
     "callerPolicy": "workflowsFromSameOwner",
-    "timezone": "Asia/Shanghai"
-  },
-  "staticData": null,
-  "tags": [],
-  "pinData": {}
+    "timezone": "Asia/Shanghai",
+    "availableInMCP": false
+  }
 }

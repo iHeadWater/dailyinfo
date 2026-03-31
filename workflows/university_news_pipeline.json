@@ -1,5 +1,4 @@
 {
-  "id": "university-news-pipeline",
   "name": "University News Pipeline",
   "nodes": [
     {
@@ -17,7 +16,10 @@
       "name": "Daily 6:30 Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [0, 300]
+      "position": [
+        0,
+        300
+      ]
     },
     {
       "parameters": {},
@@ -25,7 +27,10 @@
       "name": "Manual Trigger",
       "type": "n8n-nodes-base.manualTrigger",
       "typeVersion": 1,
-      "position": [0, 500]
+      "position": [
+        0,
+        500
+      ]
     },
     {
       "parameters": {
@@ -35,7 +40,10 @@
       "name": "Read scrapers.json",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [220, 300]
+      "position": [
+        220,
+        300
+      ]
     },
     {
       "parameters": {
@@ -45,7 +53,10 @@
       "name": "Loop Over Sources",
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
-      "position": [440, 300]
+      "position": [
+        440,
+        300
+      ]
     },
     {
       "parameters": {
@@ -71,7 +82,10 @@
       "name": "Fetch HTML",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, 300]
+      "position": [
+        660,
+        300
+      ]
     },
     {
       "parameters": {
@@ -81,7 +95,10 @@
       "name": "Parse HTML",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [880, 300]
+      "position": [
+        880,
+        300
+      ]
     },
     {
       "parameters": {
@@ -110,7 +127,10 @@
       "name": "Has Items?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [1100, 300]
+      "position": [
+        1100,
+        300
+      ]
     },
     {
       "parameters": {
@@ -120,30 +140,42 @@
       "name": "Build Prompt",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1320, 200]
+      "position": [
+        1320,
+        200
+      ]
     },
     {
       "parameters": {
         "method": "POST",
         "url": "https://openrouter.ai/api/v1/chat/completions",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
+        "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"model\": \"{{ $('Read scrapers.json').item.json.defaults?.model || 'anthropic/claude-3.5-sonnet' }}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ],\n  \"max_tokens\": 1200\n}",
-        "options": {}
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
       },
       "id": "call-openrouter",
       "name": "Call OpenRouter",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1540, 200],
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "openrouter-api",
-          "name": "OpenRouter API"
-        }
-      }
+      "position": [
+        1540,
+        200
+      ]
     },
     {
       "parameters": {
@@ -153,7 +185,10 @@
       "name": "Prepare Save",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1760, 200]
+      "position": [
+        1760,
+        200
+      ]
     },
     {
       "parameters": {
@@ -163,7 +198,10 @@
       "name": "Save Briefing",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1980, 200]
+      "position": [
+        1980,
+        200
+      ]
     },
     {
       "parameters": {},
@@ -171,79 +209,156 @@
       "name": "Skip (No Items)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [1320, 420]
+      "position": [
+        1320,
+        420
+      ]
     }
   ],
   "connections": {
     "Daily 6:30 Trigger": {
       "main": [
-        [{ "node": "Read scrapers.json", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Read scrapers.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Manual Trigger": {
       "main": [
-        [{ "node": "Read scrapers.json", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Read scrapers.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Read scrapers.json": {
       "main": [
-        [{ "node": "Loop Over Sources", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Loop Over Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Loop Over Sources": {
       "main": [
-        [{ "node": "Fetch HTML", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Fetch HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Fetch HTML": {
       "main": [
-        [{ "node": "Parse HTML", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Parse HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Parse HTML": {
       "main": [
-        [{ "node": "Has Items?", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Has Items?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Has Items?": {
       "main": [
-        [{ "node": "Build Prompt", "type": "main", "index": 0 }],
-        [{ "node": "Skip (No Items)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip (No Items)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Build Prompt": {
       "main": [
-        [{ "node": "Call OpenRouter", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Call OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Call OpenRouter": {
       "main": [
-        [{ "node": "Prepare Save", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Prepare Save",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Prepare Save": {
       "main": [
-        [{ "node": "Save Briefing", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Save Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Save Briefing": {
       "main": [
-        [{ "node": "Loop Over Sources", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Loop Over Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Skip (No Items)": {
       "main": [
-        [{ "node": "Loop Over Sources", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Loop Over Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },
   "settings": {
-    "executionOrder": "v1"
-  },
-  "staticData": null,
-  "meta": null,
-  "pinData": null,
-  "versionId": "university-news-v1",
-  "triggerCount": 0,
-  "tags": []
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
 }

@@ -6,18 +6,16 @@
         "rule": {
           "interval": [
             {
-              "field": "hours",
-              "hoursInterval": 24,
-              "triggerAtHour": 6
+              "field": "cronExpression",
+              "expression": "0 6 * * *"
             }
           ]
-        },
-        "timezone": "Asia/Shanghai"
+        }
       },
       "id": "cron-trigger",
       "name": "Daily 6AM Trigger",
-      "type": "n8n-nodes-base.cron",
-      "typeVersion": 1,
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
       "position": [
         250,
         300
@@ -308,10 +306,8 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
-  },
-  "staticData": null,
-  "tags": [],
-  "pinData": {},
-  "id": "daily-briefing-pipeline"
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  }
 }
