@@ -8,31 +8,20 @@
     {
       "name": "github_trending",
       "display_name": "GitHub Trending",
-      "source_type": "api",
+      "source_type": "scrape",
       "category": "code",
       "enabled": true,
-      "url": "https://api.github.com/search/repositories",
+      "url": "https://github.com/trending?since=daily",
       "method": "GET",
       "headers": {
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "DailyInfo-Bot"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
       },
-      "auth_env": "GITHUB_TOKEN",
-      "params": {
-        "q": "created:>{two_days_ago} stars:>20",
-        "sort": "stars",
-        "order": "desc",
-        "per_page": 25
-      },
-      "extract": {
-        "items_path": "items",
-        "fields": {
-          "name": "full_name",
-          "description": "description",
-          "stars": "stargazers_count",
-          "language": "language",
-          "url": "html_url"
-        }
+      "selector": "article.Box-row",
+      "fields": {
+        "name": "h2 a",
+        "description": "p.col-9",
+        "language": "span[itemprop='programmingLanguage']",
+        "stars_today": "span.d-inline-block.float-sm-right"
       },
       "max_items": 25
     },
@@ -104,19 +93,98 @@
       "max_items": 10
     },
     {
-      "name": "dlut_news_academic",
-      "display_name": "大连理工大学 - 学术科研新闻",
+      "name": "dlut_zhxw",
+      "display_name": "大连理工大学 - 综合新闻",
       "source_type": "scrape",
       "category": "resource",
       "enabled": true,
-      "url": "http://news.dlut.edu.cn/xsky.htm",
-      "base_url": "http://news.dlut.edu.cn/",
-      "selector": "ul.nylistn > li.bg-mask",
+      "url": "https://news.dlut.edu.cn/zhxw.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 48,
+      "selector": "li.bg-mask",
       "fields": {
-        "title": "text",
-        "url": "a[href]",
-        "date": "time"
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
       },
+      "date_format": "dlut_news",
+      "max_items": 10
+    },
+    {
+      "name": "dlut_rcpy",
+      "display_name": "大连理工大学 - 人才培养",
+      "source_type": "scrape",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/rcpy.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 48,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
+      "max_items": 10
+    },
+    {
+      "name": "dlut_xsky",
+      "display_name": "大连理工大学 - 学术科研",
+      "source_type": "scrape",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/xsky.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 48,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
+      "max_items": 10
+    },
+    {
+      "name": "dlut_hzjl",
+      "display_name": "大连理工大学 - 合作交流",
+      "source_type": "scrape",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/hzjl.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 48,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
+      "max_items": 10
+    },
+    {
+      "name": "dlut_yxfc",
+      "display_name": "大连理工大学 - 一线风采",
+      "source_type": "scrape",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/yxfc.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 48,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
       "max_items": 10
     },
     {
@@ -127,12 +195,14 @@
       "enabled": true,
       "url": "http://sche.dlut.edu.cn",
       "base_url": "http://sche.dlut.edu.cn/",
+      "lookback_hours": 48,
       "selector": "div.sublist ul > li",
       "fields": {
         "title": "a",
         "url": "a[href]",
         "date": "span.date"
       },
+      "date_format": "standard",
       "max_items": 10
     },
     {
@@ -143,12 +213,14 @@
       "enabled": true,
       "url": "http://futureschool.dlut.edu.cn",
       "base_url": "http://futureschool.dlut.edu.cn/",
+      "lookback_hours": 48,
       "selector": "div.list ul > li",
       "fields": {
         "title": "div.name",
         "url": "a[href]",
         "date": "div.time"
       },
+      "date_format": "dlut_future",
       "max_items": 10
     },
     {
@@ -159,12 +231,14 @@
       "enabled": true,
       "url": "http://scidep.dlut.edu.cn/zytz.htm",
       "base_url": "http://scidep.dlut.edu.cn/",
+      "lookback_hours": 48,
       "selector": "ul.tz-ul > li",
       "fields": {
         "title": "div.tz-ul-tt",
         "url": "a[href]",
         "date": "div.tz-ul-date"
       },
+      "date_format": "dlut_scidep",
       "max_items": 10
     }
   ],
