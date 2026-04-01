@@ -23,7 +23,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst configPath = '/home/node/config/scrapers.json';\n\ntry {\n  const raw = fs.readFileSync(configPath, 'utf-8');\n  const config = JSON.parse(raw);\n  const defaults = config.defaults || {};\n  const promptTemplates = config.prompt_templates || {};\n\n  const enabledSources = (config.sources || []).filter(\n    s => s.enabled !== false && s.category === 'code'\n  );\n\n  return enabledSources.map(source => ({\n    json: {\n      ...source,\n      model: source.model || defaults.model || 'anthropic/claude-3.5-sonnet',\n      prompt_template: promptTemplates[source.prompt_template_key] || promptTemplates.code_trending || ''\n    }\n  }));\n} catch (err) {\n  console.error('Failed to read scrapers.json:', err.message);\n  return [];\n}"
+        "jsCode": "const fs = require('fs');\nconst configPath = '/home/node/config/scrapers.json';\n\ntry {\n  const raw = fs.readFileSync(configPath, 'utf-8');\n  const config = JSON.parse(raw);\n  const defaults = config.defaults || {};\n  const promptTemplates = config.prompt_templates || {};\n\n  const enabledSources = (config.sources || []).filter(\n    s => s.enabled !== false && s.category === 'code'\n  );\n\n  return enabledSources.map(source => ({\n    json: {\n      ...source,\n      model: source.model || defaults.model || 'anthropic/claude-haiku-4.5',\n      prompt_template: promptTemplates[source.prompt_template_key] || promptTemplates.code_trending || ''\n    }\n  }));\n} catch (err) {\n  console.error('Failed to read scrapers.json:', err.message);\n  return [];\n}"
       },
       "name": "Read scrapers.json",
       "type": "n8n-nodes-base.code",

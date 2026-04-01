@@ -14,6 +14,8 @@ services:
       - GENERIC_TIMEZONE=Asia/Shanghai
       - N8N_ENV_VARS_IN_DEC=true  # 👈 关键：允许工作流读取环境变量
       - N8N_EXECUTIONS_TIMEOUT=3600  # 防止工作流挂起（最长1小时）
+      - NODE_FUNCTION_ALLOW_BUILTIN=*  # 允许 Code 节点使用 fs/path 等内置模块
+      - NODE_FUNCTION_ALLOW_EXTERNAL=*  # 允许 Code 节点使用外部 npm 包（如 sqlite3）
     volumes:
       - ~/.n8n:/home/node/.n8n
       - ~/.openclaw/workspace:/home/node/workspace

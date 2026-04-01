@@ -1,7 +1,7 @@
 {
   "version": 1,
   "defaults": {
-    "model": "anthropic/claude-3.5-sonnet",
+    "model": "anthropic/claude-haiku-4.5",
     "enabled": true
   },
   "sources": [

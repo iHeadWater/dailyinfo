@@ -152,7 +152,7 @@
         "authentication": "none",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"{{ $('Read scrapers.json').item.json.defaults?.model || 'anthropic/claude-3.5-sonnet' }}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ],\n  \"max_tokens\": 1200\n}",
+        "jsonBody": "={\n  \"model\": \"{{ $('Read scrapers.json').item.json.defaults?.model || 'anthropic/claude-haiku-4.5' }}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ],\n  \"max_tokens\": 1200\n}",
         "options": {},
         "sendHeaders": true,
         "headerParameters": {
