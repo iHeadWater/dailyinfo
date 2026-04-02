@@ -18,7 +18,7 @@
 
 - **RSS 聚合**：FreshRSS（Docker + SQLite）
 - **自动化引擎**：n8n（Docker + env 变量注入）
-- **AI 模型**：OpenRouter（Claude 3.5 Sonnet / GPT-4o）
+- **AI 模型**：OpenRouter（Claude Haiku 4.5）
 - **推送中枢**：OpenClaw Gateway（Socket Mode Slack）
 - **容器编排**：Docker Compose
 
@@ -129,6 +129,29 @@ dailyinfo/
 - 可选的高级配置：`max_articles_per_batch`, `max_batches` 用于分批处理（适用于更新量大的期刊，如 arxiv_cs_ai 或 Elsevier 期刊）
 - `display_name` 使用英文首字母大写（如 "Nature Communications"）
 - `category` 只允许：`papers`, `ai_news`
+
+**SmolAI 深度分析**：SmolAI News 配置了 `use_content: true`（读取 FreshRSS 全文而非仅标题）和 `prompt_template: "smolai_categorized"`（四分类分析：🧠 模型进展 / 🤖 Agent·产品 / 🔬 AI for Science / 🏭 产业新闻）。
+
+## scrapers.json 配置规范
+
+API/抓取类数据源配置（非 RSS），目前有 **12 个源**：
+- `code` 类别（4 个）：GitHub Trending (HTML 爬取) + HuggingFace 模型/数据集/Spaces (API)
+- `resource` 类别（8 个）：大工新闻网 5 板块（综合新闻/人才培养/学术科研/合作交流/一线风采）+ 3 学院（建工/未来技术/科研院）
+
+每个 source 包含：`name`, `display_name`, `category`, `enabled`, `source_type`（api/scrape）。
+
+**GitHub Trending**：HTML 爬取 `github.com/trending?since=daily`，解析 `article.Box-row` 提取项目信息，无需 API Token。
+**HuggingFace API**：排序参数必须用 `sort=trendingScore&direction=-1`（不是 `sort=trending`）。
+
+**DUT 网站 HTML 解析（已验证）**：
+- 大工新闻网 5 板块（news.dlut.edu.cn）：标题在 `<h4><a class="l2">`（注意不是 `div.pic` 中的图片链接）
+- `dlut_sche`（sche.dlut.edu.cn）：`<a class="name">` 标题，日期有 `MM-DD` 格式需补全年份
+- `dlut_futureschool`（futureschool.dlut.edu.cn）：`<a class="name">` 标题
+- `dlut_scidep`（scidep.dlut.edu.cn/zytz.htm）：`div.tz-ul-tt` 标题
+
+**增量过滤**：所有 DUT/学院站点配置 `lookback_hours: 48`，仅推送 48 小时内新闻。无更新时生成 "📭 过去48小时无新内容" 提示文件。
+
+**注意**：这些站点 HTML 结构各异，university_news_pipeline.json 用 JS Code 节点正则解析，勿改用 HTML Extract 节点。
 
 ### n8n 工作流规范
 

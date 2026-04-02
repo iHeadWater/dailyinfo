@@ -16,7 +16,7 @@
 
 ```
 config/feeds.json（RSS 配置中心，定义所有 RSS 数据源）
-config/scrapers.json（API/抓取配置中心，GitHub + HuggingFace + DUT 4 站点）
+config/scrapers.json（API/抓取配置中心，12 源：GitHub Trending + HuggingFace + DUT 8 站点）
      ↓
 FreshRSS（统一 RSS 采集） / n8n 直接 API 调用 / n8n HTTP 抓取
      ↓ SQLite DB / API 响应 / HTML
@@ -49,7 +49,7 @@ dailyinfo/
 ├── Dockerfile.openclaw                     # 自定义 OpenClaw 镜像
 ├── config/
 │   ├── feeds.json                          # 📋 RSS 数据源配置（35 个源）
-│   └── scrapers.json                       # 📋 API/抓取数据源配置（GitHub + HuggingFace + DUT 4 站点）
+│   └── scrapers.json                       # 📋 API/抓取数据源配置（12 源：GitHub Trending + HuggingFace + DUT 8 站点）
 ├── workflows/
 │   ├── daily_briefing_pipeline.json        # n8n 工作流：RSS 学术简报（06:00）
 │   ├── code_trending_pipeline.json         # n8n 工作流：技术趋势简报（06:15）
@@ -69,23 +69,26 @@ dailyinfo/
 字段顺序：`version` → `defaults` → `feeds` → `prompt_templates` → `slack_channels`。
 `category` 只允许：`papers` 或 `ai_news`。
 
+**SmolAI 深度分析**：SmolAI News 配置了 `use_content: true`（读取 FreshRSS 全文而非仅标题）和 `prompt_template: "smolai_categorized"`（四分类：🧠 模型进展 / 🤖 Agent·产品 / 🔬 AI for Science / 🏭 产业新闻）。
+
 ## scrapers.json 配置规范
 
-API/抓取类数据源配置（非 RSS），目前有 **8 个源**：
-- `code` 类别（4 个）：GitHub Search API + HuggingFace 模型/数据集/Spaces
-- `resource` 类别（4 个）：大工各院所官网（HTML 抓取）
+API/抓取类数据源配置（非 RSS），目前有 **12 个源**：
+- `code` 类别（4 个）：GitHub Trending (HTML 爬取) + HuggingFace 模型/数据集/Spaces (API)
+- `resource` 类别（8 个）：大工新闻网 5 板块（综合新闻/人才培养/学术科研/合作交流/一线风采）+ 3 学院（建工/未来技术/科研院）
 
 每个 source 包含：`name`, `display_name`, `category`, `enabled`, `source_type`（api/scrape）。
 
-**GitHub Search API**：URL 中 `{two_days_ago}` 模板变量由 n8n 工作流在运行时替换。
+**GitHub Trending**：HTML 爬取 `github.com/trending?since=daily`，解析 `article.Box-row` 提取项目信息，无需 API Token。
 **HuggingFace API**：排序参数必须用 `sort=trendingScore&direction=-1`（不是 `sort=trending`）。
-**GitHub Token**（可选）：在 `.env` 中设置 `GITHUB_TOKEN` 可提升 API 限制从 60 次/小时到 5000 次/小时。
 
-**DUT 网站 HTML 选择器（已验证）**：
-- `dlut_news_academic`（news.dlut.edu.cn/xsky.htm）：`ul.nylistn > li.bg-mask`
-- `dlut_sche`（sche.dlut.edu.cn）：`div.sublist ul > li`（含 `span.date`）
-- `dlut_futureschool`（futureschool.dlut.edu.cn）：`div.list ul > li`（含 `div.time`, `div.name`）
-- `dlut_scidep`（scidep.dlut.edu.cn/zytz.htm）：`ul.tz-ul > li`（含 `div.tz-ul-date`, `div.tz-ul-tt`）
+**DUT 网站 HTML 解析（已验证）**：
+- 大工新闻网 5 板块（news.dlut.edu.cn）：标题在 `<h4><a class="l2">`（注意不是 `div.pic` 中的图片链接）
+- `dlut_sche`（sche.dlut.edu.cn）：`<a class="name">` 标题，日期有 `MM-DD` 格式需补全年份
+- `dlut_futureschool`（futureschool.dlut.edu.cn）：`<a class="name">` 标题
+- `dlut_scidep`（scidep.dlut.edu.cn/zytz.htm）：`div.tz-ul-tt` 标题
+
+**增量过滤**：所有 DUT/学院站点配置 `lookback_hours: 48`，仅推送 48 小时内新闻。无更新时生成 "📭 过去48小时无新内容" 提示文件。
 
 **注意**：这些站点 HTML 结构各异，university_news_pipeline.json 用 JS Code 节点正则解析，勿改用 HTML Extract 节点。
 
@@ -119,7 +122,7 @@ API/抓取类数据源配置（非 RSS），目前有 **8 个源**：
 
 - **触发**：每日 06:15（Asia/Shanghai）
 - **节点链**：`Read scrapers.json` → `Loop Over Sources` → `Fetch API` → `Has Items?` → `Build Prompt` → `Call OpenRouter` → `Save Briefing`
-- **URL 模板**：`{two_days_ago}` 在运行时替换为 2 天前的日期（YYYY-MM-DD）
+- **数据获取**：GitHub Trending 通过 HTML 爬取（非 API），HuggingFace 通过 JSON API
 - **输出文件**：`/home/node/workspace/briefings/code/code_trending_<date>.md`
 
 ### university_news_pipeline.json（大工院所资讯）

@@ -1,66 +1,76 @@
-# N8N Credentials 配置指南
+# API 配置指南
 
-## 创建 LLM API Key Credential
+## OpenRouter API（唯一 LLM 接口）
 
-### Step 1: 在 n8n UI 中创建 Credential
+DailyInfo 通过 [OpenRouter](https://openrouter.ai/) 统一调用各种 LLM，无需为每个模型单独配置 API。
 
-1. 启动 n8n 并登录 http://localhost:5678
-2. 点击左侧菜单 **Settings** → **Credentials**
-3. 点击右上角 **Add Credential**
-4. 选择类型 **"HTTP Header Auth"**（或根据你的 n8n 版本选择合适的类型）
-5. 填写以下信息：
-   - **Name**: `LLM API Key`
-   - **Header Name**: `Authorization`
-   - **Header Value**: `Bearer 你的API密钥`（直接填 key，不需要 Bearer 前缀，因为工作流中已处理）
-6. 点击 **Save**
+### 配置方式
 
-### Step 2: 关联到工作流
+**Step 1**：在 `.env` 文件中设置 API Key：
 
-导入工作流后：
-1. 打开工作流，双击 **"LLM 深度重写"** 节点
-2. 点击 **Credential** 下拉框
-3. 选择 `LLM API Key`
-4. 保存节点
-
-## 支持的模型
-
-在 **"LLM 配置"** 节点中修改 `currentModel` 来切换：
-
-```javascript
-const currentModel = llmConfig.kimi;   // Kimi (默认)
-// const currentModel = llmConfig.deepseek; // DeepSeek
-// const currentModel = llmConfig.openai;  // OpenAI GPT
+```env
+# 获取地址：https://openrouter.ai/keys
+OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxx
 ```
 
-### 各模型配置
+**Step 2**：环境变量通过 `docker-compose.yml` 自动注入 n8n 容器：
 
-| 模型 | API Endpoint | Model Name | 说明 |
-|------|-------------|------------|------|
-| Kimi | `https://api.moonshot.cn/v1/chat/completions` | `moonshot-v1-8k` | 默认推荐 |
-| DeepSeek | `https://api.deepseek.com/v1/chat/completions` | `deepseek-chat` | 性价比高 |
-| OpenAI | `https://api.openai.com/v1/chat/completions` | `gpt-4o-mini` | 需科学上网 |
+```yaml
+services:
+  n8n:
+    env_file: .env
+    environment:
+      - N8N_ENV_VARS_IN_DEC=true
+```
 
-## 添加自定义模型
+**Step 3**：n8n 工作流中通过表达式引用：
 
-在 `llmConfig` 对象中添加新配置：
+```
+{{ $env.OPENROUTER_API_KEY }}
+```
 
-```javascript
-const llmConfig = {
-  // ... 现有配置
+> **无需在 n8n UI 中创建 Credentials**。环境变量注入比 UI Credentials 更简单、可复现。
 
-  // 添加新模型
-  yourmodel: {
-    provider: "yourmodel",
-    apiUrl: "https://api.yourmodel.com/v1/chat/completions",
-    model: "your-model-name",
-    credentialName: "llmApiKey"
+### 当前模型
+
+在 `config/feeds.json` 的 `defaults.model` 中配置：
+
+```json
+{
+  "defaults": {
+    "model": "anthropic/claude-haiku-4.5"
   }
-};
+}
 ```
 
-## 安全建议
+支持 OpenRouter 上的所有模型，更换只需修改此字段。
 
-- **不要**将真实的 API Key 直接写在工作流 JSON 文件中
-- 使用 n8n Credentials 功能安全存储
-- 定期轮换 API Key
-- 为不同的环境（开发/生产）创建不同的 Credentials
+### 常用模型参考
+
+| 模型 | OpenRouter ID | 说明 |
+|------|--------------|------|
+| Claude Haiku 4.5 | `anthropic/claude-haiku-4.5` | 当前使用，性价比高 |
+| Claude Sonnet 4 | `anthropic/claude-sonnet-4` | 更强推理能力 |
+| GPT-4o mini | `openai/gpt-4o-mini` | OpenAI 轻量版 |
+| DeepSeek V3 | `deepseek/deepseek-chat` | 国产模型，成本低 |
+
+### 验证配置
+
+```bash
+# 检查环境变量是否注入成功
+docker exec dailyinfo_n8n env | grep OPENROUTER
+
+# 测试 API 连通性
+curl -s https://openrouter.ai/api/v1/models \
+  -H "Authorization: Bearer $OPENROUTER_API_KEY" | head -c 200
+```
+
+## 其他 API（无需配置）
+
+| 数据源 | 认证方式 | 说明 |
+|--------|---------|------|
+| GitHub Trending | 无需 | HTML 爬取公开页面 |
+| HuggingFace API | 无需 | 公开接口 |
+| DUT 大工新闻网 | 无需 | 公开 HTML 页面 |
+
+> 所有外部数据源均为公开访问，不需要额外 API Key。
