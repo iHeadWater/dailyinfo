@@ -169,11 +169,13 @@ python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
 
 - **任务**：`papers-daily-push`（07:00）→ #paper；`ainews-daily-push`（07:05）→ #deeplearning；`code-daily-push`（07:10）→ #code；`resource-daily-push`（07:15）→ #resource
 - **Discord 频道**：#paper、#deeplearning、#code、#resource
-- **关键陷阱**：`delivery.mode` 必须为 `"none"`，否则报错 "Delivering to Discord requires target"。**不要直接编辑** `~/.openclaw/cron/jobs.json`（重启会覆盖），必须用 CLI：
+- **推送机制**：`delivery.mode` 设为 `"none"`（`--no-deliver`），agent 通过 `exec` 工具调用 `openclaw message send --channel discord --target <channel_id>` 直接发送到 Discord。不使用 `announce` delivery 模式（该模式与 Discord 路由不兼容）。
+- **关键陷阱**：**不要直接编辑** `~/.openclaw/cron/jobs.json`（重启会覆盖），必须用 CLI：
   ```bash
   docker exec dailyinfo_openclaw openclaw cron edit <job-id> --no-deliver
   ```
-- **Discord 频道白名单**：`~/.openclaw/openclaw.json` → `channels.discord.channels`，新频道需手动添加
+- **Discord 频道 ID**：#paper=`1489102139597787181`、#deeplearning=`1489102139597787182`、#code=`1489102139597787183`、#resource=`1489102139597787178`
+- **Discord 配置**：`~/.openclaw/openclaw.json` → `channels.discord`（Slack 配置已移除）
 
 ---
 
