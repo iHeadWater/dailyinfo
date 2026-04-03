@@ -12,7 +12,7 @@
 
 面向 AI for Science 的**自动化科研情报聚合与精读系统**。
 
-基于 **FreshRSS + Python/n8n + OpenClaw + OpenRouter** 构建的本地化学术信息流水线，实现从 RSS 订阅、AI 摘要生成到 Slack 推送的全链路自动化。
+基于 **FreshRSS + Python/n8n + OpenRouter** 构建的本地化学术信息流水线，实现从 RSS 订阅到 AI 摘要生成的全链路自动化。
 
 **配置驱动设计**：通过 `config/feeds.json` 管理 RSS 源，通过 `config/scrapers.json` 管理 API 源（GitHub/HuggingFace/DUT），添加新数据源无需修改代码或工作流。
 
@@ -29,7 +29,7 @@
 │  │  config/feeds.json  → 35 个 RSS 源（期刊 + AI 新闻）      │      │
 │  │  config/scrapers.json → 12 个数据源（GitHub Trending + HuggingFace + DUT 8 站点）│      │
 │  └──────────────────────┬───────────────────────────────────┘      │
-└─────────────────────────┼───────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                    🗄️ 采集层                                         │
@@ -46,10 +46,10 @@
 │  │  • 大连理工大学各院所官网（SSR HTML，JS 解析）            │      │
 │  └──────────────────────┬───────────────────────────────────┘      │
 │                         │ SQLite / API 响应                          │
-└─────────────────────────┼───────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│     🤖 处理层（两种方式二选一，只生成文件，不推送）                    │
+│     🤖 处理层（两种方式二选一）                    │
 │  ┌──────────────────────────────────────────────────────────┐      │
 │  │  方式 A：scripts/run_pipelines.py（推荐，宿主机直接运行）  │      │
 │  │    Pipeline 1：读取 feeds.json → 查询 FreshRSS SQLite    │      │
@@ -62,7 +62,6 @@
 │  │  方式 B：n8n 工作流（workflows/*.json，Docker 容器内）     │      │
 │  │    3 个工作流对应同样的 3 条流水线（06:00/06:15/06:30）   │      │
 │  │                                                           │      │
-│  │  ⚠️ 处理层不涉及 Slack，只负责"采集 → AI → 存文件"       │      │
 │  └──────────────────────┬───────────────────────────────────┘      │
 │                         │ 文件系统（持久化）                          │
 │                         │ workspace/briefings/                       │
@@ -70,14 +69,14 @@
 │                         │   ├── ai_news/    ← AI 新闻简报            │
 │                         │   ├── code/       ← 技术趋势简报           │
 │                         │   └── resource/   ← 高校资讯简报           │
-└─────────────────────────┼───────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │           📤 推送层：OpenClaw Cron（容器内定时，独立于处理层）         │
 │  ┌──────────────────────────────────────────────────────────┐      │
 │  │  OpenClaw 内置 cron 定时任务：                             │      │
 │  │                                                           │      │
-│  │  发现新文件 → OpenClaw Agent 推送到 Slack：               │      │
+│  │  发现新文件 → OpenClaw Agent 推送到 Discord：              │      │
 │  │    • briefings/papers/*   → #paper       (07:00)         │      │
 │  │    • briefings/ai_news/*  → #deeplearning (07:05)        │      │
 │  │    • briefings/code/*     → #code         (07:10)        │      │
@@ -95,7 +94,7 @@
 |------|------|------|-----------|
 | **FreshRSS** | RSS 订阅管理与文献存储 | 8081 | `~/.freshrss/data/` |
 | **n8n** | 自动化工作流（定时查询 + AI 摘要 + 存文件） | 5678 | `~/.n8n/` |
-| **OpenClaw** | Slack 推送中枢 | 18789 | `~/.openclaw/` |
+| **OpenClaw** | Discord 推送中枢 | 18789 | `~/.openclaw/` |
 | **OpenRouter** | LLM API 聚合（Claude/GPT 等） | - | 云端服务 |
 
 ### 两种执行方式
@@ -109,8 +108,8 @@
 
 | 层 | 职责 | 不做什么 |
 |----|------|---------|
-| **处理层**（Python 脚本 / n8n） | 查数据 → AI 处理 → 存文件 | ❌ 不推送 Slack |
-| **OpenClaw Cron** | 扫描文件 → 推送 Slack → 归档 | ❌ 不调用 AI |
+| **处理层**（Python 脚本 / n8n） | 查数据 → AI 处理 → 存文件 | ❌ 不推送 Discord |
+| **OpenClaw Cron** | 扫描文件 → 推送 Discord → 归档 | ❌ 不调用 AI |
 
 ---
 
@@ -171,7 +170,7 @@ dailyinfo/
 ```
 n8n 生成 → briefings/<category>/<name>_briefing_<date>.md  [持久化]
     ↓
-OpenClaw 读取 → Slack 推送                                   [推送]
+OpenClaw 读取 → Discord 推送                                  [推送]
     ↓
 归档移动 → pushed/<category>/<name>_briefing_<date>.md      [持久化]
 ```
@@ -401,7 +400,7 @@ docker compose ps
 
 cron 任务已预配置在 `~/.openclaw/cron/jobs.json` 中：
 
-| 任务 | 时间（CST） | 目录 | Slack 频道 |
+| 任务 | 时间（CST） | 目录 | Discord 频道 |
 |------|-------------|------|-----------|
 | `papers-daily-push` | 07:00 | `briefings/papers/` | #paper |
 | `ainews-daily-push` | 07:05 | `briefings/ai_news/` | #deeplearning |
@@ -414,7 +413,7 @@ OpenClaw Agent 扫描 briefings/<category>/ 目录
     ↓
 发现 .md 文件 → 读取内容
     ↓
-推送到对应 Slack 频道（超长自动分段）
+推送到对应 Discord 频道（超长自动分段）
     ↓
 推送成功后归档到 pushed/<category>/
 （推送失败则保留原位，下次重试）
@@ -575,11 +574,11 @@ OpenClaw Agent 扫描 briefings/<category>/ 下的 .md 文件
     ↓
 读取简报内容
     ↓
-推送到对应 Slack 频道
-  - papers/*   → #paper (C07N60S2M9B)         [07:00]
-  - ai_news/*  → #deeplearning (C0562HGN6LV)  [07:05]
-  - code/*     → #code (C0228MSP884)           [07:10]
-  - resource/* → #resource (C022CTEDJJ0)       [07:15]
+推送到对应 Discord 频道
+  - papers/*   → #paper                          [07:00]
+  - ai_news/*  → #deeplearning                   [07:05]
+  - code/*     → #code                           [07:10]
+  - resource/* → #resource                       [07:15]
   - 超长消息自动分段
     ↓
 推送成功 → 归档到 pushed/<category>/
@@ -725,13 +724,13 @@ docker exec dailyinfo_openclaw openclaw cron enable <job-id>
    ```
 4. OpenRouter API 额度是否充足
 
-### Q: Slack 未收到推送？
+### Q: Discord 未收到推送？
 
 **检查点：**
 1. briefings/ 目录下是否有新文件：`ls -lt ~/.openclaw/workspace/briefings/papers/`
 2. OpenClaw cron 任务状态：`docker exec dailyinfo_openclaw openclaw cron list`
 3. 最近推送记录：`docker exec dailyinfo_openclaw openclaw cron runs --id <job-id> --limit 3`
-4. OpenClaw 是否连接 Slack：`docker compose logs openclaw-gateway | tail -20`
+4. OpenClaw 是否连接 Discord：`docker compose logs openclaw-gateway | tail -20`
 
 ### Q: 容器重启后数据丢失？
 
@@ -748,7 +747,7 @@ docker inspect dailyinfo_freshrss | grep -A 10 "Mounts"
 - **RSS 聚合**：FreshRSS (Docker + SQLite)
 - **处理引擎**：`scripts/run_pipelines.py` (Python, 宿主机) / n8n (Docker, 备选)
 - **AI 模型**：OpenRouter (Claude Haiku 4.5)
-- **推送中枢**：OpenClaw Gateway (Socket Mode Slack)
+- **推送中枢**：OpenClaw Gateway (Discord)
 - **定时推送**：OpenClaw Cron（容器内，无需宿主机调度）
 - **API/抓取数据源**：GitHub Trending (HTML) + HuggingFace API + DUT 8 站点 (HTML)
 - **容器编排**：Docker Compose

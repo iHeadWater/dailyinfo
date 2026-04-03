@@ -8,7 +8,7 @@
 
 **DailyInfo** 是一个面向 AI for Science 研究者的学术情报自动聚合与推送系统。
 
-核心流程：**FreshRSS 采集 → Python 脚本 / n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Slack**
+核心流程：**FreshRSS 采集 → Python 脚本 / n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Discord**
 
 设计原则：**配置驱动**（feeds.json）+ **职责分离**（处理层只管生成文件，OpenClaw Cron 只管推送）
 
@@ -19,7 +19,7 @@
 - **RSS 聚合**：FreshRSS（Docker + SQLite）
 - **处理引擎**：`scripts/run_pipelines.py`（Python, 宿主机直接运行）/ n8n（Docker, 备选）
 - **AI 模型**：OpenRouter（Claude Haiku 4.5）
-- **推送中枢**：OpenClaw Gateway（Socket Mode Slack）
+- **推送中枢**：OpenClaw Gateway（Discord）
 - **容器编排**：Docker Compose
 
 ---
@@ -130,7 +130,7 @@ dailyinfo/
 ### feeds.json 配置规范
 
 - 使用 2 空格缩进
-- 字段按以下顺序排列：`version` → `defaults` → `feeds` → `prompt_templates` → `slack_channels`
+- 字段按以下顺序排列：`version` → `defaults` → `feeds` → `prompt_templates` → `discord_channels`
 - 每个 feed 必须包含：`name`, `display_name`, `feed_id`, `category`, `enabled`
 - 可选的高级配置：`max_articles_per_batch`, `max_batches` 用于分批处理（适用于更新量大的期刊，如 arxiv_cs_ai 或 Elsevier 期刊）
 - `display_name` 使用英文首字母大写（如 "Nature Communications"）
@@ -221,9 +221,9 @@ python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
 
 ---
 
-## Slack 频道映射
+## Discord 频道映射
 
-| Category | Slack Channel |
+| Category | Discord Channel |
 |----------|---------------|
 | papers | #paper |
 | ai_news | #deeplearning |
@@ -246,5 +246,5 @@ N8N_BASIC_AUTH_PASSWORD=xxxx         # 可选
 
 1. **不提交敏感信息**：`.env` 已加入 .gitignore，切勿提交包含真实 API Key 的配置
 2. **JSON 语法正确**：修改 feeds.json 后务必验证 JSON 格式
-3. **职责分离**：处理层（Python 脚本 / n8n）只负责"采集→AI 处理→存文件"，不推送 Slack；OpenClaw 只负责推送
+3. **职责分离**：处理层（Python 脚本 / n8n）只负责"采集→AI 处理→存文件"，不推送 Discord；OpenClaw 只负责推送
 4. **Cron 独立性**：OpenClaw cron 任务独立于处理层，无论用 Python 脚本还是 n8n 执行都不影响定时推送

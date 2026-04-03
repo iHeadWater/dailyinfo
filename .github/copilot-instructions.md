@@ -4,9 +4,9 @@
 
 **DailyInfo** 是面向 AI for Science 研究者的学术情报自动聚合与推送系统。
 
-核心流程：**FreshRSS 采集 → Python 脚本 / n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Slack**
+核心流程：**FreshRSS 采集 → Python 脚本 / n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Discord**
 
-另有独立的**技术趋势流水线**：**Python 脚本 / n8n 直接调用 GitHub/HuggingFace API → AI 摘要 → 推送到 Slack #code**
+另有独立的**技术趋势流水线**：**Python 脚本 / n8n 直接调用 GitHub/HuggingFace API → AI 摘要 → 推送到 Discord #code**
 
 设计原则：**配置驱动**（feeds.json / scrapers.json）+ **职责分离**（处理层只管生成文件，OpenClaw 只管推送）
 
@@ -20,7 +20,7 @@ config/scrapers.json（API/抓取配置中心，12 源：GitHub Trending + Huggi
      ↓
 FreshRSS（统一 RSS 采集） / API 直接调用 / HTTP 抓取
      ↓ SQLite DB / API 响应 / HTML
-处理层（两种方式二选一 —— 只生成文件，不推送 Slack）
+处理层（两种方式二选一 —— 只生成文件，不推送 Discord）
   方式 A: scripts/run_pipelines.py（推荐，宿主机直接运行）
     Pipeline 1: RSS → 学术简报（读取 FreshRSS SQLite）
     Pipeline 2: API → 技术趋势（GitHub/HuggingFace）
@@ -31,7 +31,7 @@ FreshRSS（统一 RSS 采集） / API 直接调用 / HTTP 抓取
     工作流 3: university_news_pipeline.json（06:30）
      ↓ Markdown 文件 (workspace/briefings/<category>/)
 OpenClaw Cron（推送层 —— 容器内定时，独立于处理层）
-     ↓ Slack #paper / #deeplearning / #code / #resource
+     ↓ Discord #paper / #deeplearning / #code / #resource
 ```
 
 ---
@@ -74,7 +74,7 @@ dailyinfo/
 核心配置文件，目前有 **35 个 RSS 源**（33 papers + 2 ai_news）。
 
 每个 feed 必须包含：`name`, `display_name`, `feed_id`, `category`, `enabled`。
-字段顺序：`version` → `defaults` → `feeds` → `prompt_templates` → `slack_channels`。
+字段顺序：`version` → `defaults` → `feeds` → `prompt_templates` → `discord_channels`。
 `category` 只允许：`papers` 或 `ai_news`。
 
 **SmolAI 深度分析**：SmolAI News 配置了 `use_content: true`（读取 FreshRSS 全文而非仅标题）和 `prompt_template: "smolai_categorized"`（四分类：🧠 模型进展 / 🤖 Agent·产品 / 🔬 AI for Science / 🏭 产业新闻）。
@@ -168,12 +168,12 @@ python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
 ## OpenClaw Cron（推送层）
 
 - **任务**：`papers-daily-push`（07:00）→ #paper；`ainews-daily-push`（07:05）→ #deeplearning；`code-daily-push`（07:10）→ #code；`resource-daily-push`（07:15）→ #resource
-- **Slack 频道**：#paper = `C07N60S2M9B`，#deeplearning = `C0562HGN6LV`，#code = `C0228MSP884`，#resource = `C022CTEDJJ0`
-- **关键陷阱**：`delivery.mode` 必须为 `"none"`，否则报错 "Delivering to Slack requires target"。**不要直接编辑** `~/.openclaw/cron/jobs.json`（重启会覆盖），必须用 CLI：
+- **Discord 频道**：#paper、#deeplearning、#code、#resource
+- **关键陷阱**：`delivery.mode` 必须为 `"none"`，否则报错 "Delivering to Discord requires target"。**不要直接编辑** `~/.openclaw/cron/jobs.json`（重启会覆盖），必须用 CLI：
   ```bash
   docker exec dailyinfo_openclaw openclaw cron edit <job-id> --no-deliver
   ```
-- **Slack 频道白名单**：`~/.openclaw/openclaw.json` → `channels.slack.channels`，新频道需手动添加并在 Slack 执行 `/invite @OpenClaw`
+- **Discord 频道白名单**：`~/.openclaw/openclaw.json` → `channels.discord.channels`，新频道需手动添加
 
 ---
 

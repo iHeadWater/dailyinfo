@@ -272,7 +272,7 @@
     "one_line_summary": "请为以下 {count} 篇 {display_name} 最新文章各生成一句话中文摘要，突出核心发现或贡献：\n\n{article_list}\n\n请严格按以下 Markdown 格式返回：\n\n## 📚 {display_name} 今日简报 ({date}) - {count}篇文章\n\n1. **文章标题**\n   > 一句话中文摘要\n\n2. **文章标题**\n   > 一句话中文摘要\n\n...\n\n最后添加一段 **🔭 Today's Highlight** 总结今日最值得关注的研究方向。",
     "smolai_categorized": "你是一位资深AI行业分析师。以下是今天的AI新闻汇总（来自SmolAI Newsletter的完整内容）。请按以下4个类别整理关键信息，每个类别列出3-5条最重要的进展，每条一句话中文概述：\n\n## 🧠 模型进展\n（新模型发布、基准测试、训练突破等）\n\n## 🤖 Agent/产品进展\n（编程Agent、产品发布、工具更新等）\n\n## 🔬 AI for Science\n（AI在科学研究中的应用）\n\n## 🏭 产业新闻\n（融资、收购、政策、商业动态等）\n\n如果某个类别没有相关内容，写\"暂无重要进展\"。\n\n---\n以下是今天的新闻内容：\n\n{content}"
   },
-  "slack_channels": {
+  "discord_channels": {
     "papers": "#paper",
     "ai_news": "#deeplearning"
   }
