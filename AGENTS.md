@@ -8,16 +8,16 @@
 
 **DailyInfo** 是一个面向 AI for Science 研究者的学术情报自动聚合与推送系统。
 
-核心流程：**FreshRSS 采集 → n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Slack**
+核心流程：**FreshRSS 采集 → Python 脚本 / n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Slack**
 
-设计原则：**配置驱动**（feeds.json）+ **职责分离**（n8n 只管生成文件，OpenClaw Cron 只管推送）
+设计原则：**配置驱动**（feeds.json）+ **职责分离**（处理层只管生成文件，OpenClaw Cron 只管推送）
 
 ---
 
 ## 技术栈
 
 - **RSS 聚合**：FreshRSS（Docker + SQLite）
-- **自动化引擎**：n8n（Docker + env 变量注入）
+- **处理引擎**：`scripts/run_pipelines.py`（Python, 宿主机直接运行）/ n8n（Docker, 备选）
 - **AI 模型**：OpenRouter（Claude Haiku 4.5）
 - **推送中枢**：OpenClaw Gateway（Socket Mode Slack）
 - **容器编排**：Docker Compose
@@ -106,10 +106,16 @@ dailyinfo/
 ├── docker-compose.yml                # 服务编排入口
 ├── Dockerfile.openclaw               # 自定义 OpenClaw 镜像
 ├── README.md                         # 项目说明文档
+├── AGENTS.md                         # AI 代理项目上下文
 ├── config/
-│   └── feeds.json                    # 📋 数据源配置（核心）
+│   ├── feeds.json                    # 📋 数据源配置（核心）
+│   └── scrapers.json                 # 📋 API/抓取数据源配置（12 源）
+├── scripts/
+│   └── run_pipelines.py              # 🐍 本地 Pipeline 运行脚本（推荐执行方式）
 ├── workflows/
-│   ├── daily_briefing_pipeline.json  # n8n 统一工作流
+│   ├── daily_briefing_pipeline.json  # n8n 统一工作流（备选）
+│   ├── code_trending_pipeline.json   # n8n 技术趋势工作流（备选）
+│   ├── university_news_pipeline.json # n8n 大工院所工作流（备选）
 │   └── credentials-template.md       # Credentials 配置指南
 ├── prompts/
 │   └── ai_news_rewriter.txt          # AI 深度改写提示词模板
@@ -151,9 +157,24 @@ API/抓取类数据源配置（非 RSS），目前有 **12 个源**：
 
 **增量过滤**：所有 DUT/学院站点配置 `lookback_hours: 48`，仅推送 48 小时内新闻。无更新时生成 "📭 过去48小时无新内容" 提示文件。
 
-**注意**：这些站点 HTML 结构各异，university_news_pipeline.json 用 JS Code 节点正则解析，勿改用 HTML Extract 节点。
+**注意**：这些站点 HTML 结构各异，`scripts/run_pipelines.py` 中用 Python 正则解析，n8n 工作流中用 JS Code 节点正则解析。
 
-### n8n 工作流规范
+### scripts/run_pipelines.py 规范
+
+本地 Python 脚本，可在宿主机直接运行三条流水线，无需 n8n 容器：
+```bash
+python3 scripts/run_pipelines.py              # 运行全部
+python3 scripts/run_pipelines.py --pipeline 1  # 仅 RSS 学术简报
+python3 scripts/run_pipelines.py --pipeline 2  # 仅技术趋势
+python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
+```
+
+- 读取相同配置文件（feeds.json / scrapers.json），输出到相同路径（`~/.openclaw/workspace/briefings/`）
+- 依赖：`requests`，可选 `python-dotenv`
+- 从 `.env` 读取 `OPENROUTER_API_KEY`
+- 直接读取宿主机 `~/.freshrss/data/users/owen/db.sqlite`
+
+### n8n 工作流规范（备选方式）
 
 - 工作流文件使用 `.json` 格式
 - 导入前验证 JSON 语法：`python3 -c "import json; json.load(open('workflows/xxx.json'))"`
@@ -206,6 +227,8 @@ API/抓取类数据源配置（非 RSS），目前有 **12 个源**：
 |----------|---------------|
 | papers | #paper |
 | ai_news | #deeplearning |
+| code | #code |
+| resource | #resource |
 
 ---
 
@@ -223,5 +246,5 @@ N8N_BASIC_AUTH_PASSWORD=xxxx         # 可选
 
 1. **不提交敏感信息**：`.env` 已加入 .gitignore，切勿提交包含真实 API Key 的配置
 2. **JSON 语法正确**：修改 feeds.json 后务必验证 JSON 格式
-3. **职责分离**：n8n 只负责"采集→AI 处理→存文件"，不推送 Slack；OpenClaw 只负责推送
-4. **Cron 独立性**：OpenClaw cron 任务独立于 n8n 工作流，即使 n8n 手动执行也不影响定时推送
+3. **职责分离**：处理层（Python 脚本 / n8n）只负责"采集→AI 处理→存文件"，不推送 Slack；OpenClaw 只负责推送
+4. **Cron 独立性**：OpenClaw cron 任务独立于处理层，无论用 Python 脚本还是 n8n 执行都不影响定时推送

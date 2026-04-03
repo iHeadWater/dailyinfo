@@ -12,9 +12,11 @@
 
 面向 AI for Science 的**自动化科研情报聚合与精读系统**。
 
-基于 **FreshRSS + n8n + OpenClaw + OpenRouter** 构建的本地化学术信息流水线，实现从 RSS 订阅、AI 摘要生成到 Slack 推送的全链路自动化。
+基于 **FreshRSS + Python/n8n + OpenClaw + OpenRouter** 构建的本地化学术信息流水线，实现从 RSS 订阅、AI 摘要生成到 Slack 推送的全链路自动化。
 
-**配置驱动设计**：通过 `config/feeds.json` 管理 RSS 源，通过 `config/scrapers.json` 管理 API 源（GitHub/HuggingFace），添加新数据源无需修改代码或工作流。
+**配置驱动设计**：通过 `config/feeds.json` 管理 RSS 源，通过 `config/scrapers.json` 管理 API 源（GitHub/HuggingFace/DUT），添加新数据源无需修改代码或工作流。
+
+**双引擎架构**：处理层支持 `scripts/run_pipelines.py`（宿主机直接运行）和 n8n 工作流（Docker 容器）两种执行方式，输出格式和路径完全一致。
 
 ---
 
@@ -47,22 +49,20 @@
 └─────────────────────────┼───────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│           🤖 处理层：n8n（只生成文件，不推送）                        │
+│     🤖 处理层（两种方式二选一，只生成文件，不推送）                    │
 │  ┌──────────────────────────────────────────────────────────┐      │
-│  │  工作流 1：daily_briefing_pipeline.json                   │      │
-│  │  每天 06:00 → 读取 feeds.json → 循环每个 RSS feed：       │      │
-│  │    查询 FreshRSS SQLite → AI 摘要 → 保存 briefings/      │      │
+│  │  方式 A：scripts/run_pipelines.py（推荐，宿主机直接运行）  │      │
+│  │    Pipeline 1：读取 feeds.json → 查询 FreshRSS SQLite    │      │
+│  │      → AI 摘要 → 保存 briefings/papers/ & ai_news/      │      │
+│  │    Pipeline 2：读取 scrapers.json → GitHub/HF API/爬取   │      │
+│  │      → AI 摘要 → 保存 briefings/code/                   │      │
+│  │    Pipeline 3：读取 scrapers.json → DUT HTML 爬取+解析   │      │
+│  │      → AI 摘要 → 保存 briefings/resource/               │      │
 │  │                                                           │      │
-│  │  工作流 2：code_trending_pipeline.json                    │      │
-│  │  每天 06:15 → 读取 scrapers.json → 循环每个 API 源：      │      │
-│  │    调用 GitHub/HF API → AI 摘要 → 保存 briefings/code/   │      │
+│  │  方式 B：n8n 工作流（workflows/*.json，Docker 容器内）     │      │
+│  │    3 个工作流对应同样的 3 条流水线（06:00/06:15/06:30）   │      │
 │  │                                                           │      │
-│  │  工作流 3：university_news_pipeline.json                  │      │
-│  │  每天 06:30 → 读取 scrapers.json → 循环每个 DUT 站点：    │      │
-│  │    HTTP 抓取 HTML → JS 解析提取 → AI 摘要                │      │
-│  │    → 保存 briefings/resource/                            │      │
-│  │                                                           │      │
-│  │  ⚠️ n8n 不涉及 Slack，只负责"采集 → AI 处理 → 存文件"    │      │
+│  │  ⚠️ 处理层不涉及 Slack，只负责"采集 → AI → 存文件"       │      │
 │  └──────────────────────┬───────────────────────────────────┘      │
 │                         │ 文件系统（持久化）                          │
 │                         │ workspace/briefings/                       │
@@ -73,7 +73,7 @@
 └─────────────────────────┼───────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│           📤 推送层：OpenClaw Cron（容器内定时，独立于 n8n）         │
+│           📤 推送层：OpenClaw Cron（容器内定时，独立于处理层）         │
 │  ┌──────────────────────────────────────────────────────────┐      │
 │  │  OpenClaw 内置 cron 定时任务：                             │      │
 │  │                                                           │      │
@@ -98,11 +98,18 @@
 | **OpenClaw** | Slack 推送中枢 | 18789 | `~/.openclaw/` |
 | **OpenRouter** | LLM API 聚合（Claude/GPT 等） | - | 云端服务 |
 
+### 两种执行方式
+
+| 方式 | 说明 | 适用场景 |
+|------|------|---------|
+| **`scripts/run_pipelines.py`** | 本地 Python 脚本，直接读取 FreshRSS DB + 调用 API | 推荐：宿主机直接运行，简单可靠 |
+| **n8n 工作流** | `workflows/*.json`，Docker 容器内执行 | 备选：可视化编排，适合调试 |
+
 ### 职责分离
 
 | 层 | 职责 | 不做什么 |
 |----|------|---------|
-| **n8n** | 查数据 → AI 处理 → 存文件 | ❌ 不推送 Slack |
+| **处理层**（Python 脚本 / n8n） | 查数据 → AI 处理 → 存文件 | ❌ 不推送 Slack |
 | **OpenClaw Cron** | 扫描文件 → 推送 Slack → 归档 | ❌ 不调用 AI |
 
 ---
@@ -117,15 +124,18 @@ dailyinfo/
 ├── docker-compose.yml                # 服务编排
 ├── Dockerfile.openclaw               # OpenClaw 定制镜像
 ├── README.md                         # 本文档
+├── AGENTS.md                         # AI 代理项目上下文（Copilot 等）
 ├── .github/
 │   └── copilot-instructions.md       # Copilot CLI 项目上下文
 ├── config/
 │   ├── feeds.json                    # 📋 RSS 数据源配置（35 个源）
 │   └── scrapers.json                 # 📋 API/抓取数据源配置（12 源：GitHub + HuggingFace + DUT 8 站点）
+├── scripts/
+│   └── run_pipelines.py              # 🐍 本地 Pipeline 运行脚本（独立于 n8n）
 ├── workflows/
-│   ├── daily_briefing_pipeline.json  # n8n 工作流：RSS 学术简报
-│   ├── code_trending_pipeline.json   # n8n 工作流：技术趋势简报
-│   ├── university_news_pipeline.json # n8n 工作流：大工院所新闻
+│   ├── daily_briefing_pipeline.json  # n8n 工作流：RSS 学术简报（备用）
+│   ├── code_trending_pipeline.json   # n8n 工作流：技术趋势简报（备用）
+│   ├── university_news_pipeline.json # n8n 工作流：大工院所新闻（备用）
 │   └── credentials-template.md       # n8n Credentials 配置指南
 └── prompts/
     └── ai_news_rewriter.txt          # AI 深度改写提示词模板（预留）
@@ -525,7 +535,37 @@ docker exec dailyinfo_openclaw openclaw cron runs --id <job-id> --limit 5
 
 **增量过滤**：所有站点配置 `lookback_hours: 48`，仅推送 48 小时内新闻。无更新时生成提示文件，不留空白。
 
-### 流程四：自动推送（OpenClaw Cron，独立于 n8n）
+### 🐍 本地运行方式：`scripts/run_pipelines.py`
+
+除 n8n 工作流外，项目还提供了独立的 Python 脚本 `scripts/run_pipelines.py`，可在**宿主机直接运行**三条流水线，无需依赖 n8n 容器。
+
+**功能与 n8n 工作流等价**：读取相同的配置文件（feeds.json / scrapers.json），查询相同的 FreshRSS SQLite 数据库，调用相同的 OpenRouter API，输出到相同的 `~/.openclaw/workspace/briefings/` 目录。
+
+```bash
+# 运行全部 3 条流水线
+python3 scripts/run_pipelines.py
+
+# 仅运行 RSS 学术简报（Pipeline 1）
+python3 scripts/run_pipelines.py --pipeline 1
+
+# 仅运行技术趋势（Pipeline 2）
+python3 scripts/run_pipelines.py --pipeline 2
+
+# 仅运行大工院所资讯（Pipeline 3）
+python3 scripts/run_pipelines.py --pipeline 3
+```
+
+**依赖**：`requests`（`pip install requests`），可选 `python-dotenv`（自动从 `.env` 读取 API Key，也支持手动解析 .env）。
+
+**特点**：
+- 直接从宿主机读取 `~/.freshrss/data/users/owen/db.sqlite`（不需要进容器）
+- SmolAI 深度内容路径：自动提取 HTML 全文 → 去标签 → 按模板生成 AI 摘要
+- GitHub Trending 通过正则解析 HTML（与 n8n 工作流中的 JS Code 节点逻辑一致）
+- DUT 各站点 HTML 解析：针对不同站点结构（dlut_news / standard / dlut_future / dlut_scidep）使用不同的正则解析器
+- 无更新时自动生成 placeholder 文件（保证 OpenClaw 推送不留空白）
+- 支持批处理：对配置了 `max_articles_per_batch` 的高量期刊自动分批，输出 `_batch1.md`、`_batch2.md`…
+
+### 流程四：自动推送（OpenClaw Cron，独立于处理层）
 
 **触发**：OpenClaw 内置 cron，每天 07:00–07:15（Asia/Shanghai）
 
@@ -675,8 +715,13 @@ docker exec dailyinfo_openclaw openclaw cron enable <job-id>
 2. FreshRSS 中是否有新文章（在 `lookback_hours` 时间窗口内）
 3. 数据库查询：
    ```bash
-   docker exec dailyinfo_freshrss sqlite3 /var/www/FreshRSS/data/users/owen/db.sqlite \
-     "SELECT COUNT(*) FROM entry WHERE id_feed = 2"
+   # 注意：FreshRSS 容器内没有 sqlite3，需通过 n8n 容器查询
+   docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
+   const sqlite3 = require('sqlite3');
+   const db = new sqlite3.Database('/freshrss-data/users/owen/db.sqlite');
+   db.get('SELECT COUNT(*) as n FROM entry WHERE id_feed=2', (err, row) => {
+     console.log('Articles:', row.n); db.close();
+   });"
    ```
 4. OpenRouter API 额度是否充足
 
@@ -701,7 +746,7 @@ docker inspect dailyinfo_freshrss | grep -A 10 "Mounts"
 ## 📝 技术栈
 
 - **RSS 聚合**：FreshRSS (Docker + SQLite)
-- **自动化引擎**：n8n (Docker + env 变量注入)
+- **处理引擎**：`scripts/run_pipelines.py` (Python, 宿主机) / n8n (Docker, 备选)
 - **AI 模型**：OpenRouter (Claude Haiku 4.5)
 - **推送中枢**：OpenClaw Gateway (Socket Mode Slack)
 - **定时推送**：OpenClaw Cron（容器内，无需宿主机调度）

@@ -4,11 +4,11 @@
 
 **DailyInfo** 是面向 AI for Science 研究者的学术情报自动聚合与推送系统。
 
-核心流程：**FreshRSS 采集 → n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Slack**
+核心流程：**FreshRSS 采集 → Python 脚本 / n8n AI 摘要生成（存文件） → OpenClaw Cron 定时推送到 Slack**
 
-另有独立的**技术趋势流水线**：**n8n 直接调用 GitHub/HuggingFace API → AI 摘要 → 推送到 Slack #code**
+另有独立的**技术趋势流水线**：**Python 脚本 / n8n 直接调用 GitHub/HuggingFace API → AI 摘要 → 推送到 Slack #code**
 
-设计原则：**配置驱动**（feeds.json / scrapers.json）+ **职责分离**（n8n 只管生成文件，OpenClaw 只管推送）
+设计原则：**配置驱动**（feeds.json / scrapers.json）+ **职责分离**（处理层只管生成文件，OpenClaw 只管推送）
 
 ---
 
@@ -18,14 +18,19 @@
 config/feeds.json（RSS 配置中心，定义所有 RSS 数据源）
 config/scrapers.json（API/抓取配置中心，12 源：GitHub Trending + HuggingFace + DUT 8 站点）
      ↓
-FreshRSS（统一 RSS 采集） / n8n 直接 API 调用 / n8n HTTP 抓取
+FreshRSS（统一 RSS 采集） / API 直接调用 / HTTP 抓取
      ↓ SQLite DB / API 响应 / HTML
-n8n（处理层 —— 只生成文件，不推送 Slack）
-  工作流 1: daily_briefing_pipeline.json（06:00，RSS → 学术简报）
-  工作流 2: code_trending_pipeline.json（06:15，API → 技术趋势）
-  工作流 3: university_news_pipeline.json（06:30，HTML 抓取 → 高校资讯）
+处理层（两种方式二选一 —— 只生成文件，不推送 Slack）
+  方式 A: scripts/run_pipelines.py（推荐，宿主机直接运行）
+    Pipeline 1: RSS → 学术简报（读取 FreshRSS SQLite）
+    Pipeline 2: API → 技术趋势（GitHub/HuggingFace）
+    Pipeline 3: HTML 抓取 → 高校资讯（DUT 站点）
+  方式 B: n8n 工作流（Docker 容器内，备选）
+    工作流 1: daily_briefing_pipeline.json（06:00）
+    工作流 2: code_trending_pipeline.json（06:15）
+    工作流 3: university_news_pipeline.json（06:30）
      ↓ Markdown 文件 (workspace/briefings/<category>/)
-OpenClaw Cron（推送层 —— 容器内定时，独立于 n8n）
+OpenClaw Cron（推送层 —— 容器内定时，独立于处理层）
      ↓ Slack #paper / #deeplearning / #code / #resource
 ```
 
@@ -47,13 +52,16 @@ OpenClaw Cron（推送层 —— 容器内定时，独立于 n8n）
 dailyinfo/
 ├── docker-compose.yml                      # 服务编排入口
 ├── Dockerfile.openclaw                     # 自定义 OpenClaw 镜像
+├── AGENTS.md                               # AI 代理项目上下文
 ├── config/
 │   ├── feeds.json                          # 📋 RSS 数据源配置（35 个源）
 │   └── scrapers.json                       # 📋 API/抓取数据源配置（12 源：GitHub Trending + HuggingFace + DUT 8 站点）
+├── scripts/
+│   └── run_pipelines.py                    # 🐍 本地 Pipeline 运行脚本（推荐执行方式）
 ├── workflows/
-│   ├── daily_briefing_pipeline.json        # n8n 工作流：RSS 学术简报（06:00）
-│   ├── code_trending_pipeline.json         # n8n 工作流：技术趋势简报（06:15）
-│   ├── university_news_pipeline.json       # n8n 工作流：大工院所资讯（06:30）
+│   ├── daily_briefing_pipeline.json        # n8n 工作流：RSS 学术简报（备选）
+│   ├── code_trending_pipeline.json         # n8n 工作流：技术趋势简报（备选）
+│   ├── university_news_pipeline.json       # n8n 工作流：大工院所资讯（备选）
 │   └── credentials-template.md             # n8n Credentials 配置指南
 └── prompts/
     └── ai_news_rewriter.txt                # AI 深度改写提示词（预留）
@@ -108,7 +116,29 @@ API/抓取类数据源配置（非 RSS），目前有 **12 个源**：
 
 ---
 
-## n8n 工作流
+## 处理层执行方式
+
+### 方式 A：scripts/run_pipelines.py（推荐）
+
+本地 Python 脚本，宿主机直接运行，无需 n8n 容器：
+
+```bash
+python3 scripts/run_pipelines.py              # 运行全部 3 条流水线
+python3 scripts/run_pipelines.py --pipeline 1  # 仅 RSS 学术简报
+python3 scripts/run_pipelines.py --pipeline 2  # 仅技术趋势
+python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
+```
+
+- **Pipeline 1**（RSS 学术简报）：读取 feeds.json → 查询 FreshRSS SQLite（`~/.freshrss/data/users/owen/db.sqlite`）→ OpenRouter AI 摘要 → 保存 `briefings/<category>/<name>_briefing_<date>.md`
+- **Pipeline 2**（技术趋势）：读取 scrapers.json（category=code）→ GitHub HTML 爬取 / HuggingFace API → AI 摘要 → 保存 `briefings/code/<name>_briefing_<date>.md`
+- **Pipeline 3**（大工院所）：读取 scrapers.json（category=resource）→ HTTP 抓取 HTML → 正则解析 → AI 摘要 → 保存 `briefings/resource/<name>_briefing_<date>.md`
+- **依赖**：`requests`（`pip install requests`），可选 `python-dotenv`
+- **SmolAI 深度路径**：自动提取 HTML 全文 → 去标签 → 截断 12000 字 → 按 `smolai_categorized` 模板生成
+- **批处理**：配置了 `max_articles_per_batch` 的 feed 自动分批，输出 `_batch1.md`、`_batch2.md`…
+- **DUT HTML 解析**：4 种日期解析器（`dlut_news` / `standard` / `dlut_future` / `dlut_scidep`），无更新时生成 placeholder 文件
+- **输出路径**：`~/.openclaw/workspace/briefings/`（与 n8n 一致）
+
+### 方式 B：n8n 工作流（备选）
 
 ### daily_briefing_pipeline.json（RSS 学术简报）
 
@@ -212,10 +242,10 @@ n8n 通过 `N8N_ENV_VARS_IN_DEC=true` + `env_file` 注入；工作流用 `{{ $en
 ~/.n8n/                              # n8n 工作流和配置
 ~/.openclaw/                         # OpenClaw 配置（含 cron/jobs.json、openclaw.json）
 ~/.openclaw/workspace/
-    briefings/papers/                # n8n 输出：论文简报
-    briefings/ai_news/               # n8n 输出：AI 新闻简报
-    briefings/code/                  # n8n 输出：技术趋势简报
-    briefings/resource/              # n8n 输出：大工院所资讯
+    briefings/papers/                # 输出：论文简报
+    briefings/ai_news/               # 输出：AI 新闻简报
+    briefings/code/                  # 输出：技术趋势简报
+    briefings/resource/              # 输出：大工院所资讯
     pushed/                          # 推送后归档
 ```
 
@@ -224,6 +254,12 @@ n8n 通过 `N8N_ENV_VARS_IN_DEC=true` + `env_file` 注入；工作流用 `{{ $en
 ## 常用命令
 
 ```bash
+# Pipeline 本地运行（推荐）
+python3 scripts/run_pipelines.py              # 运行全部
+python3 scripts/run_pipelines.py --pipeline 1  # 仅 RSS 学术简报
+python3 scripts/run_pipelines.py --pipeline 2  # 仅技术趋势
+python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
+
 # 服务管理
 docker compose up -d
 docker compose ps
