@@ -98,7 +98,7 @@ API/抓取类数据源配置（非 RSS），目前有 **12 个源**：
 
 **增量过滤**：所有 DUT/学院站点配置 `lookback_hours: 48`，仅推送 48 小时内新闻。无更新时生成 "📭 过去48小时无新内容" 提示文件。
 
-**注意**：这些站点 HTML 结构各异，university_news_pipeline.json 用 JS Code 节点正则解析，勿改用 HTML Extract 节点。
+**注意**：这些站点 HTML 结构各异，`scripts/run_pipelines.py` 中用 Python 正则解析（4 种日期解析器），n8n `university_news_pipeline.json` 用 JS Code 节点正则解析。勿改用 HTML Extract 节点。
 
 **可覆盖字段**（在 feed 级别覆盖 defaults）：
 - `lookback_hours`：查询多少小时内的文章（默认 24）

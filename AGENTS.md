@@ -59,6 +59,10 @@ docker exec dailyinfo_n8n env | grep OPENROUTER
 
 ### OpenClaw Cron 管理
 
+推送机制：cron 任务设置 `delivery.mode: "none"`（`--no-deliver`），agent 通过 `exec` 工具调用 `openclaw message send --channel discord --target <channel_id>` 直接发送到 Discord。不使用 `announce` delivery 模式（该模式与 Discord 路由不兼容）。
+
+Discord 频道 ID：#paper=`1489102139597787181`、#deeplearning=`1489102139597787182`、#code=`1489102139597787183`、#resource=`1489102139597787178`
+
 ```bash
 # 查看 cron 任务列表
 docker exec dailyinfo_openclaw openclaw cron list

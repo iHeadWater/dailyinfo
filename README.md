@@ -168,7 +168,7 @@ dailyinfo/
 
 **数据流生命周期**：
 ```
-n8n 生成 → briefings/<category>/<name>_briefing_<date>.md  [持久化]
+处理层生成 → briefings/<category>/<name>_briefing_<date>.md  [持久化]
     ↓
 OpenClaw 读取 → Discord 推送                                  [推送]
     ↓
@@ -407,17 +407,29 @@ cron 任务已预配置在 `~/.openclaw/cron/jobs.json` 中：
 | `code-daily-push` | 07:10 | `briefings/code/` | #code |
 | `resource-daily-push` | 07:15 | `briefings/resource/` | #resource |
 
-**推送逻辑**：
+**推送机制**：
+
+Cron 任务设置 `delivery.mode: "none"`（`--no-deliver`），agent 通过 `exec` 工具调用 `openclaw message send --channel discord --target <channel_id>` 直接发送到 Discord。不使用 `announce` delivery 模式（该模式与 Discord 路由不兼容）。
+
 ```
 OpenClaw Agent 扫描 briefings/<category>/ 目录
     ↓
 发现 .md 文件 → 读取内容
     ↓
-推送到对应 Discord 频道（超长自动分段）
+exec: openclaw message send → 推送到 Discord 频道（超长自动分段）
     ↓
 推送成功后归档到 pushed/<category>/
 （推送失败则保留原位，下次重试）
 ```
+
+**Discord 频道 ID**：
+
+| 频道 | Channel ID |
+|------|------------|
+| #paper | `1489102139597787181` |
+| #deeplearning | `1489102139597787182` |
+| #code | `1489102139597787183` |
+| #resource | `1489102139597787178` |
 
 ```bash
 # 查看 cron 任务状态
@@ -568,17 +580,18 @@ python3 scripts/run_pipelines.py --pipeline 3
 
 **触发**：OpenClaw 内置 cron，每天 07:00–07:15（Asia/Shanghai）
 
-**逻辑**：
+**推送机制**：`delivery.mode: "none"` + agent 通过 `exec` 工具调用 `openclaw message send --channel discord --target <channel_id>`
+
 ```
 OpenClaw Agent 扫描 briefings/<category>/ 下的 .md 文件
     ↓
 读取简报内容
     ↓
-推送到对应 Discord 频道
-  - papers/*   → #paper                          [07:00]
-  - ai_news/*  → #deeplearning                   [07:05]
-  - code/*     → #code                           [07:10]
-  - resource/* → #resource                       [07:15]
+exec: openclaw message send → 推送到 Discord 频道
+  - papers/*   → #paper (1489102139597787181)     [07:00]
+  - ai_news/*  → #deeplearning (1489102139597787182) [07:05]
+  - code/*     → #code (1489102139597787183)      [07:10]
+  - resource/* → #resource (1489102139597787178)   [07:15]
   - 超长消息自动分段
     ↓
 推送成功 → 归档到 pushed/<category>/
