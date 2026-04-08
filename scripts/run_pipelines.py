@@ -129,7 +129,10 @@ def run_pipeline_1():
                 [fid, cutoff]
             ).fetchall()
             if not entries:
-                log(f'  SKIP {name}: 0 articles')
+                log(f'  {name}: 0 articles — generating placeholder')
+                placeholder = f'# {display_name} — {DATE}\n\n📭 过去{lookback}小时无新内容\n'
+                save(category, f'{name}_briefing_{DATE}.md', placeholder)
+                saved += 1
                 continue
             log(f'  {name}: {len(entries)} articles (deep content)')
 

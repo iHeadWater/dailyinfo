@@ -178,8 +178,8 @@
       "max_batches": 2
     },
     {
-      "name": "global_planetary_change",
-      "display_name": "Global and Planetary Change",
+      "name": "environ_modelling_software",
+      "display_name": "Environmental Modelling & Software",
       "feed_id": 33,
       "category": "papers",
       "enabled": true,
