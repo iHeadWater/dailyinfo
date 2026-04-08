@@ -38,12 +38,12 @@
 │  │  • Nature / Science / PNAS / arXiv CS.AI ...             │      │
 │  │  • AI 新闻源（smol.ai 等）                                │      │
 │  │                                                           │      │
-│  │  API 直接抓取（n8n code_trending_pipeline）               │      │
+│  │  API 直接抓取（scripts/run_pipelines.py 或 n8n 工作流）   │      │
 │  │  • GitHub Trending 页面爬取（每日真实热门项目）           │      │
 │  │  • HuggingFace API（趋势模型/数据集/Spaces）             │      │
 │  │                                                           │      │
-│  │  网页抓取（n8n university_news_pipeline）                 │      │
-│  │  • 大连理工大学各院所官网（SSR HTML，JS 解析）            │      │
+│  │  网页抓取（scripts/run_pipelines.py 或 n8n 工作流）       │      │
+│  │  • 大连理工大学各院所官网（HTML，正则/JS 解析）           │      │
 │  └──────────────────────┬───────────────────────────────────┘      │
 │                         │ SQLite / API 响应                          │
 └─────────────────────────────────────────────────────────────────────┘
@@ -76,7 +76,7 @@
 │  ┌──────────────────────────────────────────────────────────┐      │
 │  │  OpenClaw 内置 cron 定时任务：                             │      │
 │  │                                                           │      │
-│  │  发现新文件 → OpenClaw Agent 推送到 Discord：              │      │
+│  │  发现新文件 → OpenClaw Agent 推送到 Discord / 飞书：       │      │
 │  │    • briefings/papers/*   → #paper       (07:00)         │      │
 │  │    • briefings/ai_news/*  → #deeplearning (07:05)        │      │
 │  │    • briefings/code/*     → #code         (07:10)        │      │
@@ -94,7 +94,7 @@
 |------|------|------|-----------|
 | **FreshRSS** | RSS 订阅管理与文献存储 | 8081 | `~/.freshrss/data/` |
 | **n8n** | 自动化工作流（定时查询 + AI 摘要 + 存文件） | 5678 | `~/.n8n/` |
-| **OpenClaw** | Discord 推送中枢 | 18789 | `~/.openclaw/` |
+| **OpenClaw** | Discord + 飞书推送中枢 | 18789 | `~/.openclaw/` |
 | **OpenRouter** | LLM API 聚合（Claude/GPT 等） | - | 云端服务 |
 
 ### 两种执行方式
@@ -194,7 +194,7 @@ OpenClaw 读取 → Discord 推送                                  [推送]
 | papers | ESSD（暂时无文章，Copernicus RSS bug） | 24 |
 | papers | GMD, NHESS | 25, 26 |
 | papers | JAMES, Earth and Space Science, GRL, Reviews of Geophysics, Earth's Future | 27–31 |
-| papers | Remote Sensing of Environment, Global and Planetary Change | 32, 33 |
+| papers | Remote Sensing of Environment, Environmental Modelling & Software | 32, 33 |
 | papers | HESS, Journal of Hydrometeorology (JHM), Water Resources Research | 35, 36, 37 |
 | papers | Hydrological Processes, Water Research, Advances in Water Resources, Journal of Hydrology | 38–41 |
 | ai_news | SmolAI News (`use_content: true`, 四分类深度分析) | 17 |
@@ -409,14 +409,14 @@ cron 任务已预配置在 `~/.openclaw/cron/jobs.json` 中：
 
 **推送机制**：
 
-Cron 任务设置 `delivery.mode: "none"`（`--no-deliver`），agent 通过 `exec` 工具调用 `openclaw message send --channel discord --target <channel_id>` 直接发送到 Discord。不使用 `announce` delivery 模式（该模式与 Discord 路由不兼容）。
+Cron 任务设置 `delivery.mode: "none"`（`--no-deliver`），agent 通过 `exec` 工具调用 **Discord REST API**（`curl` 或 `python3 urllib`）直接发送到 Discord。不使用 `openclaw message send` CLI（Node.js v24 兼容性 bug），也不使用 `announce` delivery 模式（与 Discord 路由不兼容）。
 
 ```
 OpenClaw Agent 扫描 briefings/<category>/ 目录
     ↓
 发现 .md 文件 → 读取内容
     ↓
-exec: openclaw message send → 推送到 Discord 频道（超长自动分段）
+exec: curl/python3 → Discord REST API 推送到频道（超长自动分段）
     ↓
 推送成功后归档到 pushed/<category>/
 （推送失败则保留原位，下次重试）
@@ -430,6 +430,13 @@ exec: openclaw message send → 推送到 Discord 频道（超长自动分段）
 | #deeplearning | `1489102139597787182` |
 | #code | `1489102139597787183` |
 | #resource | `1489102139597787178` |
+
+**飞书（Feishu/Lark）**：
+
+OpenClaw 同时配置了飞书插件（WebSocket 模式），支持：
+- **私聊**：`dmPolicy: "open"`，任何用户可直接私聊 OpenClaw bot
+- **群聊**：`groupPolicy: "allowlist"`，需将群聊 chat_id 添加到 `groupAllowFrom` 白名单
+- 配置位于 `~/.openclaw/openclaw.json` → `channels.feishu`
 
 ```bash
 # 查看 cron 任务状态
@@ -580,19 +587,19 @@ python3 scripts/run_pipelines.py --pipeline 3
 
 **触发**：OpenClaw 内置 cron，每天 07:00–07:15（Asia/Shanghai）
 
-**推送机制**：`delivery.mode: "none"` + agent 通过 `exec` 工具调用 `openclaw message send --channel discord --target <channel_id>`
+**推送机制**：`delivery.mode: "none"` + agent 通过 `exec` 工具调用 Discord REST API（`curl` / `python3 urllib`）
 
 ```
 OpenClaw Agent 扫描 briefings/<category>/ 下的 .md 文件
     ↓
 读取简报内容
     ↓
-exec: openclaw message send → 推送到 Discord 频道
+exec: curl/python3 → Discord REST API 推送到频道
   - papers/*   → #paper (1489102139597787181)     [07:00]
   - ai_news/*  → #deeplearning (1489102139597787182) [07:05]
   - code/*     → #code (1489102139597787183)      [07:10]
   - resource/* → #resource (1489102139597787178)   [07:15]
-  - 超长消息自动分段
+  - 超长消息自动分段（Discord 单消息上限 2000 字符）
     ↓
 推送成功 → 归档到 pushed/<category>/
 推送失败 → 保留原位等待下次重试
@@ -760,7 +767,7 @@ docker inspect dailyinfo_freshrss | grep -A 10 "Mounts"
 - **RSS 聚合**：FreshRSS (Docker + SQLite)
 - **处理引擎**：`scripts/run_pipelines.py` (Python, 宿主机) / n8n (Docker, 备选)
 - **AI 模型**：OpenRouter (Claude Haiku 4.5)
-- **推送中枢**：OpenClaw Gateway (Discord)
+- **推送中枢**：OpenClaw Gateway (Discord + 飞书/Feishu)
 - **定时推送**：OpenClaw Cron（容器内，无需宿主机调度）
 - **API/抓取数据源**：GitHub Trending (HTML) + HuggingFace API + DUT 8 站点 (HTML)
 - **容器编排**：Docker Compose

@@ -19,7 +19,7 @@
 - **RSS 聚合**：FreshRSS（Docker + SQLite）
 - **处理引擎**：`scripts/run_pipelines.py`（Python, 宿主机直接运行）/ n8n（Docker, 备选）
 - **AI 模型**：OpenRouter（Claude Haiku 4.5）
-- **推送中枢**：OpenClaw Gateway（Discord）
+- **推送中枢**：OpenClaw Gateway（Discord + 飞书/Feishu）
 - **容器编排**：Docker Compose
 
 ---
@@ -59,7 +59,7 @@ docker exec dailyinfo_n8n env | grep OPENROUTER
 
 ### OpenClaw Cron 管理
 
-推送机制：cron 任务设置 `delivery.mode: "none"`（`--no-deliver`），agent 通过 `exec` 工具调用 `openclaw message send --channel discord --target <channel_id>` 直接发送到 Discord。不使用 `announce` delivery 模式（该模式与 Discord 路由不兼容）。
+推送机制：cron 任务设置 `delivery.mode: "none"`（`--no-deliver`），agent 通过 `exec` 工具调用 Discord REST API（`curl` 或 `python3 urllib`）直接发送到 Discord。不使用 `openclaw message send` CLI（Node.js v24 兼容性 bug），也不使用 `announce` delivery 模式（与 Discord 路由不兼容）。
 
 Discord 频道 ID：#paper=`1489102139597787181`、#deeplearning=`1489102139597787182`、#code=`1489102139597787183`、#resource=`1489102139597787178`
 
@@ -233,6 +233,11 @@ python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
 | ai_news | #deeplearning |
 | code | #code |
 | resource | #resource |
+
+## 飞书（Feishu/Lark）
+
+OpenClaw 同时配置了飞书插件（WebSocket 模式），支持私聊（`dmPolicy: "open"`）和群聊（`groupPolicy: "allowlist"`）。
+配置位于 `~/.openclaw/openclaw.json` → `channels.feishu`。
 
 ---
 
