@@ -121,7 +121,7 @@ dailyinfo/
 ├── .env.example                      # 环境变量模板
 ├── .gitignore                        # Git 忽略配置
 ├── docker-compose.yml                # 服务编排
-├── Dockerfile.openclaw               # OpenClaw 定制镜像
+├── Dockerfile.openclaw               # OpenClaw 定制镜像（含 SkillHub CLI）
 ├── README.md                         # 本文档
 ├── AGENTS.md                         # AI 代理项目上下文（Copilot 等）
 ├── .github/
@@ -164,6 +164,9 @@ dailyinfo/
     │   ├── ai_news/
     │   ├── code/
     │   └── resource/
+    └── skills/                           # 已安装的 Skill（通过 SkillHub）
+        ├── blogwatcher/
+        └── notion/
 ```
 
 **数据流生命周期**：
@@ -681,6 +684,33 @@ docker exec dailyinfo_openclaw openclaw cron run --expect-final --timeout 120000
 docker exec dailyinfo_openclaw openclaw cron disable <job-id>
 docker exec dailyinfo_openclaw openclaw cron enable <job-id>
 ```
+
+### Skill 管理（SkillHub CLI）
+
+SkillHub CLI（腾讯 Skill 市场）已预装在自定义镜像中，容器重建不丢失。
+已安装的 Skill 数据存储在 `~/.openclaw/workspace/skills/`（通过 volume 持久化）。
+
+```bash
+# 搜索 Skill
+docker exec dailyinfo_openclaw skillhub search <关键词>
+
+# 安装 Skill
+docker exec dailyinfo_openclaw skillhub install <skill-slug>
+
+# 查看已安装的 Skill
+docker exec dailyinfo_openclaw skillhub list
+
+# 升级已安装的 Skill
+docker exec dailyinfo_openclaw skillhub upgrade
+
+# 升级 SkillHub CLI 自身（如有新版本）
+docker exec dailyinfo_openclaw skillhub self-upgrade
+```
+
+> **持久化说明**：
+> - **SkillHub CLI 工具**：写入 `Dockerfile.openclaw`，随镜像构建持久化
+> - **Skill 数据**：安装到 `~/.openclaw/workspace/skills/`，通过 Docker volume 自动持久化
+> - 重建镜像（`docker compose up -d --build openclaw-gateway`）后，CLI 和 Skill 数据均保留
 
 ---
 

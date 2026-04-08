@@ -51,7 +51,7 @@ OpenClaw Cron（推送层 —— 容器内定时，独立于处理层）
 ```
 dailyinfo/
 ├── docker-compose.yml                      # 服务编排入口
-├── Dockerfile.openclaw                     # 自定义 OpenClaw 镜像
+├── Dockerfile.openclaw                     # 自定义 OpenClaw 镜像（含 SkillHub CLI）
 ├── AGENTS.md                               # AI 代理项目上下文
 ├── config/
 │   ├── feeds.json                          # 📋 RSS 数据源配置（35 个源）

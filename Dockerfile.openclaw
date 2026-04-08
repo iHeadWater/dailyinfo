@@ -4,4 +4,24 @@ USER root
 
 RUN apt-get update && apt-get install -y git wget && rm -rf /var/lib/apt/lists/*
 
+# Install SkillHub CLI (Tencent's skill marketplace for OpenClaw)
+# CLI files go to /home/node/.skillhub/, wrapper to /home/node/.local/bin/
+# Plugin part installs to /home/node/.openclaw/extensions/ (persisted via volume)
+RUN mkdir -p /home/node/.skillhub /home/node/.local/bin \
+    && curl -fsSL https://skillhub-1251783334.cos.ap-guangzhou.myqcloud.com/install/latest.tar.gz \
+       | tar xzf - -C /tmp \
+    && cp /tmp/cli/skills_store_cli.py /home/node/.skillhub/ \
+    && cp /tmp/cli/skills_upgrade.py /home/node/.skillhub/ \
+    && cp /tmp/cli/version.json /home/node/.skillhub/ \
+    && cp /tmp/cli/metadata.json /home/node/.skillhub/ \
+    && cp /tmp/cli/skills_index.local.json /home/node/.skillhub/ \
+    && chmod +x /home/node/.skillhub/skills_store_cli.py \
+    && printf '#!/usr/bin/env bash\nset -euo pipefail\nexec python3 "${HOME}/.skillhub/skills_store_cli.py" "$@"\n' \
+       > /home/node/.local/bin/skillhub \
+    && chmod +x /home/node/.local/bin/skillhub \
+    && chown -R node:node /home/node/.skillhub /home/node/.local \
+    && rm -rf /tmp/cli
+
 USER node
+
+ENV PATH="/home/node/.local/bin:${PATH}"

@@ -108,7 +108,7 @@ dailyinfo/
 ├── .env.example                      # 环境变量模板
 ├── .gitignore                        # Git 忽略配置
 ├── docker-compose.yml                # 服务编排入口
-├── Dockerfile.openclaw               # 自定义 OpenClaw 镜像
+├── Dockerfile.openclaw               # 自定义 OpenClaw 镜像（含 SkillHub CLI）
 ├── README.md                         # 项目说明文档
 ├── AGENTS.md                         # AI 代理项目上下文
 ├── config/
@@ -190,6 +190,19 @@ python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
 - 所有服务通过 `docker-compose.yml` 编排
 - 环境变量存储在 `.env`（已加入 .gitignore）
 - 持久化数据映射到宿主机 `~/.freshrss/`、`~/.n8n/`、`~/.openclaw/`
+
+### Skill 管理（SkillHub CLI）
+
+- SkillHub CLI（腾讯 Skill 市场）预装在 `Dockerfile.openclaw` 中，容器重建不丢失
+- Skill 数据安装到 `~/.openclaw/workspace/skills/`，通过 Docker volume 自动持久化
+- 常用命令：
+  ```bash
+  docker exec dailyinfo_openclaw skillhub search <关键词>   # 搜索
+  docker exec dailyinfo_openclaw skillhub install <slug>     # 安装
+  docker exec dailyinfo_openclaw skillhub list               # 已安装列表
+  docker exec dailyinfo_openclaw skillhub upgrade             # 升级 Skill
+  docker exec dailyinfo_openclaw skillhub self-upgrade        # 升级 CLI
+  ```
 
 ---
 
