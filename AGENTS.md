@@ -189,7 +189,7 @@ python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
 
 - 所有服务通过 `docker-compose.yml` 编排
 - 环境变量存储在 `.env`（已加入 .gitignore）
-- 持久化数据映射到宿主机 `~/.freshrss/`、`~/.n8n/`、`~/.openclaw/`
+- 持久化数据映射到宿主机 `~/.freshrss/`、`~/.n8n/`、`~/.openclaw/`、`~/.mineru/`
 
 ### Skill 管理（SkillHub CLI）
 

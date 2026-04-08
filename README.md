@@ -725,6 +725,7 @@ docker exec dailyinfo_openclaw skillhub self-upgrade
 ~/.n8n/                    # n8n 工作流、执行历史、加密密钥
 ~/.openclaw/               # OpenClaw 配置
 ~/.openclaw/workspace/     # 简报文件（briefings/）、推送日志、归档（pushed/）
+~/.mineru/                 # MinerU API Token（config.yaml）
 ```
 
 ### 安全建议

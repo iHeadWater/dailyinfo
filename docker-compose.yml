@@ -36,6 +36,7 @@ services:
     volumes:
       - ~/.openclaw:/home/node/.openclaw
       - ~/.openclaw/credentials/notion/api_key:/home/node/.config/notion/api_key:ro
+      - ~/.mineru:/home/node/.mineru
     restart: unless-stopped
     networks:
       - dailyinfo_net
