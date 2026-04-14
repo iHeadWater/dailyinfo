@@ -1,0 +1,242 @@
+{
+  "name": "Jina reader",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "=https://r.jina.ai/{{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer REPLACE_WITH_YOUR_KEY"
+            },
+            {
+              "name": "X-No-Cache",
+              "value": "true"
+            },
+            {
+              "name": "X-Return-Format",
+              "value": "markdown"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -256,
+        32
+      ],
+      "id": "bdea64de-fda0-4be5-b6c5-1ab777b63825",
+      "name": "jina"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer REPLACE_WITH_YOUR_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"deepseek-chat\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n  \"content\": \"你是一个科研助理。请输出 JSON 格式：{\\\"fileName\\\":\\\"建议文件名\\\", \\\"content\\\":\\\"Markdown格式的正文\\\"}。正文内容必须包含：# 论文标题\\n\\n## 摘要总结\\n(此处为总结内容)\\n\\n--- \\n*生成时间：{{ $now }}*\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"标题：{{ $node['jina'].json.data.title }}\\n摘要：{{ $node['jina'].json.data.metadata.citation_abstract }}\"\n    }\n  ],\n  \"response_format\": { \"type\": \"json_object\" }\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d9d51074-706d-4f64-99d1-799945f359a1",
+      "name": "deepseek"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7cf274ca-1f66-4504-93e6-4763a78449bc",
+              "name": "fileName",
+              "value": "={{ JSON.parse($json.choices[0].message.content).fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "9a4f349a-2941-45c3-995f-a676c9e186d4",
+              "name": "summary",
+              "value": "={{ JSON.parse($json.choices[0].message.content).content }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        208,
+        0
+      ],
+      "id": "36839774-34ec-472c-aa3c-9a297ab748cd",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "url",
+        "include": "allOtherFields",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -560,
+        32
+      ],
+      "id": "fcbc2480-6a9d-4345-b531-296ec7f1c473",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "summary",
+        "options": {
+          "fileName": "={{ $now.format('yyyy-MM-dd_HHmm') }}-{{ $json.fileName }}.md"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        0
+      ],
+      "id": "e4e84a44-4c76-432a-bab2-b6d87b70b926",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=/data_output/{{ $now.format('yyyy-MM-dd_HHmm') }}_{{ $node[\"Edit Fields\"].json.fileName }}.md",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        0
+      ],
+      "id": "4b01fe56-ab7e-4423-8382-1d1229f3e079",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 定义想要批量分析的项目地址\nconst urls = [ \n    \"https://arxiv.org/abs/2401.00001\",  \n    \"https://arxiv.org/abs/2401.00002\",\n    \"https://github.com/deepseek-ai/DeepSeek-V3\",\n    \"https://github.com/google-deepmind/graphcast\"\n];\n\n// 包装成 n8n 标准格式输出\nreturn urls.map(u => {\n  return {\n    json: { url: u }\n  };\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        32
+      ],
+      "id": "ca44621f-002d-412f-b7fb-0304301b54a5",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "jina": {
+      "main": [
+        [
+          {
+            "node": "deepseek",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "deepseek": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "jina",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "baca7cad-a4a0-443a-814d-3bdcb71981db",
+  "meta": {
+    "instanceId": "115f5ab63d97c2e54845ee2b846809cc65aeb9c1c7ebf227390a8015b2181468"
+  },
+  "id": "ckbmNnW0CU1gtCkN",
+  "tags": []
+}
