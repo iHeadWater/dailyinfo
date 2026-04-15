@@ -248,6 +248,7 @@
       "category": "resource",
       "enabled": true,
       "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "base_url": "https://job.dlut.edu.cn/",
       "method": "POST",
       "params": {
         "pageNo": 1,
@@ -271,6 +272,7 @@
       "category": "resource",
       "enabled": true,
       "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "base_url": "https://job.dlut.edu.cn/",
       "method": "POST",
       "params": {
         "pageNo": 1,
@@ -294,6 +296,7 @@
       "category": "resource",
       "enabled": true,
       "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "base_url": "https://job.dlut.edu.cn/",
       "method": "POST",
       "params": {
         "pageNo": 1,
