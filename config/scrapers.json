@@ -248,7 +248,7 @@
       "category": "resource",
       "enabled": true,
       "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
-      "base_url": "https://job.dlut.edu.cn/",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/recruitmentinfoList.html",
       "method": "POST",
       "params": {
         "pageNo": 1,
@@ -258,7 +258,6 @@
       "extract": {
         "fields": {
           "title": "title",
-          "url": "url",
           "date": "startTime"
         }
       },
@@ -272,7 +271,7 @@
       "category": "resource",
       "enabled": true,
       "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
-      "base_url": "https://job.dlut.edu.cn/",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/newsList.html",
       "method": "POST",
       "params": {
         "pageNo": 1,
@@ -282,7 +281,6 @@
       "extract": {
         "fields": {
           "title": "title",
-          "url": "url",
           "date": "startTime"
         }
       },
@@ -296,7 +294,7 @@
       "category": "resource",
       "enabled": true,
       "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
-      "base_url": "https://job.dlut.edu.cn/",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/newsList.html",
       "method": "POST",
       "params": {
         "pageNo": 1,
@@ -306,7 +304,6 @@
       "extract": {
         "fields": {
           "title": "title",
-          "url": "url",
           "date": "startTime"
         }
       },

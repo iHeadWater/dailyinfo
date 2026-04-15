@@ -587,6 +587,7 @@ def parse_api_response_v1(source, api_data):
     lookback_hours = source.get('lookback_hours', 48)
     extract_config = source.get('extract', {})
     fields = extract_config.get('fields', {})
+    list_url = source.get('list_url', source.get('url', ''))
     cutoff = NOW - datetime.timedelta(hours=lookback_hours)
 
     items = []
@@ -607,10 +608,9 @@ def parse_api_response_v1(source, api_data):
 
         # Extract fields as configured
         title = item.get(fields.get('title', 'title'), '').strip()
-        url = item.get(fields.get('url', 'url'), '').strip()
         date_str = item.get(fields.get('date', 'date'), '')
 
-        if not title or not url:
+        if not title:
             continue
 
         # Parse date
@@ -628,13 +628,8 @@ def parse_api_response_v1(source, api_data):
         if dt and dt < cutoff:
             continue
 
-        # Format URL if relative
-        base_url = source.get('base_url', '')
-        if base_url and not url.startswith('http'):
-            url = base_url + url.lstrip('./')
-
         date_display = dt.strftime('%Y-%m-%d') if dt else date_str[:10] if date_str else 'unknown'
-        items.append({'title': title[:100], 'date': date_display, 'url': url})
+        items.append({'title': title[:100], 'date': date_display, 'url': list_url})
 
         if len(items) >= max_items:
             break
@@ -712,10 +707,13 @@ def run_pipeline_3():
                 model=scraper_defaults.get('model', 'anthropic/claude-haiku-4.5'),
                 max_tokens=800
             )
+            # Use list_url if available (for API sources), otherwise use API/scrape URL
+            display_url = source.get('list_url', source.get('url', ''))
             full_content = (
                 f'# {display_name} - {DATE}\n\n'
                 f'{content}\n\n'
-                f'---\n*{len(items)} items (past {lookback_hours}h), source: {source["url"]}*\n'
+                f'---\n*{len(items)} items (past {lookback_hours}h)*\n\n'
+                f'📍 [查看全部 → {display_url}]({display_url})\n'
             )
             save('resource', f'{name}_briefing_{DATE}.md', full_content)
             saved += 1
