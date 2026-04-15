@@ -240,6 +240,75 @@
       },
       "date_format": "dlut_scidep",
       "max_items": 10
+    },
+    {
+      "name": "dlut_recruitment",
+      "display_name": "大连理工大学 - 招聘信息",
+      "source_type": "api",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "1"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "url": "url",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 48,
+      "max_items": 10
+    },
+    {
+      "name": "dlut_internship",
+      "display_name": "大连理工大学 - 实习信息",
+      "source_type": "api",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "2"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "url": "url",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 48,
+      "max_items": 10
+    },
+    {
+      "name": "dlut_transfer_recruitment",
+      "display_name": "大连理工大学 - 选调生",
+      "source_type": "api",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "3"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "url": "url",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 48,
+      "max_items": 10
     }
   ],
   "prompt_templates": {

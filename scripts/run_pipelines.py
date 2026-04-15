@@ -22,12 +22,23 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, 'config')
 FEEDS_JSON = os.path.join(CONFIG_DIR, 'feeds.json')
 SCRAPERS_JSON = os.path.join(CONFIG_DIR, 'scrapers.json')
-FRESHRSS_DB = os.path.expanduser('~/.freshrss/data/users/owen/db.sqlite')
 WORKSPACE = os.path.expanduser('~/.openclaw/workspace')
 BRIEFINGS_DIR = os.path.join(WORKSPACE, 'briefings')
 
 DATE = datetime.datetime.now().strftime('%Y-%m-%d')
 NOW = datetime.datetime.now()
+
+# Load FreshRSS database path dynamically from config
+def _get_freshrss_db():
+    try:
+        with open(FEEDS_JSON) as f:
+            cfg = json.load(f)
+        user = cfg.get('defaults', {}).get('freshrss_user', 'owen')
+        return os.path.expanduser(f'~/.freshrss/data/users/{user}/db.sqlite')
+    except Exception:
+        return os.path.expanduser('~/.freshrss/data/users/owen/db.sqlite')
+
+FRESHRSS_DB = _get_freshrss_db()
 
 # ---------------------------------------------------------------------------
 # Load API key
@@ -129,8 +140,8 @@ def run_pipeline_1():
                 [fid, cutoff]
             ).fetchall()
             if not entries:
-                log(f'  {name}: 0 articles — generating placeholder')
-                placeholder = f'# {display_name} — {DATE}\n\n📭 过去{lookback}小时无新内容\n'
+                log(f'  {name}: 0 articles (deep content) — generating placeholder')
+                placeholder = f'# {display_name} - {DATE}\n\n📭 过去 {lookback} 小时无新内容\n'
                 save(category, f'{name}_briefing_{DATE}.md', placeholder)
                 saved += 1
                 continue
@@ -143,7 +154,11 @@ def run_pipeline_1():
                 raw_content = entry['content'] or ''
                 plain_text = strip_html(raw_content)
                 if len(plain_text) > 12000:
-                    plain_text = plain_text[:12000] + '\n\n[... content truncated ...]'
+                    # Truncate at word boundary to avoid splitting words
+                    trunc_point = plain_text.rfind(' ', 0, 12000)
+                    if trunc_point < 10000:
+                        trunc_point = 12000
+                    plain_text = plain_text[:trunc_point] + '\n\n[... content truncated ...]'
                 if len(plain_text) < 100:
                     log(f'    entry {idx}: too short, skip')
                     continue
@@ -181,11 +196,21 @@ def run_pipeline_1():
             [fid, cutoff]
         ).fetchall()
         if not entries:
-            log(f'  SKIP {name}: 0 articles')
+            log(f'  {name}: 0 articles — generating placeholder')
+            placeholder = f'# {display_name} - {DATE}\n\n📭 过去 {lookback} 小时无新内容\n'
+            save(category, f'{name}_briefing_{DATE}.md', placeholder)
+            saved += 1
             continue
 
         entries = list(entries)
-        log(f'  {name}: {len(entries)} articles')
+
+        # 如果配置了 max_articles，只取前 N 篇
+        max_articles = feed.get('max_articles')
+        if max_articles and len(entries) > max_articles:
+            log(f'  {name}: {len(entries)} articles (限制到 {max_articles} 篇)')
+            entries = entries[:max_articles]
+        else:
+            log(f'  {name}: {len(entries)} articles')
 
         if not max_per_batch:
             batches = [entries]
@@ -395,13 +420,16 @@ def parse_date_standard(date_str):
         return datetime.datetime.strptime(date_str, '%Y-%m-%d')
     except ValueError:
         pass
+    # Try MM-DD format for current or previous year
     try:
-        dt = datetime.datetime.strptime(f'{NOW.year}-{date_str}', '%Y-%m-%d')
-        if dt > NOW:
-            dt = dt.replace(year=NOW.year - 1)
-        return dt
+        if re.match(r'^\d{1,2}-\d{1,2}$', date_str):
+            dt = datetime.datetime.strptime(f'{NOW.year}-{date_str}', '%Y-%m-%d')
+            if dt > NOW:
+                dt = dt.replace(year=NOW.year - 1)
+            return dt
     except ValueError:
-        return None
+        pass
+    return None
 
 def parse_date_dlut_future(date_html):
     cleaned = re.sub(r'<[^>]+>', ' ', date_html).strip()
@@ -429,11 +457,42 @@ def parse_date_dlut_scidep(date_html):
             pass
     return None
 
+def parse_date_dlut_recruitment(date_html):
+    """Parse DLUT job portal date format: can be HTML with MM-dd and yyyy, or ISO datetime string."""
+    # If it's a datetime string (e.g., "2026-04-15 10:17:09"), parse directly
+    if isinstance(date_html, str) and ' ' in date_html and len(date_html) > 10:
+        try:
+            return datetime.datetime.strptime(date_html[:19], '%Y-%m-%d %H:%M:%S')
+        except ValueError:
+            pass
+
+    # Otherwise treat as HTML with MM-DD and yyyy
+    cleaned = re.sub(r'<[^>]+>', ' ', str(date_html)).strip()
+    # Look for MM-DD pattern and yyyy pattern
+    md_m = re.search(r'(\d{2})-(\d{2})', cleaned)
+    yyyy_m = re.search(r'(\d{4})', cleaned)
+    if md_m and yyyy_m:
+        try:
+            return datetime.datetime.strptime(f'{yyyy_m.group(1)}-{md_m.group(1)}-{md_m.group(2)}', '%Y-%m-%d')
+        except ValueError:
+            pass
+    # Fallback: treat as MM-DD and assume current year
+    if md_m:
+        try:
+            dt = datetime.datetime.strptime(f'{NOW.year}-{md_m.group(1)}-{md_m.group(2)}', '%Y-%m-%d')
+            if dt > NOW:
+                dt = dt.replace(year=NOW.year - 1)
+            return dt
+        except ValueError:
+            pass
+    return None
+
 DATE_PARSERS = {
     'dlut_news': parse_date_dlut_news,
     'standard': parse_date_standard,
     'dlut_future': parse_date_dlut_future,
     'dlut_scidep': parse_date_dlut_scidep,
+    'dlut_recruitment': parse_date_dlut_recruitment,
 }
 
 def parse_html_v2(source, page_html):
@@ -522,8 +581,69 @@ def parse_html_v2(source, page_html):
     return items
 
 
+def parse_api_response_v1(source, api_data):
+    """Parse API response to extract items with date filtering."""
+    max_items = source.get('max_items', 10)
+    lookback_hours = source.get('lookback_hours', 48)
+    extract_config = source.get('extract', {})
+    fields = extract_config.get('fields', {})
+    cutoff = NOW - datetime.timedelta(hours=lookback_hours)
+
+    items = []
+
+    # Assume api_data is a dict with 'object' key containing list or similar
+    data_list = []
+    if isinstance(api_data, dict):
+        if 'object' in api_data and isinstance(api_data['object'], dict):
+            data_list = api_data['object'].get('list', [])
+        elif 'list' in api_data:
+            data_list = api_data['list']
+        elif isinstance(api_data, list):
+            data_list = api_data
+
+    for item in data_list:
+        if not isinstance(item, dict):
+            continue
+
+        # Extract fields as configured
+        title = item.get(fields.get('title', 'title'), '').strip()
+        url = item.get(fields.get('url', 'url'), '').strip()
+        date_str = item.get(fields.get('date', 'date'), '')
+
+        if not title or not url:
+            continue
+
+        # Parse date
+        dt = None
+        if isinstance(date_str, str) and date_str:
+            # Try to parse datetime-like strings (e.g., "2026-04-15 10:17:09")
+            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d', '%Y/%m/%d']:
+                try:
+                    dt = datetime.datetime.strptime(date_str[:19], fmt)
+                    break
+                except ValueError:
+                    pass
+
+        # Filter by date
+        if dt and dt < cutoff:
+            continue
+
+        # Format URL if relative
+        base_url = source.get('base_url', '')
+        if base_url and not url.startswith('http'):
+            url = base_url + url.lstrip('./')
+
+        date_display = dt.strftime('%Y-%m-%d') if dt else date_str[:10] if date_str else 'unknown'
+        items.append({'title': title[:100], 'date': date_display, 'url': url})
+
+        if len(items) >= max_items:
+            break
+
+    return items
+
+
 def run_pipeline_3():
-    log('=== Pipeline 3: University News ===')
+    log('=== Pipeline 3: University News & Recruitment ===')
     with open(SCRAPERS_JSON) as f:
         scrapers_cfg = json.load(f)
 
@@ -538,26 +658,40 @@ def run_pipeline_3():
         name = source['name']
         display_name = source['display_name']
         lookback_hours = source.get('lookback_hours', 48)
+        source_type = source.get('source_type', 'scrape')
         log(f'  {name}...')
 
+        items = []
         try:
-            resp = requests.get(
-                source['url'], timeout=20,
-                headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
-            )
-            resp.encoding = resp.apparent_encoding or 'utf-8'
-            page_html = resp.text
+            if source_type == 'api':
+                # Handle API-based sources (e.g., recruitment info)
+                method = source.get('method', 'GET').upper()
+                params = source.get('params', {})
+                if method == 'POST':
+                    resp = requests.post(source['url'], data=params, timeout=20)
+                else:
+                    resp = requests.get(source['url'], params=params, timeout=20)
+                resp.raise_for_status()
+                api_data = resp.json()
+                items = parse_api_response_v1(source, api_data)
+            else:
+                # Handle HTML scraping sources
+                resp = requests.get(
+                    source['url'], timeout=20,
+                    headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+                )
+                resp.encoding = resp.apparent_encoding or 'utf-8'
+                page_html = resp.text
+                items = parse_html_v2(source, page_html)
         except Exception as e:
             log(f'    FETCH ERR: {e}')
             continue
 
-        items = parse_html_v2(source, page_html)
-
         if not items:
             no_update_content = (
                 f'# {display_name} - {DATE}\n\n'
-                f'No new content in the past {lookback_hours} hours.\n\n'
-                f'---\n*Source: {source["url"]}*\n'
+                f'📭 过去 {lookback_hours} 小时无新内容\n\n'
+                f'---\n*来源: {source["url"]}*\n'
             )
             save('resource', f'{name}_briefing_{DATE}.md', no_update_content)
             saved += 1

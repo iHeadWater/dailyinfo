@@ -4,7 +4,7 @@
     "model": "anthropic/claude-haiku-4.5",
     "lookback_hours": 24,
     "prompt_template": "one_line_summary",
-    "freshrss_user": "owen"
+    "freshrss_user": "sjiaxin"
   },
   "feeds": [
     {
@@ -89,7 +89,8 @@
       "display_name": "Nature Reviews Earth & Environment",
       "feed_id": 20,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "max_articles": 5
     },
     {
       "name": "nature_climate_change",
@@ -174,8 +175,9 @@
       "feed_id": 32,
       "category": "papers",
       "enabled": true,
+      "max_articles": 10,
       "max_articles_per_batch": 15,
-      "max_batches": 2
+      "max_batches": 1
     },
     {
       "name": "environ_modelling_software",
@@ -183,8 +185,9 @@
       "feed_id": 33,
       "category": "papers",
       "enabled": true,
+      "max_articles": 10,
       "max_articles_per_batch": 15,
-      "max_batches": 2
+      "max_batches": 1
     },
     {
       "name": "nature_water",
@@ -227,8 +230,9 @@
       "feed_id": 39,
       "category": "papers",
       "enabled": true,
+      "max_articles": 10,
       "max_articles_per_batch": 15,
-      "max_batches": 2
+      "max_batches": 1
     },
     {
       "name": "advances_water_resources",
@@ -236,8 +240,9 @@
       "feed_id": 40,
       "category": "papers",
       "enabled": true,
+      "max_articles": 10,
       "max_articles_per_batch": 15,
-      "max_batches": 2
+      "max_batches": 1
     },
     {
       "name": "journal_hydrology",
@@ -245,8 +250,9 @@
       "feed_id": 41,
       "category": "papers",
       "enabled": true,
+      "max_articles": 10,
       "max_articles_per_batch": 15,
-      "max_batches": 2
+      "max_batches": 1
     },
     {
       "name": "smolai_news",
