@@ -10,169 +10,162 @@
     {
       "name": "nature",
       "display_name": "Nature",
-      "feed_id": 2,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/nature.rss"
     },
     {
       "name": "nature_communications",
       "display_name": "Nature Communications",
-      "feed_id": 3,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/ncomms.rss"
     },
     {
       "name": "scientific_data",
       "display_name": "Scientific Data",
-      "feed_id": 8,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/sdata.rss"
     },
     {
       "name": "science_advances",
       "display_name": "Science Advances",
-      "feed_id": 16,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv"
     },
     {
       "name": "science_news",
       "display_name": "Science News",
-      "feed_id": 6,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.science.org/rss/news_current.xml"
     },
     {
       "name": "nature_machine_intelligence",
       "display_name": "Nature Machine Intelligence",
-      "feed_id": 9,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/natmachintell.rss"
     },
     {
       "name": "nature_reviews_physics",
       "display_name": "Nature Reviews Physics",
-      "feed_id": 10,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/natrevphys.rss"
     },
     {
       "name": "pnas",
       "display_name": "PNAS",
-      "feed_id": 13,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=PNAS"
     },
     {
       "name": "science",
       "display_name": "Science",
-      "feed_id": 15,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science"
     },
     {
       "name": "nature_sustainability",
       "display_name": "Nature Sustainability",
-      "feed_id": 18,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/natsustain.rss"
     },
     {
       "name": "nature_geoscience",
       "display_name": "Nature Geoscience",
-      "feed_id": 19,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/ngeo.rss"
     },
     {
       "name": "nature_reviews_earth_environ",
       "display_name": "Nature Reviews Earth & Environment",
-      "feed_id": 20,
       "category": "papers",
       "enabled": true,
-      "max_articles": 5
+      "max_articles": 5,
+      "url": "https://www.nature.com/natrevearthenviron.rss"
     },
     {
       "name": "nature_climate_change",
       "display_name": "Nature Climate Change",
-      "feed_id": 21,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/nclimate.rss"
     },
     {
       "name": "aies",
       "display_name": "AI in Earth Sciences (AIES)",
-      "feed_id": 22,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "bams",
       "display_name": "Bulletin of the American Meteorological Society",
-      "feed_id": 23,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "essd",
       "display_name": "Earth System Science Data (ESSD)",
-      "feed_id": 24,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://essd.copernicus.org/articles/xml/rss2_0.xml"
     },
     {
       "name": "gmd",
       "display_name": "Geoscientific Model Development (GMD)",
-      "feed_id": 25,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://gmd.copernicus.org/xml/rss2_0.xml"
     },
     {
       "name": "nhess",
       "display_name": "Natural Hazards and Earth System Sciences (NHESS)",
-      "feed_id": 26,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://nhess.copernicus.org/articles/xml/rss2_0.xml"
     },
     {
       "name": "james",
       "display_name": "Journal of Advances in Modeling Earth Systems (JAMES)",
-      "feed_id": 27,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://agupubs.onlinelibrary.wiley.com/feed/19422466/most-recent"
     },
     {
       "name": "earth_space_science",
       "display_name": "Earth and Space Science",
-      "feed_id": 28,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "grl",
       "display_name": "Geophysical Research Letters (GRL)",
-      "feed_id": 29,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "reviews_geophysics",
       "display_name": "Reviews of Geophysics",
-      "feed_id": 30,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "earths_future",
       "display_name": "Earth's Future",
-      "feed_id": 31,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "remote_sensing_environ",
       "display_name": "Remote Sensing of Environment",
-      "feed_id": 32,
       "category": "papers",
       "enabled": true,
       "max_articles": 10,
@@ -182,7 +175,6 @@
     {
       "name": "environ_modelling_software",
       "display_name": "Environmental Modelling & Software",
-      "feed_id": 33,
       "category": "papers",
       "enabled": true,
       "max_articles": 10,
@@ -192,42 +184,38 @@
     {
       "name": "nature_water",
       "display_name": "Nature Water",
-      "feed_id": 34,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://www.nature.com/natwater.rss"
     },
     {
       "name": "hess",
       "display_name": "Hydrology and Earth System Sciences (HESS)",
-      "feed_id": 35,
       "category": "papers",
-      "enabled": true
+      "enabled": true,
+      "url": "https://hess.copernicus.org/articles/xml/rss2_0.xml"
     },
     {
       "name": "jhm",
       "display_name": "Journal of Hydrometeorology (JHM)",
-      "feed_id": 36,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "wrr",
       "display_name": "Water Resources Research (WRR)",
-      "feed_id": 37,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "hydrological_processes",
       "display_name": "Hydrological Processes",
-      "feed_id": 38,
       "category": "papers",
       "enabled": true
     },
     {
       "name": "water_research",
       "display_name": "Water Research",
-      "feed_id": 39,
       "category": "papers",
       "enabled": true,
       "max_articles": 10,
@@ -237,7 +225,6 @@
     {
       "name": "advances_water_resources",
       "display_name": "Advances in Water Resources",
-      "feed_id": 40,
       "category": "papers",
       "enabled": true,
       "max_articles": 10,
@@ -247,7 +234,6 @@
     {
       "name": "journal_hydrology",
       "display_name": "Journal of Hydrology",
-      "feed_id": 41,
       "category": "papers",
       "enabled": true,
       "max_articles": 10,
@@ -257,21 +243,21 @@
     {
       "name": "smolai_news",
       "display_name": "SmolAI News",
-      "feed_id": 17,
       "category": "ai_news",
       "enabled": true,
       "lookback_hours": 48,
       "prompt_template": "smolai_categorized",
-      "use_content": true
+      "use_content": true,
+      "url": "https://news.smol.ai/rss.xml"
     },
     {
       "name": "arxiv_cs_ai",
       "display_name": "arXiv CS.AI",
-      "feed_id": 7,
       "category": "ai_news",
       "enabled": true,
       "max_articles_per_batch": 10,
-      "max_batches": 5
+      "max_batches": 5,
+      "url": "https://rss.arxiv.org/rss/cs.AI"
     }
   ],
   "prompt_templates": {

@@ -11,14 +11,37 @@ import shutil
 # Discord API 端点
 DISCORD_API = "https://discord.com/api/v10"
 
+# 项目根目录（脚本位于 scripts/，上一级即根目录）
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 def log(msg):
     """输出日志"""
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
+def _load_discord_token():
+    """从 .env 或环境变量读取 DISCORD_BOT_TOKEN。"""
+    # 优先环境变量
+    token = os.environ.get('DISCORD_BOT_TOKEN', '')
+    if token:
+        return token
+    # 从 .env 文件解析
+    env_path = os.path.join(PROJECT_ROOT, '.env')
+    if os.path.exists(env_path):
+        try:
+            from dotenv import dotenv_values
+            token = dotenv_values(env_path).get('DISCORD_BOT_TOKEN', '')
+        except ImportError:
+            with open(env_path) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('DISCORD_BOT_TOKEN=') and not line.startswith('#'):
+                        token = line.split('=', 1)[1].strip().strip('"').strip("'")
+                        break
+    return token
+
 # Discord 配置
-# 从环境变量读取 Token（crontab 会通过 source .env 加载）
-DISCORD_BOT_TOKEN = os.environ.get('DISCORD_BOT_TOKEN', '')
+DISCORD_BOT_TOKEN = _load_discord_token()
 if not DISCORD_BOT_TOKEN:
     log("❌ 错误：DISCORD_BOT_TOKEN 未设置")
     exit(1)
@@ -34,7 +57,7 @@ BRIEFINGS_DIR = os.path.expanduser("~/.openclaw/workspace/briefings")
 PUSHED_DIR = os.path.expanduser("~/.openclaw/workspace/pushed")
 DATE = datetime.now().strftime("%Y-%m-%d")
 
-def split_message(content, max_length=2000):
+def split_message(content, max_length=1950):
     """分割超长消息（Discord 单条消息上限 2000 字符）"""
     if len(content) <= max_length:
         return [content]

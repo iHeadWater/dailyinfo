@@ -20,8 +20,7 @@ import html as html_lib
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, 'config')
-FEEDS_JSON = os.path.join(CONFIG_DIR, 'feeds.json')
-SCRAPERS_JSON = os.path.join(CONFIG_DIR, 'scrapers.json')
+SOURCES_JSON = os.path.join(CONFIG_DIR, 'sources.json')
 WORKSPACE = os.path.expanduser('~/.openclaw/workspace')
 BRIEFINGS_DIR = os.path.join(WORKSPACE, 'briefings')
 
@@ -31,7 +30,7 @@ NOW = datetime.datetime.now()
 # Load FreshRSS database path dynamically from config
 def _get_freshrss_db():
     try:
-        with open(FEEDS_JSON) as f:
+        with open(SOURCES_JSON) as f:
             cfg = json.load(f)
         user = cfg.get('defaults', {}).get('freshrss_user', 'owen')
         return os.path.expanduser(f'~/.freshrss/data/users/{user}/db.sqlite')
@@ -39,6 +38,25 @@ def _get_freshrss_db():
         return os.path.expanduser('~/.freshrss/data/users/owen/db.sqlite')
 
 FRESHRSS_DB = _get_freshrss_db()
+
+def _build_feed_url_map(db):
+    """Build url→feed_id mapping from FreshRSS DB. Matches by full URL or base URL (no query string)."""
+    full_map, base_map = {}, {}
+    for fid, url in db.execute('SELECT id, url FROM feed').fetchall():
+        url_clean = html_lib.unescape(url)
+        full_map[url_clean] = fid
+        base = url_clean.split('?')[0]
+        if base not in base_map:
+            base_map[base] = fid
+    return full_map, base_map
+
+def _resolve_feed_id(url, full_map, base_map):
+    if not url:
+        return None
+    url_clean = html_lib.unescape(url)
+    if url_clean in full_map:
+        return full_map[url_clean]
+    return base_map.get(url_clean.split('?')[0])
 
 # ---------------------------------------------------------------------------
 # Load API key
@@ -109,22 +127,26 @@ def strip_html(text):
 # =====================================================================
 def run_pipeline_1():
     log('=== Pipeline 1: Daily Briefing (papers + AI news) ===')
-    with open(FEEDS_JSON) as f:
-        feeds_cfg = json.load(f)
+    with open(SOURCES_JSON) as f:
+        sources_cfg = json.load(f)
 
-    defaults = feeds_cfg.get('defaults', {})
-    templates = feeds_cfg.get('prompt_templates', {})
+    defaults = sources_cfg.get('defaults', {})
+    templates = sources_cfg.get('prompt_templates', {})
     default_tmpl_key = defaults.get('prompt_template', 'one_line_summary')
+    feeds_cfg = {'feeds': [s for s in sources_cfg['sources'] if s.get('type') == 'rss']}
 
     db = sqlite3.connect(FRESHRSS_DB)
     db.row_factory = sqlite3.Row
+    full_map, base_map = _build_feed_url_map(db)
     saved = 0
 
     for feed in feeds_cfg['feeds']:
         if not feed.get('enabled', True):
             continue
 
-        fid = feed.get('feed_id')
+        fid = _resolve_feed_id(feed.get('url'), full_map, base_map)
+        if not fid:
+            continue
         lookback = feed.get('lookback_hours') or defaults.get('lookback_hours', 24)
         name = feed['name']
         category = feed.get('category', 'papers')
@@ -294,14 +316,14 @@ def scrape_github_trending():
 
 def run_pipeline_2():
     log('=== Pipeline 2: Code Trending ===')
-    with open(SCRAPERS_JSON) as f:
-        scrapers_cfg = json.load(f)
+    with open(SOURCES_JSON) as f:
+        sources_cfg = json.load(f)
 
-    scraper_defaults = scrapers_cfg.get('defaults', {})
+    scraper_defaults = sources_cfg.get('defaults', {})
     scraper_model = scraper_defaults.get('model', 'anthropic/claude-haiku-4.5')
     saved = 0
 
-    for source in scrapers_cfg['sources']:
+    for source in sources_cfg['sources']:
         if source.get('category') != 'code' or source.get('enabled') is False:
             continue
 
@@ -391,7 +413,7 @@ def run_pipeline_2():
 
         try:
             content = call_ai(prompt, model=source.get('model', scraper_model), max_tokens=1500)
-            save('code', f'{name}_briefing_{DATE}.md', content)
+            save('code', f'{name}_briefing_{DATE}.md', f'# {display_name} - {DATE}\n\n{content}')
             saved += 1
             log(f'    -> saved {name}_briefing_{DATE}.md')
             time.sleep(1)
@@ -639,21 +661,21 @@ def parse_api_response_v1(source, api_data):
 
 def run_pipeline_3():
     log('=== Pipeline 3: University News & Recruitment ===')
-    with open(SCRAPERS_JSON) as f:
-        scrapers_cfg = json.load(f)
+    with open(SOURCES_JSON) as f:
+        sources_cfg = json.load(f)
 
-    scraper_defaults = scrapers_cfg.get('defaults', {})
-    university_prompt_tmpl = scrapers_cfg.get('prompt_templates', {}).get('university_news', '')
+    scraper_defaults = sources_cfg.get('defaults', {})
+    prompt_templates = sources_cfg.get('prompt_templates', {})
     saved = 0
 
-    for source in scrapers_cfg['sources']:
+    for source in sources_cfg['sources']:
         if source.get('category') != 'resource' or source.get('enabled') is False:
             continue
 
         name = source['name']
         display_name = source['display_name']
         lookback_hours = source.get('lookback_hours', 48)
-        source_type = source.get('source_type', 'scrape')
+        source_type = source.get('type') or source.get('source_type', 'scrape')
         log(f'  {name}...')
 
         items = []
@@ -696,10 +718,12 @@ def run_pipeline_3():
         log(f'    {len(items)} items (within {lookback_hours}h)')
 
         items_text = '\n'.join(
-            f'{i+1}. [{item["date"]}] {item["title"]}\n   URL: {item["url"]}'
+            f'{i+1}. [{item["date"]}] {item["title"]}'
             for i, item in enumerate(items)
         )
-        prompt = university_prompt_tmpl.replace('{items}', f'{display_name}\n{items_text}')
+        tmpl_key = source.get('prompt_template', 'university_news')
+        prompt_tmpl = prompt_templates.get(tmpl_key) or prompt_templates.get('university_news', '')
+        prompt = prompt_tmpl.replace('{items}', f'{display_name}\n{items_text}')
 
         try:
             content = call_ai(
@@ -713,7 +737,7 @@ def run_pipeline_3():
                 f'# {display_name} - {DATE}\n\n'
                 f'{content}\n\n'
                 f'---\n*{len(items)} items (past {lookback_hours}h)*\n\n'
-                f'📍 [查看全部 → {display_url}]({display_url})\n'
+                f'📍 查看全部：{display_url}\n'
             )
             save('resource', f'{name}_briefing_{DATE}.md', full_content)
             saved += 1
