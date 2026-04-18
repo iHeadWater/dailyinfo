@@ -1,7 +1,7 @@
 {
   "version": 2,
   "defaults": {
-    "model": "anthropic/claude-haiku-4.5",
+    "model": "anthropic/claude-haiku-4-5",
     "lookback_hours": 24,
     "freshrss_user": "sjiaxin"
   },

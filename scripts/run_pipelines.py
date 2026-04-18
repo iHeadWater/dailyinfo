@@ -74,7 +74,7 @@ def load_api_key() -> str:
     sys.exit(1)
 
 
-def call_ai(prompt: str, model: str = 'anthropic/claude-haiku-4.5', max_tokens: int = 1200) -> str:
+def call_ai(prompt: str, model: str = 'anthropic/claude-haiku-4-5', max_tokens: int = 1200) -> str:
     resp = requests.post(
         'https://openrouter.ai/api/v1/chat/completions',
         headers={'Authorization': f'Bearer {API_KEY}', 'Content-Type': 'application/json'},
@@ -107,7 +107,7 @@ def run_pipeline_1() -> int:
     log('=== Pipeline 1: Daily Briefing (papers + AI news) ===')
     cfg, defaults, templates = _load_sources()
     default_tmpl_key = defaults.get('prompt_template', 'one_line_summary')
-    model_default = defaults.get('model', 'anthropic/claude-haiku-4.5')
+    model_default = defaults.get('model', 'anthropic/claude-haiku-4-5')
 
     db = sqlite3.connect(FRESHRSS_DB)
     db.row_factory = sqlite3.Row
@@ -189,7 +189,7 @@ def run_pipeline_1() -> int:
 def run_pipeline_2() -> int:
     log('=== Pipeline 2: Code Trending ===')
     cfg, defaults, _ = _load_sources()
-    model_default = defaults.get('model', 'anthropic/claude-haiku-4.5')
+    model_default = defaults.get('model', 'anthropic/claude-haiku-4-5')
     saved = 0
 
     for source_cfg in cfg['sources']:
@@ -242,7 +242,7 @@ def run_pipeline_2() -> int:
 def run_pipeline_3() -> int:
     log('=== Pipeline 3: University News & Recruitment ===')
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get('model', 'anthropic/claude-haiku-4.5')
+    model_default = defaults.get('model', 'anthropic/claude-haiku-4-5')
     saved = 0
 
     for source_cfg in cfg['sources']:
