@@ -92,70 +92,57 @@ if [[ -z "${FRESHRSS_PASS}" ]]; then
     warn "FRESHRSS_PASSWORD not in .env, using default: ${FRESHRSS_PASS}"
 fi
 
-# Check if user already exists by trying to login
+# Try login first; if fails, create account then retry
+FRESHRSS_AUTH=""
 LOGIN_RESP=$(curl -sf -X POST "${FRESHRSS_API}/accounts/ClientLogin" \
     -d "Email=${FRESHRSS_USER}&Passwd=${FRESHRSS_PASS}" 2>/dev/null || echo "")
 
 if echo "${LOGIN_RESP}" | grep -q "Auth="; then
     ok "FreshRSS account '${FRESHRSS_USER}' already exists"
+    FRESHRSS_AUTH=$(echo "${LOGIN_RESP}" | grep "^Auth=" | cut -d= -f2)
 else
-    # Try to create user via web installer (FreshRSS first-run setup)
-    warn "FreshRSS account may need manual setup. Visit ${FRESHRSS_URL} to create user '${FRESHRSS_USER}'."
-    warn "Or run: docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/create-user.php --user ${FRESHRSS_USER} --password '${FRESHRSS_PASS}'"
-
-    # Try creating via CLI
-    if docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/create-user.php \
+    # Create account via CLI
+    docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/create-user.php \
         --user "${FRESHRSS_USER}" \
         --password "${FRESHRSS_PASS}" \
         --api-password "${FRESHRSS_PASS}" \
-        --no-default-feeds 2>/dev/null; then
-        ok "FreshRSS account '${FRESHRSS_USER}' created"
+        --no-default-feeds 2>/dev/null && ok "FreshRSS account '${FRESHRSS_USER}' created" || true
+
+    # Retry login
+    LOGIN_RESP=$(curl -sf -X POST "${FRESHRSS_API}/accounts/ClientLogin" \
+        -d "Email=${FRESHRSS_USER}&Passwd=${FRESHRSS_PASS}" 2>/dev/null || echo "")
+    if echo "${LOGIN_RESP}" | grep -q "Auth="; then
+        FRESHRSS_AUTH=$(echo "${LOGIN_RESP}" | grep "^Auth=" | cut -d= -f2)
+        ok "FreshRSS login successful"
     else
-        warn "Could not auto-create FreshRSS account. Create it manually at ${FRESHRSS_URL}"
+        warn "Could not login to FreshRSS — feed subscriptions will be skipped. Visit ${FRESHRSS_URL} to set up manually."
     fi
 fi
 
-# Subscribe to RSS feeds listed in sources.json
+# Subscribe to RSS feeds listed in feeds.json
 step "Subscribing to RSS feeds in FreshRSS..."
-FEEDS_JSON=$(python3 -c "
+if [[ -z "${FRESHRSS_AUTH}" ]]; then
+    warn "No auth token — skipping feed subscriptions"
+else
+    SUBSCRIBED=0
+    SKIPPED=0
+    while IFS= read -r feed_url; do
+        SUB_RESP=$(curl -sf -X POST "${FRESHRSS_API}/subscription/quickadd" \
+            -H "Authorization: GoogleLogin auth=${FRESHRSS_AUTH}" \
+            -d "quickadd=${feed_url}" 2>/dev/null || echo "")
+        if echo "${SUB_RESP}" | grep -q '"numResults":1'; then
+            SUBSCRIBED=$((SUBSCRIBED+1))
+        else
+            SKIPPED=$((SKIPPED+1))
+        fi
+    done < <(python3 -c "
 import json
-with open('${PROJECT_DIR}/config/sources.json') as f:
-    cfg = json.load(f)
-rss = [s for s in cfg['sources'] if s.get('type') == 'rss' and s.get('enabled') and s.get('url')]
-print(json.dumps([{'name': s.get('display_name', s['name']), 'url': s['url']} for s in rss]))
+cfg = json.load(open('${PROJECT_DIR}/config/feeds.json'))
+for f in cfg.get('feeds', []):
+    if f.get('enabled') and f.get('url'):
+        print(f['url'])
 ")
-
-SUBSCRIBED=0
-SKIPPED=0
-while IFS= read -r feed_json; do
-    FEED_URL=$(echo "${feed_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['url'])")
-    FEED_NAME=$(echo "${feed_json}" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['name'])")
-
-    # Get auth token
-    AUTH=$(curl -sf -X POST "${FRESHRSS_API}/accounts/ClientLogin" \
-        -d "Email=${FRESHRSS_USER}&Passwd=${FRESHRSS_PASS}" 2>/dev/null | grep "^Auth=" | cut -d= -f2 || echo "")
-
-    if [[ -z "${AUTH}" ]]; then
-        warn "Cannot get FreshRSS auth token — skipping feed subscriptions"
-        break
-    fi
-
-    # Subscribe
-    SUB_RESP=$(curl -sf -X POST "${FRESHRSS_API}/subscription/quickadd" \
-        -H "Authorization: GoogleLogin auth=${AUTH}" \
-        -d "quickadd=${FEED_URL}" 2>/dev/null || echo "")
-
-    if echo "${SUB_RESP}" | grep -q '"numResults":1'; then
-        SUBSCRIBED=$((SUBSCRIBED+1))
-    else
-        SKIPPED=$((SKIPPED+1))
-    fi
-done < <(echo "${FEEDS_JSON}" | python3 -c "
-import json, sys
-feeds = json.load(sys.stdin)
-for f in feeds:
-    print(json.dumps(f))
-")
+fi
 
 ok "Feed subscriptions: +${SUBSCRIBED} new, ${SKIPPED} already existed or skipped"
 
