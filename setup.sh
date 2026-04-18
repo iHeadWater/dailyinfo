@@ -120,28 +120,23 @@ else
     warn "Could not login to FreshRSS — feed subscriptions will be skipped. Visit ${FRESHRSS_URL} to set up manually."
 fi
 
-# Subscribe to RSS feeds listed in feeds.json
+# Subscribe to RSS feeds via FreshRSS CLI (bypasses GReader API auth)
 step "Subscribing to RSS feeds in FreshRSS..."
-if [[ -z "${FRESHRSS_AUTH}" ]]; then
-    warn "No auth token — skipping feed subscriptions"
-else
-    while IFS= read -r feed_url; do
-        SUB_RESP=$(curl -sf -X POST "${FRESHRSS_API}/subscription/quickadd" \
-            -H "Authorization: GoogleLogin auth=${FRESHRSS_AUTH}" \
-            -d "quickadd=${feed_url}" 2>/dev/null || echo "")
-        if echo "${SUB_RESP}" | grep -q '"numResults":1'; then
-            SUBSCRIBED=$((SUBSCRIBED+1))
-        else
-            SKIPPED=$((SKIPPED+1))
-        fi
-    done < <(python3 -c "
+while IFS= read -r feed_url; do
+    if docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/add-subscription.php \
+        --user "${FRESHRSS_USER}" \
+        --url "${feed_url}" 2>/dev/null; then
+        SUBSCRIBED=$((SUBSCRIBED+1))
+    else
+        SKIPPED=$((SKIPPED+1))
+    fi
+done < <(python3 -c "
 import json
 cfg = json.load(open('${PROJECT_DIR}/config/feeds.json'))
 for f in cfg.get('feeds', []):
     if f.get('enabled') and f.get('url'):
         print(f['url'])
 ")
-fi
 
 ok "Feed subscriptions: +${SUBSCRIBED} new, ${SKIPPED} already existed or skipped"
 
