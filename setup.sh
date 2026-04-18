@@ -92,31 +92,32 @@ if [[ -z "${FRESHRSS_PASS}" ]]; then
     warn "FRESHRSS_PASSWORD not in .env, using default: ${FRESHRSS_PASS}"
 fi
 
-# Try login first; if fails, create account then retry
+# Create account if not exists, then ensure API password is set
 FRESHRSS_AUTH=""
+SUBSCRIBED=0
+SKIPPED=0
+
+# Try to create (silently fails if already exists)
+docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/create-user.php \
+    --user "${FRESHRSS_USER}" \
+    --password "${FRESHRSS_PASS}" \
+    --api-password "${FRESHRSS_PASS}" \
+    --no-default-feeds 2>/dev/null || true
+
+# Always update API password to ensure it matches (handles pre-existing accounts)
+docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/update-user.php \
+    --user "${FRESHRSS_USER}" \
+    --api-password "${FRESHRSS_PASS}" 2>/dev/null || true
+
+# Login
 LOGIN_RESP=$(curl -sf -X POST "${FRESHRSS_API}/accounts/ClientLogin" \
     -d "Email=${FRESHRSS_USER}&Passwd=${FRESHRSS_PASS}" 2>/dev/null || echo "")
 
 if echo "${LOGIN_RESP}" | grep -q "Auth="; then
-    ok "FreshRSS account '${FRESHRSS_USER}' already exists"
     FRESHRSS_AUTH=$(echo "${LOGIN_RESP}" | grep "^Auth=" | cut -d= -f2)
+    ok "FreshRSS account '${FRESHRSS_USER}' ready"
 else
-    # Create account via CLI
-    docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/create-user.php \
-        --user "${FRESHRSS_USER}" \
-        --password "${FRESHRSS_PASS}" \
-        --api-password "${FRESHRSS_PASS}" \
-        --no-default-feeds 2>/dev/null && ok "FreshRSS account '${FRESHRSS_USER}' created" || true
-
-    # Retry login
-    LOGIN_RESP=$(curl -sf -X POST "${FRESHRSS_API}/accounts/ClientLogin" \
-        -d "Email=${FRESHRSS_USER}&Passwd=${FRESHRSS_PASS}" 2>/dev/null || echo "")
-    if echo "${LOGIN_RESP}" | grep -q "Auth="; then
-        FRESHRSS_AUTH=$(echo "${LOGIN_RESP}" | grep "^Auth=" | cut -d= -f2)
-        ok "FreshRSS login successful"
-    else
-        warn "Could not login to FreshRSS — feed subscriptions will be skipped. Visit ${FRESHRSS_URL} to set up manually."
-    fi
+    warn "Could not login to FreshRSS — feed subscriptions will be skipped. Visit ${FRESHRSS_URL} to set up manually."
 fi
 
 # Subscribe to RSS feeds listed in feeds.json
@@ -124,8 +125,6 @@ step "Subscribing to RSS feeds in FreshRSS..."
 if [[ -z "${FRESHRSS_AUTH}" ]]; then
     warn "No auth token — skipping feed subscriptions"
 else
-    SUBSCRIBED=0
-    SKIPPED=0
     while IFS= read -r feed_url; do
         SUB_RESP=$(curl -sf -X POST "${FRESHRSS_API}/subscription/quickadd" \
             -H "Authorization: GoogleLogin auth=${FRESHRSS_AUTH}" \
