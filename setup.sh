@@ -120,25 +120,30 @@ else
     warn "Could not login to FreshRSS — feed subscriptions will be skipped. Visit ${FRESHRSS_URL} to set up manually."
 fi
 
-# Subscribe to RSS feeds via FreshRSS CLI (bypasses GReader API auth)
+# Subscribe to RSS feeds via OPML import
 step "Subscribing to RSS feeds in FreshRSS..."
-while IFS= read -r feed_url; do
-    if docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/add-subscription.php \
-        --user "${FRESHRSS_USER}" \
-        --url "${feed_url}" 2>/dev/null; then
-        SUBSCRIBED=$((SUBSCRIBED+1))
-    else
-        SKIPPED=$((SKIPPED+1))
-    fi
-done < <(python3 -c "
+OPML_FILE=$(mktemp /tmp/dailyinfo_feeds_XXXXXX.opml)
+python3 - <<PYEOF
 import json
 cfg = json.load(open('${PROJECT_DIR}/config/feeds.json'))
-for f in cfg.get('feeds', []):
-    if f.get('enabled') and f.get('url'):
-        print(f['url'])
-")
-
-ok "Feed subscriptions: +${SUBSCRIBED} new, ${SKIPPED} already existed or skipped"
+feeds = [f for f in cfg.get('feeds', []) if f.get('enabled') and f.get('url')]
+lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+         '<opml version="1.0"><head><title>DailyInfo</title></head><body>']
+for f in feeds:
+    name = f.get('display_name', f.get('name', '')).replace('"', '&quot;')
+    url = f['url'].replace('&', '&amp;')
+    lines.append(f'  <outline type="rss" text="{name}" xmlUrl="{url}"/>')
+lines.append('</body></opml>')
+open('${OPML_FILE}', 'w').write('\n'.join(lines))
+print(f"Generated OPML with {len(feeds)} feeds")
+PYEOF
+docker cp "${OPML_FILE}" dailyinfo_freshrss:/tmp/feeds.opml
+docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/import-for-user.php \
+    --user "${FRESHRSS_USER}" --filename /tmp/feeds.opml 2>&1 | grep -v "^$" || true
+rm -f "${OPML_FILE}"
+docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/actualize-user.php \
+    --user "${FRESHRSS_USER}" 2>&1 | tail -2 || true
+ok "Feed subscriptions complete"
 
 # ---------------------------------------------------------------------------
 # 5. Install Python dependencies
