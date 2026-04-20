@@ -100,7 +100,7 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/zhxw.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 48,
+      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -119,7 +119,7 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/rcpy.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 48,
+      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -138,7 +138,7 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/xsky.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 48,
+      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -157,7 +157,7 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/hzjl.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 48,
+      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -176,7 +176,7 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/yxfc.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 48,
+      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -195,7 +195,7 @@
       "enabled": true,
       "url": "http://sche.dlut.edu.cn",
       "base_url": "http://sche.dlut.edu.cn/",
-      "lookback_hours": 48,
+      "lookback_hours": 24,
       "selector": "div.sublist ul > li",
       "fields": {
         "title": "a",
@@ -213,7 +213,7 @@
       "enabled": true,
       "url": "http://futureschool.dlut.edu.cn",
       "base_url": "http://futureschool.dlut.edu.cn/",
-      "lookback_hours": 48,
+      "lookback_hours": 24,
       "selector": "div.list ul > li",
       "fields": {
         "title": "div.name",
@@ -231,7 +231,7 @@
       "enabled": true,
       "url": "http://scidep.dlut.edu.cn/zytz.htm",
       "base_url": "http://scidep.dlut.edu.cn/",
-      "lookback_hours": 48,
+      "lookback_hours": 24,
       "selector": "ul.tz-ul > li",
       "fields": {
         "title": "div.tz-ul-tt",
@@ -240,11 +240,84 @@
       },
       "date_format": "dlut_scidep",
       "max_items": 10
+    },
+    {
+      "name": "dlut_recruitment",
+      "display_name": "大连理工大学 - 招聘信息",
+      "source_type": "api",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/recruitmentinfoList.html",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "1"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 24,
+      "max_items": 10,
+      "prompt_template": "recruitment"
+    },
+    {
+      "name": "dlut_internship",
+      "display_name": "大连理工大学 - 实习信息",
+      "source_type": "api",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/newsList.html",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "2"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 24,
+      "max_items": 10,
+      "prompt_template": "recruitment"
+    },
+    {
+      "name": "dlut_transfer_recruitment",
+      "display_name": "大连理工大学 - 选调生",
+      "source_type": "api",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/newsList.html",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "3"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 24,
+      "max_items": 10,
+      "prompt_template": "recruitment"
     }
   ],
   "prompt_templates": {
     "code_trending": "你是一位资深技术编辑。请为以下技术趋势项目各生成一句话中文摘要（突出核心功能/亮点）：\n\n{items}\n\n返回格式：按原始分组，每个项目一行，格式为：\n**项目名** — 一句话描述\n\n要求：简洁精准，突出技术价值和创新点。",
-    "university_news": "你是一位高校信息助理。请对以下大连理工大学相关网站的最新通知/新闻进行简洁汇总：\n\n{items}\n\n返回格式：每条一行，格式为：\n**[日期] 标题** — 一句话说明（如无摘要则概括标题含义）\n\n要求：突出与科研、项目申报、学术活动相关的重要信息；如有申报截止日期请着重标注。"
+    "university_news": "你是一位高校信息助理。请对以下大连理工大学相关网站的最新通知/新闻进行简洁汇总：\n\n{items}\n\n返回格式：每条一行，格式为：\n**[日期] 标题** — 一句话说明（如无摘要则概括标题含义）\n\n要求：突出与科研、项目申报、学术活动相关的重要信息；如有申报截止日期请着重标注。",
+    "recruitment": "你是一位招聘信息助理。请对以下招聘/实习/选调信息进行整理，每条突出关键信息：\n\n{items}\n\n返回格式：每条一行，格式为：\n🏢 **公司/单位名** — 岗位方向 | ⚠️ 特别要求（如有户籍/学历/专业限制等则注明，否则省略）\n\n要求：从标题中提取公司或单位名称；尽量识别并标注截止日期和特殊限制条件；简洁精准。不要在列表之外添加任何总结、注释或补充说明。"
   },
   "discord_channels": {
     "code": "#code",

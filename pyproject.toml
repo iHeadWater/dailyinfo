@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dailyinfo"
+version = "0.1.0"
+description = "Daily briefing pipeline: scrape → AI summary → Discord push"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "python-dotenv",
+    "click",
+]
+
+[project.scripts]
+dailyinfo = "scripts.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["scripts*"]

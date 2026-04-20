@@ -1,0 +1,616 @@
+{
+  "version": 2,
+  "defaults": {
+    "model": "anthropic/claude-haiku-4-5",
+    "lookback_hours": 24,
+    "freshrss_user": "sjiaxin"
+  },
+  "prompt_templates": {
+    "one_line_summary": "请为以下 {count} 篇 {display_name} 最新文章各生成一句话中文摘要，突出核心发现或贡献：\n\n{article_list}\n\n请严格按以下 Markdown 格式返回：\n\n## 📚 {display_name} 今日简报 ({date}) - {count}篇文章\n\n1. **文章标题**\n   > 一句话中文摘要\n\n2. **文章标题**\n   > 一句话中文摘要\n\n...\n\n最后添加一段 **🔭 Today's Highlight** 总结今日最值得关注的研究方向。",
+    "smolai_categorized": "你是一位资深AI行业分析师。以下是今天的AI新闻汇总（来自SmolAI Newsletter的完整内容）。请按以下4个类别整理关键信息，每个类别列出3-5条最重要的进展，每条一句话中文概述：\n\n## 🧠 模型进展\n（新模型发布、基准测试、训练突破等）\n\n## 🤖 Agent/产品进展\n（编程Agent、产品发布、工具更新等）\n\n## 🔬 AI for Science\n（AI在科学研究中的应用）\n\n## 🏭 产业新闻\n（融资、收购、政策、商业动态等）\n\n如果某个类别没有相关内容，写\"暂无重要进展\"。\n\n---\n以下是今天的新闻内容：\n\n{content}",
+    "code_trending": "你是一位资深技术编辑。请为以下技术趋势项目各生成一句话中文摘要（突出核心功能/亮点）：\n\n{items}\n\n返回格式：按原始分组，每个项目一行，格式为：\n**项目名** — 一句话描述\n\n要求：简洁精准，突出技术价值和创新点。",
+    "university_news": "你是一位高校信息助理。请对以下大连理工大学相关网站的最新通知/新闻进行简洁汇总：\n\n{items}\n\n返回格式：每条一行，格式为：\n**[日期] 标题** — 一句话说明（如无摘要则概括标题含义）\n\n要求：突出与科研、项目申报、学术活动相关的重要信息；如有申报截止日期请着重标注。",
+    "recruitment": "你是一位招聘信息助理。请对以下招聘/实习/选调信息进行整理，每条突出关键信息：\n\n{items}\n\n返回格式：每条一行，格式为：\n🏢 **公司/单位名** — 岗位方向 | ⚠️ 特别要求（如有户籍/学历/专业限制等则注明，否则省略）\n\n要求：从标题中提取公司或单位名称；尽量识别并标注截止日期和特殊限制条件；简洁精准。不要在列表之外添加任何总结、注释或补充说明。"
+  },
+  "sources": [
+    {
+      "name": "nature",
+      "display_name": "Nature",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/nature.rss",
+      "type": "rss"
+    },
+    {
+      "name": "nature_communications",
+      "display_name": "Nature Communications",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/ncomms.rss",
+      "type": "rss"
+    },
+    {
+      "name": "scientific_data",
+      "display_name": "Scientific Data",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/sdata.rss",
+      "type": "rss"
+    },
+    {
+      "name": "science_advances",
+      "display_name": "Science Advances",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv",
+      "type": "rss"
+    },
+    {
+      "name": "science_news",
+      "display_name": "Science News",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.science.org/rss/news_current.xml",
+      "type": "rss"
+    },
+    {
+      "name": "nature_machine_intelligence",
+      "display_name": "Nature Machine Intelligence",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/natmachintell.rss",
+      "type": "rss"
+    },
+    {
+      "name": "nature_reviews_physics",
+      "display_name": "Nature Reviews Physics",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/natrevphys.rss",
+      "type": "rss"
+    },
+    {
+      "name": "pnas",
+      "display_name": "PNAS",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=PNAS",
+      "type": "rss"
+    },
+    {
+      "name": "science",
+      "display_name": "Science",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
+      "type": "rss"
+    },
+    {
+      "name": "nature_sustainability",
+      "display_name": "Nature Sustainability",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/natsustain.rss",
+      "type": "rss"
+    },
+    {
+      "name": "nature_geoscience",
+      "display_name": "Nature Geoscience",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/ngeo.rss",
+      "type": "rss"
+    },
+    {
+      "name": "nature_reviews_earth_environ",
+      "display_name": "Nature Reviews Earth & Environment",
+      "category": "papers",
+      "enabled": true,
+      "max_articles": 5,
+      "url": "https://www.nature.com/natrevearthenviron.rss",
+      "type": "rss"
+    },
+    {
+      "name": "nature_climate_change",
+      "display_name": "Nature Climate Change",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/nclimate.rss",
+      "type": "rss"
+    },
+    {
+      "name": "aies",
+      "display_name": "AI in Earth Sciences (AIES)",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "bams",
+      "display_name": "Bulletin of the American Meteorological Society",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "essd",
+      "display_name": "Earth System Science Data (ESSD)",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://essd.copernicus.org/articles/xml/rss2_0.xml",
+      "type": "rss"
+    },
+    {
+      "name": "gmd",
+      "display_name": "Geoscientific Model Development (GMD)",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://gmd.copernicus.org/xml/rss2_0.xml",
+      "type": "rss"
+    },
+    {
+      "name": "nhess",
+      "display_name": "Natural Hazards and Earth System Sciences (NHESS)",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://nhess.copernicus.org/articles/xml/rss2_0.xml",
+      "type": "rss"
+    },
+    {
+      "name": "james",
+      "display_name": "Journal of Advances in Modeling Earth Systems (JAMES)",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://agupubs.onlinelibrary.wiley.com/feed/19422466/most-recent",
+      "type": "rss"
+    },
+    {
+      "name": "earth_space_science",
+      "display_name": "Earth and Space Science",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "grl",
+      "display_name": "Geophysical Research Letters (GRL)",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "reviews_geophysics",
+      "display_name": "Reviews of Geophysics",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "earths_future",
+      "display_name": "Earth's Future",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "remote_sensing_environ",
+      "display_name": "Remote Sensing of Environment",
+      "category": "papers",
+      "enabled": true,
+      "max_articles": 10,
+      "max_articles_per_batch": 15,
+      "max_batches": 1,
+      "type": "rss"
+    },
+    {
+      "name": "environ_modelling_software",
+      "display_name": "Environmental Modelling & Software",
+      "category": "papers",
+      "enabled": true,
+      "max_articles": 10,
+      "max_articles_per_batch": 15,
+      "max_batches": 1,
+      "type": "rss"
+    },
+    {
+      "name": "nature_water",
+      "display_name": "Nature Water",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/natwater.rss",
+      "type": "rss"
+    },
+    {
+      "name": "hess",
+      "display_name": "Hydrology and Earth System Sciences (HESS)",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://hess.copernicus.org/articles/xml/rss2_0.xml",
+      "type": "rss"
+    },
+    {
+      "name": "jhm",
+      "display_name": "Journal of Hydrometeorology (JHM)",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "wrr",
+      "display_name": "Water Resources Research (WRR)",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "hydrological_processes",
+      "display_name": "Hydrological Processes",
+      "category": "papers",
+      "enabled": true,
+      "type": "rss"
+    },
+    {
+      "name": "water_research",
+      "display_name": "Water Research",
+      "category": "papers",
+      "enabled": true,
+      "max_articles": 10,
+      "max_articles_per_batch": 15,
+      "max_batches": 1,
+      "type": "rss"
+    },
+    {
+      "name": "advances_water_resources",
+      "display_name": "Advances in Water Resources",
+      "category": "papers",
+      "enabled": true,
+      "max_articles": 10,
+      "max_articles_per_batch": 15,
+      "max_batches": 1,
+      "type": "rss"
+    },
+    {
+      "name": "journal_hydrology",
+      "display_name": "Journal of Hydrology",
+      "category": "papers",
+      "enabled": true,
+      "max_articles": 10,
+      "max_articles_per_batch": 15,
+      "max_batches": 1,
+      "type": "rss"
+    },
+    {
+      "name": "smolai_news",
+      "display_name": "SmolAI News",
+      "category": "ai_news",
+      "enabled": true,
+      "lookback_hours": 48,
+      "prompt_template": "smolai_categorized",
+      "use_content": true,
+      "url": "https://news.smol.ai/rss.xml",
+      "type": "rss"
+    },
+    {
+      "name": "arxiv_cs_ai",
+      "display_name": "arXiv CS.AI",
+      "category": "ai_news",
+      "enabled": true,
+      "max_articles_per_batch": 10,
+      "max_batches": 5,
+      "url": "https://rss.arxiv.org/rss/cs.AI",
+      "type": "rss"
+    },
+    {
+      "name": "github_trending",
+      "display_name": "GitHub Trending",
+      "category": "code",
+      "enabled": true,
+      "url": "https://github.com/trending?since=daily",
+      "method": "GET",
+      "headers": {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+      },
+      "selector": "article.Box-row",
+      "fields": {
+        "name": "h2 a",
+        "description": "p.col-9",
+        "language": "span[itemprop='programmingLanguage']",
+        "stars_today": "span.d-inline-block.float-sm-right"
+      },
+      "max_items": 25,
+      "type": "scrape"
+    },
+    {
+      "name": "huggingface_models",
+      "display_name": "HuggingFace Trending Models",
+      "category": "code",
+      "enabled": true,
+      "url": "https://huggingface.co/api/models",
+      "method": "GET",
+      "params": {
+        "sort": "trendingScore",
+        "direction": "-1",
+        "limit": 20
+      },
+      "extract": {
+        "fields": {
+          "name": "id",
+          "task": "pipeline_tag",
+          "likes": "likes",
+          "downloads": "downloads"
+        }
+      },
+      "max_items": 20,
+      "type": "api"
+    },
+    {
+      "name": "huggingface_datasets",
+      "display_name": "HuggingFace Trending Datasets",
+      "category": "code",
+      "enabled": true,
+      "url": "https://huggingface.co/api/datasets",
+      "method": "GET",
+      "params": {
+        "sort": "trendingScore",
+        "direction": "-1",
+        "limit": 10
+      },
+      "extract": {
+        "fields": {
+          "name": "id",
+          "likes": "likes",
+          "downloads": "downloads"
+        }
+      },
+      "max_items": 10,
+      "type": "api"
+    },
+    {
+      "name": "huggingface_spaces",
+      "display_name": "HuggingFace Trending Spaces",
+      "category": "code",
+      "enabled": true,
+      "url": "https://huggingface.co/api/spaces",
+      "method": "GET",
+      "params": {
+        "sort": "trendingScore",
+        "direction": "-1",
+        "limit": 10
+      },
+      "extract": {
+        "fields": {
+          "name": "id",
+          "likes": "likes",
+          "sdk": "sdk"
+        }
+      },
+      "max_items": 10,
+      "type": "api"
+    },
+    {
+      "name": "dlut_zhxw",
+      "display_name": "大连理工大学 - 综合新闻",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/zhxw.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 24,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
+      "max_items": 10,
+      "type": "scrape"
+    },
+    {
+      "name": "dlut_rcpy",
+      "display_name": "大连理工大学 - 人才培养",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/rcpy.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 24,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
+      "max_items": 10,
+      "type": "scrape"
+    },
+    {
+      "name": "dlut_xsky",
+      "display_name": "大连理工大学 - 学术科研",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/xsky.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 24,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
+      "max_items": 10,
+      "type": "scrape"
+    },
+    {
+      "name": "dlut_hzjl",
+      "display_name": "大连理工大学 - 合作交流",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/hzjl.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 24,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
+      "max_items": 10,
+      "type": "scrape"
+    },
+    {
+      "name": "dlut_yxfc",
+      "display_name": "大连理工大学 - 一线风采",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://news.dlut.edu.cn/yxfc.htm",
+      "base_url": "https://news.dlut.edu.cn/",
+      "lookback_hours": 24,
+      "selector": "li.bg-mask",
+      "fields": {
+        "title": "h4 a.l2",
+        "url": "h4 a[href]",
+        "date_day": "time > span",
+        "date_ym": "time"
+      },
+      "date_format": "dlut_news",
+      "max_items": 10,
+      "type": "scrape"
+    },
+    {
+      "name": "dlut_sche",
+      "display_name": "大连理工大学 - 建设工程学院",
+      "category": "resource",
+      "enabled": true,
+      "url": "http://sche.dlut.edu.cn",
+      "base_url": "http://sche.dlut.edu.cn/",
+      "lookback_hours": 24,
+      "selector": "div.sublist ul > li",
+      "fields": {
+        "title": "a",
+        "url": "a[href]",
+        "date": "span.date"
+      },
+      "date_format": "standard",
+      "max_items": 10,
+      "type": "scrape"
+    },
+    {
+      "name": "dlut_futureschool",
+      "display_name": "大连理工大学 - 未来技术学院",
+      "category": "resource",
+      "enabled": true,
+      "url": "http://futureschool.dlut.edu.cn",
+      "base_url": "http://futureschool.dlut.edu.cn/",
+      "lookback_hours": 24,
+      "selector": "div.list ul > li",
+      "fields": {
+        "title": "div.name",
+        "url": "a[href]",
+        "date": "div.time"
+      },
+      "date_format": "dlut_future",
+      "max_items": 10,
+      "type": "scrape"
+    },
+    {
+      "name": "dlut_scidep",
+      "display_name": "大连理工大学 - 科学技术研究院",
+      "category": "resource",
+      "enabled": true,
+      "url": "http://scidep.dlut.edu.cn/zytz.htm",
+      "base_url": "http://scidep.dlut.edu.cn/",
+      "lookback_hours": 24,
+      "selector": "ul.tz-ul > li",
+      "fields": {
+        "title": "div.tz-ul-tt",
+        "url": "a[href]",
+        "date": "div.tz-ul-date"
+      },
+      "date_format": "dlut_scidep",
+      "max_items": 10,
+      "type": "scrape"
+    },
+    {
+      "name": "dlut_recruitment",
+      "display_name": "大连理工大学 - 招聘信息",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/recruitmentinfoList.html",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "1"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 24,
+      "max_items": 10,
+      "prompt_template": "recruitment",
+      "type": "api"
+    },
+    {
+      "name": "dlut_internship",
+      "display_name": "大连理工大学 - 实习信息",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/newsList.html",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "2"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 24,
+      "max_items": 10,
+      "prompt_template": "recruitment",
+      "type": "api"
+    },
+    {
+      "name": "dlut_transfer_recruitment",
+      "display_name": "大连理工大学 - 选调生",
+      "category": "resource",
+      "enabled": true,
+      "url": "https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo",
+      "list_url": "https://job.dlut.edu.cn/frontpage/dlut/html/newsList.html",
+      "method": "POST",
+      "params": {
+        "pageNo": 1,
+        "pageSize": 20,
+        "positionType": "3"
+      },
+      "extract": {
+        "fields": {
+          "title": "title",
+          "date": "startTime"
+        }
+      },
+      "lookback_hours": 24,
+      "max_items": 10,
+      "prompt_template": "recruitment",
+      "type": "api"
+    }
+  ],
+  "discord_channels": {
+    "papers": "#paper",
+    "ai_news": "#deeplearning"
+  }
+}
