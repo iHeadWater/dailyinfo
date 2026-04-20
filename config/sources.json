@@ -123,6 +123,7 @@
       "display_name": "AI in Earth Sciences (AIES)",
       "category": "papers",
       "enabled": true,
+      "url": "https://journals.ametsoc.org/journalissuetocrss/journals/aies/aies-overview.xml",
       "type": "rss"
     },
     {
@@ -130,6 +131,7 @@
       "display_name": "Bulletin of the American Meteorological Society",
       "category": "papers",
       "enabled": true,
+      "url": "https://journals.ametsoc.org/journalissuetocrss/journals/bams/bams-overview.xml",
       "type": "rss"
     },
     {
@@ -169,6 +171,7 @@
       "display_name": "Earth and Space Science",
       "category": "papers",
       "enabled": true,
+      "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=23335084&type=etoc&feed=rss",
       "type": "rss"
     },
     {
@@ -176,6 +179,9 @@
       "display_name": "Geophysical Research Letters (GRL)",
       "category": "papers",
       "enabled": true,
+      "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=19448007&type=etoc&feed=rss",
+      "max_articles_per_batch": 15,
+      "max_batches": 2,
       "type": "rss"
     },
     {
@@ -183,6 +189,7 @@
       "display_name": "Reviews of Geophysics",
       "category": "papers",
       "enabled": true,
+      "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=19449208&type=etoc&feed=rss",
       "type": "rss"
     },
     {
@@ -190,6 +197,7 @@
       "display_name": "Earth's Future",
       "category": "papers",
       "enabled": true,
+      "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=23284277&type=etoc&feed=rss",
       "type": "rss"
     },
     {
@@ -197,6 +205,7 @@
       "display_name": "Remote Sensing of Environment",
       "category": "papers",
       "enabled": true,
+      "url": "https://rss.sciencedirect.com/publication/science/00344257",
       "max_articles": 10,
       "max_articles_per_batch": 15,
       "max_batches": 1,
@@ -207,6 +216,7 @@
       "display_name": "Environmental Modelling & Software",
       "category": "papers",
       "enabled": true,
+      "url": "https://rss.sciencedirect.com/publication/science/13648152",
       "max_articles": 10,
       "max_articles_per_batch": 15,
       "max_batches": 1,
@@ -233,6 +243,7 @@
       "display_name": "Journal of Hydrometeorology (JHM)",
       "category": "papers",
       "enabled": true,
+      "url": "https://journals.ametsoc.org/journalissuetocrss/journals/hydr/hydr-overview.xml",
       "type": "rss"
     },
     {
@@ -240,6 +251,9 @@
       "display_name": "Water Resources Research (WRR)",
       "category": "papers",
       "enabled": true,
+      "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=19447973&type=etoc&feed=rss",
+      "max_articles_per_batch": 15,
+      "max_batches": 2,
       "type": "rss"
     },
     {
@@ -247,6 +261,9 @@
       "display_name": "Hydrological Processes",
       "category": "papers",
       "enabled": true,
+      "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=10991085&type=etoc&feed=rss",
+      "max_articles_per_batch": 15,
+      "max_batches": 2,
       "type": "rss"
     },
     {
@@ -254,6 +271,7 @@
       "display_name": "Water Research",
       "category": "papers",
       "enabled": true,
+      "url": "https://rss.sciencedirect.com/publication/science/00431354",
       "max_articles": 10,
       "max_articles_per_batch": 15,
       "max_batches": 1,
@@ -264,6 +282,7 @@
       "display_name": "Advances in Water Resources",
       "category": "papers",
       "enabled": true,
+      "url": "https://rss.sciencedirect.com/publication/science/03091708",
       "max_articles": 10,
       "max_articles_per_batch": 15,
       "max_batches": 1,
@@ -274,6 +293,7 @@
       "display_name": "Journal of Hydrology",
       "category": "papers",
       "enabled": true,
+      "url": "https://rss.sciencedirect.com/publication/science/00221694",
       "max_articles": 10,
       "max_articles_per_batch": 15,
       "max_batches": 1,
