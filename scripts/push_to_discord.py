@@ -47,10 +47,10 @@ if not DISCORD_BOT_TOKEN:
     exit(1)
 
 DISCORD_CHANNELS = {
-    "papers": "1492000490748117062",
-    "ai_news": "1492815895439999016",
-    "code": "1492814957123993600",
-    "resource": "1492815107443658762"
+    "papers": "1489102139597787181",
+    "ai_news": "1489102139597787182",
+    "code": "1489102139597787183",
+    "resource": "1489102139597787178"
 }
 
 BRIEFINGS_DIR = os.path.expanduser("~/.openclaw/workspace/briefings")

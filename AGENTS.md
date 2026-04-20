@@ -312,11 +312,11 @@ python3 scripts/run_pipelines.py --pipeline 3  # 仅大工院所资讯
 | code | #code |
 | resource | #resource |
 
-Discord 频道 ID（push_to_discord.py 中硬编码）：
-- #paper = `1492000490748117062`
-- #deeplearning = `1492815895439999016`
-- #code = `1492814957123993600`
-- #resource = `1492815107443658762`
+Discord 频道 ID（push_to_discord.py 中硬编码，与 OpenClaw cron jobs 保持一致）：
+- #paper = `1489102139597787181`
+- #deeplearning = `1489102139597787182`
+- #code = `1489102139597787183`
+- #resource = `1489102139597787178`
 
 ## 飞书（Feishu/Lark）
 
