@@ -125,8 +125,8 @@ step "Subscribing to RSS feeds in FreshRSS..."
 OPML_FILE=$(mktemp /tmp/dailyinfo_feeds_XXXXXX.opml)
 python3 - <<PYEOF
 import json
-cfg = json.load(open('${PROJECT_DIR}/config/feeds.json'))
-feeds = [f for f in cfg.get('feeds', []) if f.get('enabled') and f.get('url')]
+cfg = json.load(open('${PROJECT_DIR}/config/sources.json'))
+feeds = [s for s in cfg.get('sources', []) if s.get('type') == 'rss' and s.get('enabled') and s.get('url')]
 lines = ['<?xml version="1.0" encoding="UTF-8"?>',
          '<opml version="1.0"><head><title>DailyInfo</title></head><body>']
 for f in feeds:
