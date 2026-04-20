@@ -25,3 +25,12 @@ RUN mkdir -p /home/node/.skillhub /home/node/.local/bin \
 USER node
 
 ENV PATH="/home/node/.local/bin:${PATH}"
+
+# Pre-install skills from SkillHub (persist across container rebuilds)
+# Skills in /app/skills/ are container-layer, not volume-mounted
+RUN skillhub install mineru-document-extractor
+
+# Install skill dependencies (requires root for global npm)
+USER root
+RUN npm install -g mineru-open-api
+USER node
