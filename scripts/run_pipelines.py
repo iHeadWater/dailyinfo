@@ -34,13 +34,36 @@ BRIEFINGS_DIR = os.path.expanduser('~/.openclaw/workspace/briefings')
 DATE = datetime.datetime.now().strftime('%Y-%m-%d')
 
 
-def _get_freshrss_db() -> str:
+def _get_freshrss_user() -> str:
+    env_path = os.path.join(PROJECT_ROOT, '.env')
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('FRESHRSS_USER='):
+                    val = line.split('=', 1)[1].strip().strip('"').strip("'")
+                    if val:
+                        return val
     try:
         with open(SOURCES_JSON) as f:
-            user = json.load(f).get('defaults', {}).get('freshrss_user', 'owen')
+            val = json.load(f).get('defaults', {}).get('freshrss_user', '')
+            if val:
+                return val
     except Exception:
-        user = 'owen'
-    return os.path.expanduser(f'~/.freshrss/data/users/{user}/db.sqlite')
+        pass
+    return os.environ.get('USER', 'owen')
+
+
+def _get_freshrss_db() -> str:
+    user = _get_freshrss_user()
+    path = os.path.expanduser(f'~/.freshrss/data/users/{user}/db.sqlite')
+    if not os.path.exists(path):
+        print(
+            f'[WARN] FreshRSS DB not found: {path}\n'
+            f'       Set FRESHRSS_USER in .env to match your FreshRSS username.',
+            file=sys.stderr,
+        )
+    return path
 
 
 FRESHRSS_DB = _get_freshrss_db()
@@ -85,6 +108,9 @@ def call_ai(prompt: str, model: str = 'anthropic/claude-haiku-4-5', max_tokens: 
     return resp.json()['choices'][0]['message']['content']
 
 
+PUSHED_DIR = os.path.expanduser('~/.openclaw/workspace/pushed')
+
+
 def save(directory: str, filename: str, content: str) -> str:
     path = os.path.join(BRIEFINGS_DIR, directory)
     os.makedirs(path, exist_ok=True)
@@ -92,6 +118,20 @@ def save(directory: str, filename: str, content: str) -> str:
     with open(full, 'w') as f:
         f.write(content)
     return full
+
+
+def _already_pushed_within(name: str, category: str, lookback_hours: int) -> bool:
+    pushed_dir = os.path.join(PUSHED_DIR, category)
+    if not os.path.isdir(pushed_dir):
+        return False
+    cutoff = time.time() - lookback_hours * 3600
+    prefix = f'{name}_briefing_'
+    for fname in os.listdir(pushed_dir):
+        if fname.startswith(prefix) and fname.endswith('.md'):
+            fpath = os.path.join(pushed_dir, fname)
+            if os.path.getmtime(fpath) > cutoff:
+                return True
+    return False
 
 
 def _load_sources() -> tuple[dict, dict, dict]:
@@ -109,7 +149,14 @@ def run_pipeline_1() -> int:
     default_tmpl_key = defaults.get('prompt_template', 'one_line_summary')
     model_default = defaults.get('model', 'anthropic/claude-haiku-4-5')
 
-    db = sqlite3.connect(FRESHRSS_DB)
+    try:
+        db = sqlite3.connect(FRESHRSS_DB)
+    except Exception as e:
+        user = _get_freshrss_user()
+        log(f'Pipeline 1 FAILED: cannot open FreshRSS DB ({e})')
+        log(f'  DB path: {FRESHRSS_DB}')
+        log(f'  Fix: set FRESHRSS_USER={user} in .env, or correct the username.')
+        return 0
     db.row_factory = sqlite3.Row
     full_map, base_map = build_feed_url_map(db)
     saved = 0
@@ -129,6 +176,10 @@ def run_pipeline_1() -> int:
             placeholder = f'# {ds.display_name} - {DATE}\n\n📭 过去 {ds.lookback_hours} 小时无新内容\n'
             save(category, f'{name}_briefing_{DATE}.md', placeholder)
             saved += 1
+            continue
+
+        if ds.lookback_hours > 24 and _already_pushed_within(name, category, ds.lookback_hours):
+            log(f'  {name}: {len(items)} articles — already pushed within {ds.lookback_hours}h, skip')
             continue
 
         # SmolAI deep-content path (one AI call per article)

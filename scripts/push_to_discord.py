@@ -87,7 +87,8 @@ def send_to_discord(channel_id, content):
 
     headers = {
         "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "User-Agent": "DiscordBot (https://github.com/dailyinfo, 1.0)",
     }
 
     for i, msg in enumerate(messages):
