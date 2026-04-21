@@ -213,7 +213,7 @@ push_to_discord.py 读取 → Discord 推送                        [推送]
     "model": "anthropic/claude-haiku-4-5",
     "lookback_hours": 24,
     "prompt_template": "one_line_summary",
-    "freshrss_user": "sjiaxin"
+    "freshrss_user": ""
   },
   "feeds": [
     {
@@ -251,7 +251,7 @@ push_to_discord.py 读取 → Discord 推送                        [推送]
 2. 下次运行流水线时自动生效，无需修改代码或重启容器。
 3. 若需立即在 FreshRSS 中同步订阅：
    ```bash
-   docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/actualize-user.php --user sjiaxin
+   docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/actualize-user.php --user ${FRESHRSS_USER}
    ```
 
 ### 可覆盖的字段
@@ -263,7 +263,7 @@ push_to_discord.py 读取 → Discord 推送                        [推送]
 | `model` | OpenRouter 模型 ID | `anthropic/claude-haiku-4-5` |
 | `lookback_hours` | 查询多少小时内的文章 | `24` |
 | `prompt_template` | 使用的提示词模板 key | `one_line_summary` |
-| `freshrss_user` | FreshRSS 用户名 | `sjiaxin` |
+| `freshrss_user` | FreshRSS 用户名（优先读 `.env` 中的 `FRESHRSS_USER`） | `""` (自动取 `$USER`) |
 | `max_articles_per_batch` | 分批处理时每批文章数（不设则不分批） | 不分批 |
 | `max_batches` | 最多生成几批（与上一字段配合使用） | `10` |
 
@@ -389,7 +389,7 @@ pip install -e .
 
 # 3.3 创建 FreshRSS 账号并导入 RSS 订阅
 #     访问 http://localhost:8081，选择 SQLite 数据库
-#     创建账号（用户名需与 feeds.json 中 freshrss_user 一致，默认 sjiaxin）
+#     创建账号（用户名需与 .env 中 FRESHRSS_USER 一致）
 #     进入 订阅 → 导入/导出，上传用 feeds.json 中 url 字段生成的 OPML 文件
 
 # 3.4 配置 n8n（如使用 n8n 作为流水线引擎，可选）
@@ -544,7 +544,7 @@ python3 scripts/run_pipelines.py --pipeline 3
 **依赖**：`requests`、`python-dotenv`（`pip install -e .` 一并安装）。
 
 **特点**：
-- 直接从宿主机读取 `~/.freshrss/data/users/sjiaxin/db.sqlite`（不需要进容器）
+- 直接从宿主机读取 `~/.freshrss/data/users/${FRESHRSS_USER}/db.sqlite`（不需要进容器，用户名从 `.env` 读取）
 - SmolAI 深度内容路径：自动提取 HTML 全文 → 去标签 → 按模板生成 AI 摘要
 - GitHub Trending 通过正则解析 HTML（与 n8n 工作流中的 JS Code 节点逻辑一致）
 - DUT 各站点 HTML 解析：针对不同站点结构（dlut_news / standard / dlut_future / dlut_scidep）使用不同的正则解析器
@@ -611,13 +611,13 @@ docker compose down
 ### FreshRSS 管理
 
 ```bash
-# 手动刷新所有 RSS 订阅
-docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/actualize-user.php --user sjiaxin
+# 手动刷新所有 RSS 订阅（将 ${FRESHRSS_USER} 替换为 .env 中配置的用户名）
+docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/actualize-user.php --user ${FRESHRSS_USER}
 
 # 查看某个 feed 的文章（通过 n8n 容器，因 FreshRSS 容器无 sqlite3）
 docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
 const sqlite3 = require('sqlite3');
-const db = new sqlite3.Database('/freshrss-data/users/sjiaxin/db.sqlite');
+const db = new sqlite3.Database('/freshrss-data/users/${FRESHRSS_USER}/db.sqlite');
 db.all('SELECT title FROM entry WHERE id_feed=2 ORDER BY date DESC LIMIT 5',
   (err, rows) => { rows.forEach(r => console.log(r.title)); db.close(); });
 "
@@ -625,7 +625,7 @@ db.all('SELECT title FROM entry WHERE id_feed=2 ORDER BY date DESC LIMIT 5',
 # 查看所有 feed 和文章数
 docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
 const sqlite3 = require('sqlite3');
-const db = new sqlite3.Database('/freshrss-data/users/sjiaxin/db.sqlite');
+const db = new sqlite3.Database('/freshrss-data/users/${FRESHRSS_USER}/db.sqlite');
 db.all('SELECT f.id, f.name, COUNT(e.id) as n FROM feed f LEFT JOIN entry e ON e.id_feed=f.id GROUP BY f.id',
   (err, rows) => { rows.forEach(r => console.log(r.id, r.name, r.n)); db.close(); });
 "
@@ -715,7 +715,7 @@ crontab -l
    ```bash
    docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
    const sqlite3 = require('sqlite3');
-   const db = new sqlite3.Database('/freshrss-data/users/sjiaxin/db.sqlite');
+   const db = new sqlite3.Database('/freshrss-data/users/${FRESHRSS_USER}/db.sqlite');
    db.all('SELECT f.id, f.name, COUNT(e.id) as n FROM feed f LEFT JOIN entry e ON e.id_feed=f.id GROUP BY f.id',
      (err, rows) => { rows.forEach(r => console.log(r.id, r.name, r.n)); db.close(); });"
    ```
