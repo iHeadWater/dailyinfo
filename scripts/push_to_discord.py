@@ -164,7 +164,9 @@ def push_category(category, channel_id):
     files = [f for f in sorted(os.listdir(category_dir)) if DATE in f]
 
     if not files:
-        log(f"  ℹ️  {category} 中没有今天的文件")
+        log(f"  ℹ️  {category} 中没有今天的文件，发送无内容提醒")
+        notice = f"📭 **{category}** 频道：{DATE} 暂无新简报"
+        send_to_discord(channel_id, notice)
         return 0
 
     log(f"  发现 {len(files)} 份文件...")
@@ -200,7 +202,9 @@ def push_category(category, channel_id):
         log(f"  开始推送...")
     else:
         total_filtered = placeholder_count + low_quality_count
-        log(f"  全部被过滤 (空内容: {placeholder_count}, 低质量: {low_quality_count}, 共 {total_filtered} 份)，跳过推送")
+        log(f"  全部被过滤 (空内容: {placeholder_count}, 低质量: {low_quality_count}, 共 {total_filtered} 份)，发送无内容提醒")
+        notice = f"📭 **{category}** 频道：{DATE} 各源均无新内容"
+        send_to_discord(channel_id, notice)
         return 0
 
     pushed_count = 0
