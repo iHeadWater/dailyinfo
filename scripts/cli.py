@@ -82,5 +82,13 @@ def logs():
     sys.exit(result.returncode)
 
 
+@cli.command()
+def bot():
+    """Start the Discord bot (listens for @mentions, replies with deep analysis)."""
+    script = os.path.join(SCRIPTS_DIR, 'discord_bot.py')
+    result = subprocess.run([_python(), script], cwd=PROJECT_ROOT)
+    sys.exit(result.returncode)
+
+
 if __name__ == '__main__':
     cli()
