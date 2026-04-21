@@ -12,9 +12,17 @@ err()  { echo -e "${RED}✗${NC} $*" >&2; }
 step() { echo -e "\n${CYAN}==>${NC} $*"; }
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRESHRSS_USER="sjiaxin"
 FRESHRSS_URL="http://localhost:8081"
 FRESHRSS_API="${FRESHRSS_URL}/api/greader.php"
+
+# 从 .env 读取 FRESHRSS_USER；留空则 fallback 到系统用户名 $USER
+_ENV_FRESHRSS_USER=$(grep '^FRESHRSS_USER=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2- | tr -d '"'"'" | xargs || echo "")
+if [[ -z "${_ENV_FRESHRSS_USER}" ]]; then
+    FRESHRSS_USER="${USER}"
+    warn "FRESHRSS_USER not set in .env, using system user: ${FRESHRSS_USER}"
+else
+    FRESHRSS_USER="${_ENV_FRESHRSS_USER}"
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Check .env exists
