@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, 'scripts'))
 from datasource import build_feed_url_map, resolve_feed_id, strip_html
 
 SOURCES_JSON = os.path.join(PROJECT_ROOT, 'config', 'sources.json')
-PUSHED_DIR = os.path.expanduser('~/.openclaw/workspace/pushed/papers')
-BRIEFINGS_DIR = os.path.expanduser('~/.openclaw/workspace/briefings/papers')
+PUSHED_DIR = os.path.expanduser('~/.dailyinfo/workspace/pushed/papers')
+BRIEFINGS_DIR = os.path.expanduser('~/.dailyinfo/workspace/briefings/papers')
 
 DISCORD_CHANNEL_ID = '1489102139597787181'
 

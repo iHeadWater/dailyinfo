@@ -3,7 +3,7 @@
 
 Reads RSS feeds from FreshRSS, scrapes GitHub/HuggingFace trending,
 scrapes DUT university news, then calls OpenRouter AI for summaries.
-Output files are saved to ~/.openclaw/workspace/briefings/{category}/.
+Output files are saved to ~/.dailyinfo/workspace/briefings/{category}/.
 
 Usage:
     python3 scripts/run_pipelines.py              # run all 3 pipelines
@@ -30,7 +30,7 @@ from datasource import DataSource, RSSDataSource, build_feed_url_map
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, 'config')
 SOURCES_JSON = os.path.join(CONFIG_DIR, 'sources.json')
-BRIEFINGS_DIR = os.path.expanduser('~/.openclaw/workspace/briefings')
+BRIEFINGS_DIR = os.path.expanduser('~/.dailyinfo/workspace/briefings')
 DATE = datetime.datetime.now().strftime('%Y-%m-%d')
 
 
@@ -114,7 +114,7 @@ def call_ai(prompt: str, model: str = 'moonshotai/kimi-k2.5', max_tokens: int = 
     raise ValueError('call_ai: empty response after 3 retries')
 
 
-PUSHED_DIR = os.path.expanduser('~/.openclaw/workspace/pushed')
+PUSHED_DIR = os.path.expanduser('~/.dailyinfo/workspace/pushed')
 
 
 def save(directory: str, filename: str, content: str) -> str:

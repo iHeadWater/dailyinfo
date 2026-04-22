@@ -53,8 +53,8 @@ DISCORD_CHANNELS = {
     "resource": "1489102139597787178"
 }
 
-BRIEFINGS_DIR = os.path.expanduser("~/.openclaw/workspace/briefings")
-PUSHED_DIR = os.path.expanduser("~/.openclaw/workspace/pushed")
+BRIEFINGS_DIR = os.path.expanduser("~/.dailyinfo/workspace/briefings")
+PUSHED_DIR = os.path.expanduser("~/.dailyinfo/workspace/pushed")
 DATE = datetime.now().strftime("%Y-%m-%d")
 
 def split_message(content, max_length=1950):
