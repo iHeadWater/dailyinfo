@@ -97,7 +97,7 @@ def load_api_key() -> str:
     sys.exit(1)
 
 
-def call_ai(prompt: str, model: str = 'anthropic/claude-haiku-4-5', max_tokens: int = 1200) -> str:
+def call_ai(prompt: str, model: str = 'moonshotai/kimi-k2.5', max_tokens: int = 1200) -> str:
     for attempt in range(3):
         resp = requests.post(
             'https://openrouter.ai/api/v1/chat/completions',
@@ -153,7 +153,7 @@ def run_pipeline_1() -> int:
     log('=== Pipeline 1: Daily Briefing (papers + AI news) ===')
     cfg, defaults, templates = _load_sources()
     default_tmpl_key = defaults.get('prompt_template', 'one_line_summary')
-    model_default = defaults.get('model', 'anthropic/claude-haiku-4-5')
+    model_default = defaults.get('model', 'moonshotai/kimi-k2.5')
 
     try:
         db = sqlite3.connect(FRESHRSS_DB)
@@ -246,7 +246,7 @@ def run_pipeline_1() -> int:
 def run_pipeline_2() -> int:
     log('=== Pipeline 2: Code Trending ===')
     cfg, defaults, _ = _load_sources()
-    model_default = defaults.get('model', 'anthropic/claude-haiku-4-5')
+    model_default = defaults.get('model', 'moonshotai/kimi-k2.5')
     saved = 0
 
     for source_cfg in cfg['sources']:
@@ -270,18 +270,17 @@ def run_pipeline_2() -> int:
         items_list = ds.format_items(items)
 
         prompt = (
-            f'You are a senior tech editor. For each of the following {ds.display_name} items, '
-            f'generate a one-line Chinese summary highlighting core features/innovations.\n\n'
+            f'请为以下 {ds.display_name} 的每一条目写一行中文简介，突出核心功能或技术亮点。\n\n'
             f'{items_list}\n\n'
-            f'Requirements:\n'
-            f'- Keep original numbering and project name\n'
-            f'- One line per item: number. **project name** - one-line Chinese description\n'
-            f'- Be concise and precise, highlight technical value\n'
-            f'- For code projects, explain what problem it solves\n'
-            f'- For models/datasets, explain use cases'
+            f'输出要求（严格遵守）：\n'
+            f'- 直接输出列表，不要任何前言、说明或总结\n'
+            f'- 每行格式：序号. **项目名** - 一句中文描述\n'
+            f'- 保持原始序号和项目名称不变\n'
+            f'- 每条目必须输出，不能跳过或合并\n'
+            f'- 全部使用中文，不得使用英文解释'
         )
         try:
-            content_text = call_ai(prompt, model=source_cfg.get('model', model_default), max_tokens=1500)
+            content_text = call_ai(prompt, model=source_cfg.get('model', model_default), max_tokens=2500)
             save('code', f'{ds.name}_briefing_{DATE}.md', f'# {ds.display_name} - {DATE}\n\n{content_text}')
             saved += 1
             log(f'    -> saved {ds.name}_briefing_{DATE}.md')
@@ -299,7 +298,7 @@ def run_pipeline_2() -> int:
 def run_pipeline_3() -> int:
     log('=== Pipeline 3: University News & Recruitment ===')
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get('model', 'anthropic/claude-haiku-4-5')
+    model_default = defaults.get('model', 'moonshotai/kimi-k2.5')
     saved = 0
 
     for source_cfg in cfg['sources']:
@@ -333,7 +332,7 @@ def run_pipeline_3() -> int:
         prompt = prompt_tmpl.replace('{items}', f'{ds.display_name}\n{items_text}')
 
         try:
-            content_text = call_ai(prompt, model=model_default, max_tokens=800)
+            content_text = call_ai(prompt, model=model_default, max_tokens=1200)
             display_url = source_cfg.get('list_url', source_cfg.get('url', ''))
             full_content = (
                 f'# {ds.display_name} - {DATE}\n\n'
