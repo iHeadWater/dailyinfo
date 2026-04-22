@@ -8,10 +8,9 @@ from datetime import datetime
 import time
 import shutil
 
-# Discord API 端点
-DISCORD_API = "https://discord.com/api/v10"
+from paths import BRIEFINGS_DIR, PUSHED_DIR
 
-# 项目根目录（脚本位于 scripts/，上一级即根目录）
+DISCORD_API = "https://discord.com/api/v10"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def log(msg):
@@ -53,8 +52,6 @@ DISCORD_CHANNELS = {
     "resource": "1489102139597787178"
 }
 
-BRIEFINGS_DIR = os.path.expanduser("~/.dailyinfo/workspace/briefings")
-PUSHED_DIR = os.path.expanduser("~/.dailyinfo/workspace/pushed")
 DATE = datetime.now().strftime("%Y-%m-%d")
 
 def split_message(content, max_length=1950):

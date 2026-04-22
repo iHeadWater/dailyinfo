@@ -23,14 +23,11 @@ import time
 import requests
 
 from datasource import DataSource, RSSDataSource, build_feed_url_map
+from paths import BRIEFINGS_DIR, PUSHED_DIR
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, 'config')
 SOURCES_JSON = os.path.join(CONFIG_DIR, 'sources.json')
-BRIEFINGS_DIR = os.path.expanduser('~/.dailyinfo/workspace/briefings')
 DATE = datetime.datetime.now().strftime('%Y-%m-%d')
 
 

@@ -13,8 +13,6 @@ Usage:
     dailyinfo logs        # Tail execution log
 """
 
-import configparser
-import os
 import subprocess
 import sys
 from datetime import datetime
@@ -22,27 +20,12 @@ from pathlib import Path
 
 import click
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
+from paths import WORKSPACE_ROOT, BRIEFINGS_DIR, PUSHED_DIR, FRESHRSS_DATA
+
 SCRIPTS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent
 DATE = datetime.now().strftime('%Y-%m-%d')
-
-# New workspace path (moved from ~/.openclaw/)
-WORKSPACE_ROOT = Path.home() / '.dailyinfo' / 'workspace'
-BRIEFINGS_DIR = WORKSPACE_ROOT / 'briefings'
-PUSHED_DIR = WORKSPACE_ROOT / 'pushed'
-FRESHRSS_DATA = Path.home() / '.freshrss' / 'data'
-
-# Legacy path (for migration)
-LEGACY_BRIEFINGS = Path.home() / '.openclaw' / 'workspace' / 'briefings'
-LEGACY_PUSHED = Path.home() / '.openclaw' / 'workspace' / 'pushed'
-
-# Config files
 ENV_FILE = PROJECT_ROOT / '.env'
-CONFIG_DIR = PROJECT_ROOT / 'config'
-SOURCES_JSON = CONFIG_DIR / 'sources.json'
 LOGS_DIR = PROJECT_ROOT / 'logs'
 
 

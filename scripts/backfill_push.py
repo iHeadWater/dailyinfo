@@ -20,11 +20,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, 'scripts'))
 
 from datasource import build_feed_url_map, resolve_feed_id, strip_html
+from paths import BRIEFINGS_DIR, PUSHED_DIR
 
 SOURCES_JSON = os.path.join(PROJECT_ROOT, 'config', 'sources.json')
-PUSHED_DIR = os.path.expanduser('~/.dailyinfo/workspace/pushed/papers')
-BRIEFINGS_DIR = os.path.expanduser('~/.dailyinfo/workspace/briefings/papers')
-
 DISCORD_CHANNEL_ID = '1489102139597787181'
 
 BACKFILL_TARGETS = {
@@ -108,8 +106,8 @@ def discord_send(token, channel_id, content, dry_run=False):
 
 
 def archive(name, date_str, content):
-    os.makedirs(PUSHED_DIR, exist_ok=True)
-    path = os.path.join(PUSHED_DIR, f'{name}_backfill_{date_str}.md')
+    os.makedirs(PUSHED_DIR / 'papers', exist_ok=True)
+    path = PUSHED_DIR / 'papers' / f'{name}_backfill_{date_str}.md'
     with open(path, 'w') as f:
         f.write(content)
     return path
