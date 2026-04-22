@@ -98,14 +98,20 @@ def load_api_key() -> str:
 
 
 def call_ai(prompt: str, model: str = 'anthropic/claude-haiku-4-5', max_tokens: int = 1200) -> str:
-    resp = requests.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        headers={'Authorization': f'Bearer {API_KEY}', 'Content-Type': 'application/json'},
-        json={'model': model, 'messages': [{'role': 'user', 'content': prompt}], 'max_tokens': max_tokens},
-        timeout=120,
-    )
-    resp.raise_for_status()
-    return resp.json()['choices'][0]['message']['content']
+    for attempt in range(3):
+        resp = requests.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            headers={'Authorization': f'Bearer {API_KEY}', 'Content-Type': 'application/json'},
+            json={'model': model, 'messages': [{'role': 'user', 'content': prompt}], 'max_tokens': max_tokens},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        content = resp.json()['choices'][0]['message']['content']
+        if content:
+            return content
+        log(f'  [call_ai] empty response, retry {attempt + 1}/3')
+        time.sleep(2)
+    raise ValueError('call_ai: empty response after 3 retries')
 
 
 PUSHED_DIR = os.path.expanduser('~/.openclaw/workspace/pushed')

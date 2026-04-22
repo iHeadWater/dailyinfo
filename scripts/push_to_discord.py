@@ -108,9 +108,9 @@ def send_to_discord(channel_id, content):
                 timeout=10
             )
 
-            if resp.status_code == 200:
+            if resp.status_code in (200, 201):
                 log(f"  ✅ 第 {i+1} 部分发送成功")
-                time.sleep(0.5)  # 避免速率限制
+                time.sleep(0.5)
             else:
                 log(f"  ❌ 第 {i+1} 部分发送失败: {resp.status_code} - {resp.text}")
                 return False
@@ -126,29 +126,10 @@ def is_placeholder(content):
     return "📭 过去" in content and "无新内容" in content and len(content.strip()) < 200
 
 def is_low_quality_content(content):
-    """检查是否是低质量内容（只有目录/简介，没有实际文章）"""
-    lines = content.strip().split('\n')
+    """检查是否是低质量内容：仅过滤真正无意义的极短内容"""
+    stripped = content.strip()
 
-    # 去掉标题行（以#开头）和空行
-    meaningful_lines = [l for l in lines if l.strip() and not l.startswith('#') and not l.startswith('*')]
-
-    # 如果内容只包含"In This Issue"且很短，视为低质量
-    if "In This Issue" in content and len(content) < 500:
-        return True
-
-    # 关键：检查是否包含实际的摘要信息（用"—"或"："分隔的描述）
-    has_descriptions = False
-    for line in meaningful_lines:
-        # 检查是否有"[日期] 标题 — 描述"这样的格式
-        if " — " in line or " : " in line or " ：" in line:
-            # 检查"—"后面是否有实际内容（不只是链接）
-            parts = line.split(" — " if " — " in line else (" ：" if " ：" in line else " : "))
-            if len(parts) > 1 and len(parts[1].strip()) > 10:  # 描述至少 10 个字
-                has_descriptions = True
-                break
-
-    # 如果没有任何实际描述，视为低质量
-    if not has_descriptions and len(content) < 200:
+    if len(stripped) < 100 and not any('\u4e00' <= c <= '\u9fff' for c in stripped):
         return True
 
     return False
