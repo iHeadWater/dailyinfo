@@ -157,7 +157,25 @@ def test_push_invokes_push_script(cli_mod):
     assert result.exit_code == 0
 
     calls = cli_mod.__test_calls__
-    assert any("push_to_discord.py" in part for cmd in calls for part in cmd)
+    push_calls = [c for c in calls if any("push_to_discord.py" in part for part in c)]
+    assert push_calls
+    assert all("--date" not in cmd for cmd in push_calls)
+
+
+def test_push_forwards_date_argument(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["push", "--date", "2026-04-22"])
+    assert result.exit_code == 0
+
+    calls = cli_mod.__test_calls__
+    push_calls = [c for c in calls if any("push_to_discord.py" in part for part in c)]
+    assert push_calls
+    assert push_calls[-1][-2:] == ["--date", "2026-04-22"]
+
+
+def test_push_rejects_invalid_date(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["push", "--date", "yesterday"])
+    assert result.exit_code == 2
+    assert "YYYY-MM-DD" in result.output
 
 
 def test_start_fails_when_compose_missing(cli_mod, tmp_path, monkeypatch):

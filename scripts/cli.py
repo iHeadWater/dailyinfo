@@ -13,10 +13,19 @@ Usage:
     dailyinfo logs       # Tail execution log
 """
 
+import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# Ensure flat imports like ``from paths import ...`` resolve when this module
+# is loaded via the ``scripts.cli:cli`` console-script entry point, where
+# ``sys.path`` does not include ``scripts/`` by default. Direct invocations
+# (``python scripts/cli.py``) already have it in ``sys.path[0]``.
+_SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
 
 import click
 
@@ -214,10 +223,27 @@ def run(pipeline):
 
 
 @cli.command()
-def push():
-    """Push today's briefings to Discord channels."""
+@click.option(
+    "-d",
+    "--date",
+    "date_str",
+    default=None,
+    help="Date to push in YYYY-MM-DD format. Defaults to today; use this to backfill.",
+)
+def push(date_str):
+    """Push briefings for the given date (default: today) to Discord channels."""
+    if date_str:
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            click.echo(f"Error: --date must be YYYY-MM-DD (got {date_str!r})", err=True)
+            sys.exit(2)
+
     script = SCRIPTS_DIR / "push_to_discord.py"
-    result = subprocess.run([_python(), str(script)], cwd=PROJECT_ROOT)
+    cmd = [_python(), str(script)]
+    if date_str:
+        cmd += ["--date", date_str]
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
 
 

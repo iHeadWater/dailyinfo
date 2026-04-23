@@ -147,6 +147,44 @@ def test_push_category_returns_zero_when_directory_missing(monkeypatch):
     assert pd.push_category("nope", "chan") == 0
 
 
+def test_push_category_with_explicit_date_targets_that_day(monkeypatch):
+    """``push_category`` honours an explicit ``date`` and ignores today's files."""
+    import push_to_discord as pd
+    from paths import BRIEFINGS_DIR, PUSHED_DIR
+
+    sent = []
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, content: (sent.append((channel, content)) or True),
+    )
+
+    backfill_date = "2024-01-02"
+    today_name = f"src_briefing_{_today()}.md"
+    backfill_name = f"src_briefing_{backfill_date}.md"
+    body = "# Backfill\n\n" + "历史简报正文。" * 30
+
+    _seed_briefing(BRIEFINGS_DIR, "papers", today_name, "today content placeholder")
+    _seed_briefing(BRIEFINGS_DIR, "papers", backfill_name, body)
+
+    pushed = pd.push_category("papers", "chan", date=backfill_date)
+
+    assert pushed == 1
+    assert not (BRIEFINGS_DIR / "papers" / backfill_name).exists()
+    assert (PUSHED_DIR / "papers" / backfill_name).exists()
+    # Today's file must stay put because the caller asked for 2024-01-02 only.
+    assert (BRIEFINGS_DIR / "papers" / today_name).exists()
+
+
+def test_parse_date_rejects_invalid_format():
+    import push_to_discord as pd
+    import pytest
+
+    assert pd._parse_date("2024-01-02") == "2024-01-02"
+    with pytest.raises(ValueError):
+        pd._parse_date("not-a-date")
+
+
 def test_send_to_discord_uses_requests_post(monkeypatch):
     import push_to_discord as pd
 

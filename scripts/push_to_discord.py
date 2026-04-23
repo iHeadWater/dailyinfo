@@ -55,7 +55,16 @@ DISCORD_CHANNELS = {
     for category in ("papers", "ai_news", "code", "resource")
 }
 
-DATE = datetime.now().strftime("%Y-%m-%d")
+
+def _today() -> str:
+    """Return today's date string (YYYY-MM-DD), evaluated at call time."""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+# Module-level default kept for backwards compat with tooling that may read it,
+# but all code paths resolve the actual date via ``_today()`` or an explicit
+# ``date`` argument so callers can backfill past days.
+DATE = _today()
 
 
 def split_message(content, max_length=1950):
@@ -137,20 +146,27 @@ def is_low_quality_content(content):
     return False
 
 
-def push_category(category, channel_id):
-    """推送某个分类的所有今日文件"""
+def push_category(category, channel_id, date=None):
+    """Push every briefing for ``category`` whose filename contains ``date``.
+
+    Args:
+        category: Briefing category name (e.g. "papers").
+        channel_id: Target Discord channel id.
+        date: Date string (YYYY-MM-DD). Defaults to today when omitted so
+            existing callers keep working; pass an older date to backfill.
+    """
+    date = date or _today()
     category_dir = os.path.join(BRIEFINGS_DIR, category)
 
     if not os.path.exists(category_dir):
         log(f"  ⚠️  {category} 目录不存在")
         return 0
 
-    # 找到今天的文件
-    files = [f for f in sorted(os.listdir(category_dir)) if DATE in f]
+    files = [f for f in sorted(os.listdir(category_dir)) if date in f]
 
     if not files:
-        log(f"  ℹ️  {category} 中没有今天的文件，发送无内容提醒")
-        notice = f"📭 **{category}** 频道：{DATE} 暂无新简报"
+        log(f"  ℹ️  {category} 中没有 {date} 的文件，发送无内容提醒")
+        notice = f"📭 **{category}** 频道：{date} 暂无新简报"
         send_to_discord(channel_id, notice)
         return 0
 
@@ -192,7 +208,7 @@ def push_category(category, channel_id):
         log(
             f"  全部被过滤 (空内容: {placeholder_count}, 低质量: {low_quality_count}, 共 {total_filtered} 份)，发送无内容提醒"
         )
-        notice = f"📭 **{category}** 频道：{DATE} 各源均无新内容"
+        notice = f"📭 **{category}** 频道：{date} 各源均无新内容"
         send_to_discord(channel_id, notice)
         return 0
 
@@ -220,20 +236,31 @@ def push_category(category, channel_id):
     return pushed_count
 
 
-def main():
+def _parse_date(value):
+    """Validate and normalise a YYYY-MM-DD date string."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid --date value {value!r}; expected YYYY-MM-DD"
+        ) from exc
+
+
+def main(date=None):
+    date = date or _today()
+
     log("=== Discord 推送开始 ===")
-    log(f"日期: {DATE}")
+    log(f"日期: {date}")
 
     total_pushed = 0
 
-    # 推送顺序：papers -> ai_news -> code -> resource
     for category in ["papers", "ai_news", "code", "resource"]:
         channel_id = DISCORD_CHANNELS.get(category, "")
         if not channel_id:
             log(f"⚠️  {category} 未配置 DISCORD_CHANNEL_{category.upper()}，跳过")
             continue
         log(f"推送到 #{category}...")
-        count = push_category(category, channel_id)
+        count = push_category(category, channel_id, date)
         total_pushed += count
         log(f"  小计: {count} 份文件")
 
@@ -244,6 +271,16 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
     import sys
 
-    sys.exit(main())
+    parser = argparse.ArgumentParser(description="Push daily briefings to Discord.")
+    parser.add_argument(
+        "--date",
+        default=None,
+        help="Date to push in YYYY-MM-DD format. Defaults to today.",
+    )
+    args = parser.parse_args()
+
+    resolved = _parse_date(args.date) if args.date else None
+    sys.exit(main(resolved))
