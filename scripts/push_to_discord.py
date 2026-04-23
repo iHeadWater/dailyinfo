@@ -8,54 +8,64 @@ from datetime import datetime
 import time
 import shutil
 
-# Discord API 端点
-DISCORD_API = "https://discord.com/api/v10"
+from paths import BRIEFINGS_DIR, PUSHED_DIR
 
-# 项目根目录（脚本位于 scripts/，上一级即根目录）
+DISCORD_API = "https://discord.com/api/v10"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 def log(msg):
     """输出日志"""
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
-def _load_discord_token():
-    """从 .env 或环境变量读取 DISCORD_BOT_TOKEN。"""
-    # 优先环境变量
-    token = os.environ.get('DISCORD_BOT_TOKEN', '')
-    if token:
-        return token
-    # 从 .env 文件解析
-    env_path = os.path.join(PROJECT_ROOT, '.env')
-    if os.path.exists(env_path):
-        try:
-            from dotenv import dotenv_values
-            token = dotenv_values(env_path).get('DISCORD_BOT_TOKEN', '')
-        except ImportError:
-            with open(env_path) as f:
-                for line in f:
-                    line = line.strip()
-                    if line.startswith('DISCORD_BOT_TOKEN=') and not line.startswith('#'):
-                        token = line.split('=', 1)[1].strip().strip('"').strip("'")
-                        break
-    return token
 
-# Discord 配置
-DISCORD_BOT_TOKEN = _load_discord_token()
+def _load_env_value(key):
+    """Read a key from the environment or project .env, returning '' if missing."""
+    val = os.environ.get(key, "")
+    if val:
+        return val
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    if not os.path.exists(env_path):
+        return ""
+    try:
+        from dotenv import dotenv_values
+
+        return dotenv_values(env_path).get(key, "") or ""
+    except ImportError:
+        prefix = f"{key}="
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("#") or not line.startswith(prefix):
+                    continue
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+DISCORD_BOT_TOKEN = _load_env_value("DISCORD_BOT_TOKEN")
 if not DISCORD_BOT_TOKEN:
     log("❌ 错误：DISCORD_BOT_TOKEN 未设置")
     exit(1)
 
+# Channel IDs are loaded per-category from env (DISCORD_CHANNEL_<CATEGORY>).
+# Missing entries cause that category to be skipped at push time, not a fatal error.
 DISCORD_CHANNELS = {
-    "papers": "1489102139597787181",
-    "ai_news": "1489102139597787182",
-    "code": "1489102139597787183",
-    "resource": "1489102139597787178"
+    category: _load_env_value(f"DISCORD_CHANNEL_{category.upper()}")
+    for category in ("papers", "ai_news", "code", "resource")
 }
 
-BRIEFINGS_DIR = os.path.expanduser("~/.openclaw/workspace/briefings")
-PUSHED_DIR = os.path.expanduser("~/.openclaw/workspace/pushed")
-DATE = datetime.now().strftime("%Y-%m-%d")
+
+def _today() -> str:
+    """Return today's date string (YYYY-MM-DD), evaluated at call time."""
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+# Module-level default kept for backwards compat with tooling that may read it,
+# but all code paths resolve the actual date via ``_today()`` or an explicit
+# ``date`` argument so callers can backfill past days.
+DATE = _today()
+
 
 def split_message(content, max_length=1950):
     """分割超长消息（Discord 单条消息上限 2000 字符）"""
@@ -81,6 +91,7 @@ def split_message(content, max_length=1950):
 
     return messages
 
+
 def send_to_discord(channel_id, content):
     """发送消息到 Discord 频道"""
     messages = split_message(content)
@@ -97,15 +108,13 @@ def send_to_discord(channel_id, content):
             if len(messages) > 1:
                 msg = f"【第 {i+1}/{len(messages)} 部分】\n\n{msg}"
 
-            data = {
-                "content": msg
-            }
+            data = {"content": msg}
 
             resp = requests.post(
                 f"{DISCORD_API}/channels/{channel_id}/messages",
                 headers=headers,
                 json=data,
-                timeout=10
+                timeout=10,
             )
 
             if resp.status_code in (200, 201):
@@ -120,34 +129,44 @@ def send_to_discord(channel_id, content):
 
     return True
 
+
 def is_placeholder(content):
     """检查是否是空内容的 placeholder 文件"""
     # 如果内容只包含 "📭 过去 X 小时无新内容"，则是 placeholder
     return "📭 过去" in content and "无新内容" in content and len(content.strip()) < 200
 
+
 def is_low_quality_content(content):
     """检查是否是低质量内容：仅过滤真正无意义的极短内容"""
     stripped = content.strip()
 
-    if len(stripped) < 100 and not any('\u4e00' <= c <= '\u9fff' for c in stripped):
+    if len(stripped) < 100 and not any("\u4e00" <= c <= "\u9fff" for c in stripped):
         return True
 
     return False
 
-def push_category(category, channel_id):
-    """推送某个分类的所有今日文件"""
+
+def push_category(category, channel_id, date=None):
+    """Push every briefing for ``category`` whose filename contains ``date``.
+
+    Args:
+        category: Briefing category name (e.g. "papers").
+        channel_id: Target Discord channel id.
+        date: Date string (YYYY-MM-DD). Defaults to today when omitted so
+            existing callers keep working; pass an older date to backfill.
+    """
+    date = date or _today()
     category_dir = os.path.join(BRIEFINGS_DIR, category)
 
     if not os.path.exists(category_dir):
         log(f"  ⚠️  {category} 目录不存在")
         return 0
 
-    # 找到今天的文件
-    files = [f for f in sorted(os.listdir(category_dir)) if DATE in f]
+    files = [f for f in sorted(os.listdir(category_dir)) if date in f]
 
     if not files:
-        log(f"  ℹ️  {category} 中没有今天的文件，发送无内容提醒")
-        notice = f"📭 **{category}** 频道：{DATE} 暂无新简报"
+        log(f"  ℹ️  {category} 中没有 {date} 的文件，发送无内容提醒")
+        notice = f"📭 **{category}** 频道：{date} 暂无新简报"
         send_to_discord(channel_id, notice)
         return 0
 
@@ -161,7 +180,7 @@ def push_category(category, channel_id):
     for filename in files:
         filepath = os.path.join(category_dir, filename)
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
+            with open(filepath, "r", encoding="utf-8") as f:
                 content = f.read()
 
             if is_placeholder(content):
@@ -180,12 +199,16 @@ def push_category(category, channel_id):
             log(f"  ❌ 读取 {filename} 出错: {e}")
 
     if valid_files:
-        log(f"  有效文件: {len(valid_files)} 份，空内容: {placeholder_count} 份，低质量: {low_quality_count} 份")
+        log(
+            f"  有效文件: {len(valid_files)} 份，空内容: {placeholder_count} 份，低质量: {low_quality_count} 份"
+        )
         log(f"  开始推送...")
     else:
         total_filtered = placeholder_count + low_quality_count
-        log(f"  全部被过滤 (空内容: {placeholder_count}, 低质量: {low_quality_count}, 共 {total_filtered} 份)，发送无内容提醒")
-        notice = f"📭 **{category}** 频道：{DATE} 各源均无新内容"
+        log(
+            f"  全部被过滤 (空内容: {placeholder_count}, 低质量: {low_quality_count}, 共 {total_filtered} 份)，发送无内容提醒"
+        )
+        notice = f"📭 **{category}** 频道：{date} 各源均无新内容"
         send_to_discord(channel_id, notice)
         return 0
 
@@ -212,26 +235,52 @@ def push_category(category, channel_id):
 
     return pushed_count
 
-def main():
+
+def _parse_date(value):
+    """Validate and normalise a YYYY-MM-DD date string."""
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").strftime("%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid --date value {value!r}; expected YYYY-MM-DD"
+        ) from exc
+
+
+def main(date=None):
+    date = date or _today()
+
     log("=== Discord 推送开始 ===")
-    log(f"日期: {DATE}")
+    log(f"日期: {date}")
 
     total_pushed = 0
 
-    # 推送顺序：papers -> ai_news -> code -> resource
     for category in ["papers", "ai_news", "code", "resource"]:
-        if category in DISCORD_CHANNELS:
-            channel_id = DISCORD_CHANNELS[category]
-            log(f"推送到 #{category}...")
-            count = push_category(category, channel_id)
-            total_pushed += count
-            log(f"  小计: {count} 份文件")
+        channel_id = DISCORD_CHANNELS.get(category, "")
+        if not channel_id:
+            log(f"⚠️  {category} 未配置 DISCORD_CHANNEL_{category.upper()}，跳过")
+            continue
+        log(f"推送到 #{category}...")
+        count = push_category(category, channel_id, date)
+        total_pushed += count
+        log(f"  小计: {count} 份文件")
 
     log("=== 推送完成 ===")
     log(f"总共推送: {total_pushed} 份文件")
 
     return 0 if total_pushed > 0 else 1
 
+
 if __name__ == "__main__":
+    import argparse
     import sys
-    sys.exit(main())
+
+    parser = argparse.ArgumentParser(description="Push daily briefings to Discord.")
+    parser.add_argument(
+        "--date",
+        default=None,
+        help="Date to push in YYYY-MM-DD format. Defaults to today.",
+    )
+    args = parser.parse_args()
+
+    resolved = _parse_date(args.date) if args.date else None
+    sys.exit(main(resolved))
