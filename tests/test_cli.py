@@ -152,6 +152,43 @@ def test_run_without_pipeline_runs_all(cli_mod):
     assert all("--pipeline" not in cmd for cmd in pipeline_calls)
 
 
+def test_run_forwards_force_all(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["run", "--force", "all"])
+    assert result.exit_code == 0
+
+    calls = cli_mod.__test_calls__
+    pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
+    assert pipeline_calls
+    assert pipeline_calls[-1][-2:] == ["--force", "all"]
+
+
+def test_run_forwards_multiple_force_sources(cli_mod):
+    result = CliRunner().invoke(
+        cli_mod.cli, ["run", "-f", "arxiv_cs_ai", "-f", "nature"]
+    )
+    assert result.exit_code == 0
+
+    calls = cli_mod.__test_calls__
+    pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
+    assert pipeline_calls
+    last = pipeline_calls[-1]
+    assert last.count("--force") == 2
+    assert "arxiv_cs_ai" in last
+    assert "nature" in last
+
+
+def test_run_combines_pipeline_and_force(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["run", "-p", "1", "-f", "arxiv_cs_ai"])
+    assert result.exit_code == 0
+
+    calls = cli_mod.__test_calls__
+    pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
+    assert pipeline_calls
+    last = pipeline_calls[-1]
+    assert "--pipeline" in last and "1" in last
+    assert last[-2:] == ["--force", "arxiv_cs_ai"]
+
+
 def test_push_invokes_push_script(cli_mod):
     result = CliRunner().invoke(cli_mod.cli, ["push"])
     assert result.exit_code == 0

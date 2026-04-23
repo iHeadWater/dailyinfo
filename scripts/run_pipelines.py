@@ -97,30 +97,88 @@ def load_api_key() -> str:
     sys.exit(1)
 
 
+DEFAULT_FALLBACK_MODEL = "deepseek/deepseek-chat-v3.1"
+
+_BACKOFF_SECONDS = (2, 5, 10)
+
+
+def _resolve_fallback_model(explicit: str | None) -> str:
+    """Pick the fallback model: explicit arg > env override > built-in default."""
+    return (
+        explicit or os.environ.get("DAILYINFO_FALLBACK_MODEL") or DEFAULT_FALLBACK_MODEL
+    )
+
+
+def _post_openrouter(model: str, prompt: str, max_tokens: int):
+    """Issue a single OpenRouter chat completion call and return the parsed JSON."""
+    resp = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def call_ai(
-    prompt: str, model: str = "moonshotai/kimi-k2.5", max_tokens: int = 1200
+    prompt: str,
+    model: str = "moonshotai/kimi-k2.5",
+    max_tokens: int = 1200,
+    *,
+    fallback_model: str | None = None,
 ) -> str:
-    for attempt in range(3):
-        resp = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": max_tokens,
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        content = resp.json()["choices"][0]["message"]["content"]
-        if content:
-            return content
-        log(f"  [call_ai] empty response, retry {attempt + 1}/3")
-        time.sleep(2)
-    raise ValueError("call_ai: empty response after 3 retries")
+    """Call OpenRouter with retries and a fallback model.
+
+    Strategy: 3 attempts on the primary model with exponential backoff
+    (2s / 5s / 10s), then up to 2 attempts on ``fallback_model``.
+    Empty or refusal responses are logged with the provider-reported
+    ``finish_reason`` to help diagnose truncation vs. content filtering.
+    """
+    fallback = _resolve_fallback_model(fallback_model)
+    attempts_per_model = ((model, 3), (fallback, 2))
+
+    for mdl, attempts in attempts_per_model:
+        for i in range(attempts):
+            try:
+                data = _post_openrouter(mdl, prompt, max_tokens)
+            except requests.RequestException as exc:
+                log(f"  [call_ai] {mdl} attempt {i + 1}/{attempts} http_error={exc}")
+                time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
+                continue
+
+            choice = (data.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            content = (message.get("content") or "").strip()
+            if content:
+                return content
+
+            reason = (
+                choice.get("finish_reason")
+                or (data.get("error") or {}).get("message")
+                or "empty"
+            )
+            log(
+                f"  [call_ai] {mdl} attempt {i + 1}/{attempts} empty "
+                f"(finish_reason={reason})"
+            )
+            time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
+
+        if mdl != fallback:
+            log(
+                f"  [call_ai] primary {model} exhausted, switching to fallback {fallback}"
+            )
+
+    raise ValueError(
+        f"call_ai: empty response after retries (model={model}, fallback={fallback})"
+    )
 
 
 def save(directory: str, filename: str, content: str) -> str:
@@ -146,6 +204,45 @@ def _already_pushed_within(name: str, category: str, lookback_hours: int) -> boo
     for fpath in pushed_dir.iterdir():
         if fpath.name.startswith(prefix) and fpath.name.endswith(".md"):
             if fpath.stat().st_mtime > cutoff:
+                return True
+    return False
+
+
+# --- Idempotency / --force state -----------------------------------------
+# Populated from CLI ``--force`` flags in ``main``. When ``FORCE_ALL`` is True
+# every source is re-run; names in ``FORCE_SOURCES`` are selectively re-run.
+FORCE_ALL: bool = False
+FORCE_SOURCES: set[str] = set()
+
+
+def _is_forced(name: str) -> bool:
+    """True when the caller explicitly requested a re-run for this source."""
+    return FORCE_ALL or name in FORCE_SOURCES
+
+
+def _has_real_briefing_today(name: str, category: str) -> bool:
+    """Return True when a non-placeholder briefing for ``name`` already exists today.
+
+    Used to skip redundant fetch+AI work when a pipeline is re-run on the same
+    day. Scans both ``BRIEFINGS_DIR`` (generated but not yet pushed) and
+    ``PUSHED_DIR`` (already pushed and archived today) so the check holds
+    across the full lifecycle. Placeholder files ("no new content" notices)
+    do not count as real briefings so they can be regenerated if fresh items
+    arrive later. ``--force`` (``FORCE_ALL`` / ``FORCE_SOURCES``) overrides
+    this check.
+    """
+    if _is_forced(name):
+        return False
+    for base in (BRIEFINGS_DIR, PUSHED_DIR):
+        cat_dir = base / category
+        if not cat_dir.is_dir():
+            continue
+        for fpath in cat_dir.glob(f"{name}_briefing_{DATE}*.md"):
+            try:
+                text = fpath.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if "📭 过去" not in text:
                 return True
     return False
 
@@ -185,8 +282,14 @@ def run_pipeline_1() -> int:
             feed_cfg, defaults, db=db, full_map=full_map, base_map=base_map
         )
         assert isinstance(ds, RSSDataSource)
-        items = ds.fetch()
         name, category = ds.name, ds.category
+        if _has_real_briefing_today(name, category):
+            log(
+                f"  {name}: briefing already exists for {DATE}, skip "
+                f"(use --force {name} to regenerate)"
+            )
+            continue
+        items = ds.fetch()
         model = feed_cfg.get("model") or model_default
 
         if not items:
@@ -253,7 +356,7 @@ def run_pipeline_1() -> int:
             suffix = f"_batch{idx+1}" if feed_cfg.get("max_articles_per_batch") else ""
             filename = f"{name}_briefing_{DATE}{suffix}.md"
             try:
-                content_text = call_ai(prompt, model=model)
+                content_text = call_ai(prompt, model=model, max_tokens=2500)
                 save(category, filename, content_text)
                 saved += 1
                 log(f"    -> saved {filename}")
@@ -282,6 +385,13 @@ def run_pipeline_2() -> int:
 
         ds = DataSource.create(source_cfg, defaults)
         log(f"  {ds.name}...")
+
+        if _has_real_briefing_today(ds.name, "code"):
+            log(
+                f"    briefing already exists for {DATE}, skip "
+                f"(use --force {ds.name} to regenerate)"
+            )
+            continue
 
         try:
             items = ds.fetch()
@@ -353,6 +463,13 @@ def run_pipeline_3() -> int:
         ds = DataSource.create(source_cfg, defaults)
         log(f"  {ds.name}...")
 
+        if _has_real_briefing_today(ds.name, "resource"):
+            log(
+                f"    briefing already exists for {DATE}, skip "
+                f"(use --force {ds.name} to regenerate)"
+            )
+            continue
+
         try:
             items = ds.fetch()
         except Exception as e:
@@ -409,10 +526,26 @@ def main() -> int:
         choices=[1, 2, 3],
         help="Run specific pipeline (1=RSS, 2=Code, 3=University). Default: all",
     )
+    parser.add_argument(
+        "--force",
+        action="append",
+        default=[],
+        metavar="SOURCE",
+        help="Force regenerate. Pass 'all' to refresh everything or a source "
+        "name to target one source. Repeatable.",
+    )
     args = parser.parse_args()
 
-    global API_KEY
+    global API_KEY, FORCE_ALL, FORCE_SOURCES
     API_KEY = load_api_key()
+    FORCE_ALL = "all" in args.force
+    FORCE_SOURCES = set(args.force) - {"all"}
+    if FORCE_ALL or FORCE_SOURCES:
+        log(
+            "Force mode: "
+            + ("ALL" if FORCE_ALL else "")
+            + (f" sources={sorted(FORCE_SOURCES)}" if FORCE_SOURCES else "")
+        )
 
     log(f"DailyInfo Pipeline Runner — {DATE}")
     log(f"Project root: {PROJECT_ROOT}")

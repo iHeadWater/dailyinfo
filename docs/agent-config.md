@@ -48,12 +48,24 @@ ls ~/.myagentdata/dailyinfo/
 
 > hermes / openclaw 不需要理解 markdown 内容，也不需要自己发 Discord 消息。它们只是定时触发器。真正的"读文件 + POST Discord"逻辑全在 `scripts/push_to_discord.py` 里，是纯 Python 确定性代码。
 
+### 幂等保证
+
+`dailyinfo run` 和 `dailyinfo push` 都是幂等的，可以安全地重复触发：
+
+- `run`：若某数据源今日已有非占位的 briefing（`briefings/` 或 `pushed/` 下都会检查），跳过抓取与 AI 调用。所以 cron 重试、手动排查时多跑几次都不会重复烧钱。
+- `push`：若今天没有待推送的文件，对应频道会收到一条"暂无新简报"的提示并退出，不会重复发已推送过的内容。
+
+退出码语义：`0` 表示本次至少处理了一份内容；非零仅代表"没东西可干"或出错。hermes cron 建议不要把非零退出当告警，只监控脚本崩溃即可。
+
 ## 手动触发（排错 / 临时运行）
 
 ```bash
-dailyinfo run                # 立即跑一次所有 pipeline
-dailyinfo push               # 立即推送今天已生成的 briefings
-dailyinfo status             # 查看 briefings/ 和 pushed/ 的文件数
+dailyinfo run                      # 立即跑一次所有 pipeline（幂等，可重复触发）
+dailyinfo run -f all               # 强制刷新今天所有数据源
+dailyinfo run -p 1 -f arxiv_cs_ai  # 强制刷新单个源
+dailyinfo push                     # 立即推送今天已生成的 briefings
+dailyinfo push -d 2026-04-22       # 补推指定日期的 briefings
+dailyinfo status                   # 查看 briefings/ 和 pushed/ 的文件数
 ```
 
 ## Discord Channel Mapping

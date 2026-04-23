@@ -212,12 +212,26 @@ def restart():
     default="all",
     help="Pipeline to run: 1=RSS papers/news, 2=code trending, 3=university news.",
 )
-def run(pipeline):
-    """Scrape sources, generate AI summaries, save briefing files."""
+@click.option(
+    "-f",
+    "--force",
+    multiple=True,
+    metavar="SOURCE",
+    help="Force regenerate today's briefing. Pass 'all' to refresh everything "
+    "or a source name (e.g. 'arxiv_cs_ai'). Repeatable.",
+)
+def run(pipeline, force):
+    """Scrape sources, generate AI summaries, save briefing files.
+
+    By default, sources whose today's briefing already exists are skipped;
+    pass --force to bypass the skip check for specific sources or all.
+    """
     script = SCRIPTS_DIR / "run_pipelines.py"
     cmd = [_python(), str(script)]
     if pipeline != "all":
         cmd += ["--pipeline", pipeline]
+    for src in force:
+        cmd += ["--force", src]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
 

@@ -50,19 +50,36 @@ dailyinfo restart    # Restart FreshRSS
 ### Pipeline Execution
 
 ```bash
-dailyinfo run           # Run all pipelines
-dailyinfo run -p 1      # Pipeline 1 (RSS papers/news)
-dailyinfo run -p 2      # Pipeline 2 (code trending)
-dailyinfo run -p 3      # Pipeline 3 (university news)
+dailyinfo run                      # Run all pipelines
+dailyinfo run -p 1                 # Pipeline 1 (RSS papers/news)
+dailyinfo run -p 2                 # Pipeline 2 (code trending)
+dailyinfo run -p 3                 # Pipeline 3 (university news)
+dailyinfo run -f all               # Force regenerate every source today
+dailyinfo run -p 1 -f arxiv_cs_ai  # Force regenerate one source only
 ```
+
+`dailyinfo run` is **idempotent**: if a non-placeholder briefing already exists
+for today (either in `briefings/` waiting to be pushed, or already archived in
+`pushed/`), the source is skipped and no AI call is made. Use `-f / --force`
+to override — pass `all` to refresh everything, or repeat the flag with
+specific source names (matches `config/sources.json`).
+
+If the primary model (`moonshotai/kimi-k2.5`) returns empty responses after 3
+retries with exponential backoff (2s / 5s / 10s), `run` automatically falls
+back to the model in `DAILYINFO_FALLBACK_MODEL` (default
+`deepseek/deepseek-chat-v3.1`) for 2 more attempts before giving up.
 
 ### Push to Discord
 
 ```bash
-dailyinfo push
+dailyinfo push                    # Push today's briefings
+dailyinfo push -d 2026-04-22      # Backfill a specific day (YYYY-MM-DD)
 ```
 
-Scans today's files under `~/.myagentdata/dailyinfo/briefings/{category}/`, posts to the mapped Discord channel, and moves successfully pushed files to `pushed/{category}/`.
+Scans files under `~/.myagentdata/dailyinfo/briefings/{category}/` whose name
+contains the target date, posts to the mapped Discord channel, and moves
+successfully pushed files to `pushed/{category}/`. `push` is idempotent: a day
+with no pending files just emits a "暂无新简报" notice and exits cleanly.
 
 ### Status & Logs
 
@@ -87,9 +104,11 @@ FRESHRSS_PASSWORD=freshrss123
 |-----|---------|
 | `OPENROUTER_API_KEY` | LLM API for generating summaries |
 | `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` | Per-category channel IDs (missing ones are skipped, not fatal) |
 | `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
 | `FRESHRSS_PASSWORD` | FreshRSS password |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`) |
+| `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `deepseek/deepseek-chat-v3.1`) |
 
 ## Scheduling via myopenclaw hermes cron
 

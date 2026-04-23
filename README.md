@@ -82,12 +82,15 @@ dailyinfo push
 | `dailyinfo start` | 启动 FreshRSS 容器 |
 | `dailyinfo stop` | 停止 FreshRSS 容器 |
 | `dailyinfo restart` | 重启 FreshRSS 容器 |
-| `dailyinfo run` | 运行全部流水线（生成 markdown） |
+| `dailyinfo run` | 运行全部流水线（生成 markdown，**幂等**：今日已有 briefing 的源会跳过） |
 | `dailyinfo run -p 2` | 仅运行指定流水线（1=RSS、2=code、3=university） |
+| `dailyinfo run -f all` / `-f arxiv_cs_ai` | 强制重生（`all` 或具体源名，可重复 `-f`） |
 | `dailyinfo push` | 扫描 `briefings/` → 推送 Discord → 归档到 `pushed/` |
+| `dailyinfo push -d 2026-04-22` | 补推指定日期的 briefings |
 | `dailyinfo status` | 查看今日 briefings / pushed 文件数量 |
 
 > `dailyinfo install` 不再写系统 crontab；调度请交给 myopenclaw 的 hermes cron 或外部调度器。
+> `run` 的 AI 调用会在主模型（`moonshotai/kimi-k2.5`）连续返回空响应时自动切到 `DAILYINFO_FALLBACK_MODEL`（默认 `deepseek/deepseek-chat-v3.1`）。
 
 ## 配置
 
@@ -103,6 +106,7 @@ dailyinfo push
 | `FRESHRSS_USER` | FreshRSS 用户名，默认 `$USER` |
 | `FRESHRSS_PASSWORD` | FreshRSS 初始密码 |
 | `DAILYINFO_DATA_ROOT` | 覆盖默认数据根（默认 `~/.myagentdata/dailyinfo`） |
+| `DAILYINFO_FALLBACK_MODEL` | AI 备用模型（主模型空响应后切换，默认 `deepseek/deepseek-chat-v3.1`） |
 
 ## 从旧版本迁移
 
@@ -135,4 +139,4 @@ docker compose down && dailyinfo start
 
 ## License
 
-MIT License
+BSD 3-Clause License. See [LICENSE](LICENSE) for the full text.

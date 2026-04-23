@@ -331,8 +331,8 @@
       "display_name": "arXiv CS.AI",
       "category": "ai_news",
       "enabled": true,
-      "max_articles_per_batch": 30,
-      "max_batches": 10,
+      "max_articles_per_batch": 20,
+      "max_batches": 5,
       "url": "https://rss.arxiv.org/rss/cs.AI",
       "type": "rss"
     },
