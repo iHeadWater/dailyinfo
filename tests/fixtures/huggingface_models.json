@@ -1,0 +1,20 @@
+[
+  {
+    "id": "org/model-a",
+    "pipeline_tag": "text-generation",
+    "likes": 123,
+    "downloads": 45678
+  },
+  {
+    "id": "org/model-b",
+    "pipeline_tag": "image-classification",
+    "likes": 9,
+    "downloads": 12
+  },
+  {
+    "id": "org/model-c",
+    "pipeline_tag": "translation",
+    "likes": 54,
+    "downloads": 321
+  }
+]

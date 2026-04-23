@@ -1,0 +1,17 @@
+<!-- DLUT news list fragment. {FRESH_YM}/{FRESH_DAY} and {OLD_YM}/{OLD_DAY}
+     are filled in at test time so the "fresh" entry falls inside the
+     lookback window and the "old" entry is filtered out. -->
+<ul>
+  <li class="list-group-item bg-mask">
+    <time><span>{FRESH_DAY}</span> {FRESH_YM}</time>
+    <h4>
+      <a href="./info/1234.htm">Fresh DLUT announcement title</a>
+    </h4>
+  </li>
+  <li class="list-group-item bg-mask">
+    <time><span>{OLD_DAY}</span> {OLD_YM}</time>
+    <h4>
+      <a href="./info/5678.htm">Old DLUT announcement title</a>
+    </h4>
+  </li>
+</ul>
