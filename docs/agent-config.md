@@ -1,88 +1,96 @@
-# OpenClaw Agent Configuration
+# Integration with myopenclaw
 
-DailyInfo writes briefings to a shared workspace. This guide explains how to configure OpenClaw to mount that workspace and consume the briefings.
+dailyinfo 与 [myopenclaw](https://github.com/OuyangWenyu/myopenclaw) 通过文件系统和 CLI 调用解耦。本文说明如何把 dailyinfo 接入 myopenclaw 的调度与备份流程。
 
-## Workspace Path Priority
+## 数据根路径
 
-DailyInfo resolves `WORKSPACE_ROOT` in this order:
+dailyinfo 的数据根由 `scripts/paths.py` 决定：
 
-1. `WORKSPACE_ROOT` in `.env` (if set and valid)
-2. `~/Google Drive/dailyinfo/workspace` (if Google Drive exists)
-3. `~/.dailyinfo/workspace` (fallback)
+1. 如果 `.env` 或环境变量中有 `DAILYINFO_DATA_ROOT`，使用该路径；
+2. 否则默认 `~/.myagentdata/dailyinfo`。
 
-**Default on this machine**: `~/Google Drive/dailyinfo/workspace`
+验证当前路径：
 
-To verify:
 ```bash
 python3 -c "from scripts.paths import WORKSPACE_ROOT; print(WORKSPACE_ROOT)"
 ```
 
-## OpenClaw Docker Mount
+## 备份（自动）
 
-The OpenClaw container runs as `dailyinfo_openclaw`. To mount the shared workspace, add a volume bind to the container's mount configuration.
+myopenclaw 的 `docker-compose.yml` 里 `backup-cron` 服务已经挂载：
 
-**Get current mount config:**
-```bash
-docker inspect dailyinfo_openclaw --format '{{json .Mounts}}' | python3 -m json.tool
-```
-
-**Add mount for shared workspace:**
-
-Find the OpenClaw container's Docker run config. The key addition is:
 ```yaml
 volumes:
-  - ~/Google Drive/dailyinfo/workspace:/home/node/workspace:ro
+  - ${HOME}/.myagentdata:/.myagentdata:ro
 ```
 
-This makes dailyinfo's briefings available inside the OpenClaw container at `/home/node/workspace/briefings/`.
+只要 dailyinfo 的数据落在 `~/.myagentdata/dailyinfo/`（默认），就会被定时快照到云盘，无需额外配置。
 
-**Example (docker compose snippet):**
-```yaml
-services:
-  openclaw-gateway:
-    # ... existing config ...
-    volumes:
-      - ~/.openclaw:/home/node/.openclaw
-      - ~/.mineru:/home/node/.mineru
-      - ~/Google Drive/dailyinfo/workspace:/home/node/workspace:ro  # <-- add this
-```
+验证备份路径下已有 dailyinfo 数据：
 
-Then restart:
 ```bash
-docker compose down
-docker compose up -d
+ls ~/.myagentdata/dailyinfo/
+# freshrss/  briefings/  pushed/
 ```
 
-Or if OpenClaw uses a startup script, add the mount to that script's `docker run` command.
+## 调度（推荐）
 
-## OpenClaw Agent: Read Briefings
+推荐由 myopenclaw 的 hermes cron 触发 dailyinfo CLI。调度项示例：
 
-Once mounted, an OpenClaw sub-agent can read briefings:
+| Cron | Command | Purpose |
+|------|---------|---------|
+| `0 6 * * *`  | `dailyinfo run -p 1` | Pipeline 1: RSS papers + AI news |
+| `15 6 * * *` | `dailyinfo run -p 2` | Pipeline 2: code trending |
+| `30 6 * * *` | `dailyinfo run -p 3` | Pipeline 3: university news |
+| `0 7 * * *`  | `dailyinfo push`     | 推送 Discord + 归档 |
 
+在 hermes 的 `cron/` 配置里注册对应脚本或 shell 调用即可。
+
+> hermes / openclaw 不需要理解 markdown 内容，也不需要自己发 Discord 消息。它们只是定时触发器。真正的"读文件 + POST Discord"逻辑全在 `scripts/push_to_discord.py` 里，是纯 Python 确定性代码。
+
+## 手动触发（排错 / 临时运行）
+
+```bash
+dailyinfo run                # 立即跑一次所有 pipeline
+dailyinfo push               # 立即推送今天已生成的 briefings
+dailyinfo status             # 查看 briefings/ 和 pushed/ 的文件数
 ```
-/home/node/workspace/briefings/{category}/*_{DATE}.md
+
+## Discord Channel Mapping
+
+由 `.env` 配置，`push_to_discord.py` 启动时读取。每个分类一个变量：
+
+```env
+DISCORD_CHANNEL_PAPERS=...
+DISCORD_CHANNEL_AI_NEWS=...
+DISCORD_CHANNEL_CODE=...
+DISCORD_CHANNEL_RESOURCE=...
 ```
 
-For example, a briefing reader skill or agent that:
-1. Lists `briefings/papers/` for today's `.md` files
-2. Reads the content
-3. Pushes to Discord via Bot API
-
-## Discord Channel IDs
-
-| Category | Channel ID |
-|----------|-----------|
-| papers | `1489102139597787181` |
-| ai_news | `1489102139597787182` |
-| code | `1489102139597787183` |
-| resource | `1489102139597787178` |
+缺失某一个时该分类会被跳过（WARN），不影响其他分类。
 
 ## Troubleshooting
 
-### OpenClaw can't see briefings
-- Verify mount: `docker exec dailyinfo_openclaw ls /home/node/workspace/briefings/`
-- Check path matches dailyinfo's output: run the verify command above
+### FreshRSS DB 找不到
 
-### Permission denied
-- Mount as `:ro` (read-only) is recommended — OpenClaw should only read, not write
-- Ensure the host folder is readable by the container user
+`run_pipelines.py` 会打印 warning 并跳过 Pipeline 1。排查步骤：
+
+```bash
+# 1. 检查 FreshRSS 容器是否在跑
+docker compose ps
+
+# 2. 检查数据目录
+ls ~/.myagentdata/dailyinfo/freshrss/data/users/
+
+# 3. 如果用户名和 $USER 不同，在 .env 里设置 FRESHRSS_USER
+```
+
+### 推送失败 / 没有今日文件
+
+`dailyinfo push` 当 `briefings/{category}/` 里没有今日文件时，会向对应频道发一条"暂无新简报"的提示，并继续处理下一个分类。
+
+### 数据没被备份
+
+- 确认 dailyinfo 写入的是 `~/.myagentdata/dailyinfo/`（用上文验证命令）
+- 确认 myopenclaw 的 `backup-cron` 容器在跑：`docker compose ps` in myopenclaw
+- 手动触发备份：`docker compose exec backup-cron /scripts/backup-all-docker.sh`

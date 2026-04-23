@@ -1,28 +1,23 @@
 # CLI Reference
 
-DailyInfo command-line interface using uv and Click.
+DailyInfo command-line interface built on `click` + `uv`.
 
 ## Installation
 
-### Using uv (Recommended)
+### Using uv (recommended)
 
 ```bash
-# Clone and enter project
 git clone <repo-url>
 cd dailyinfo
 
-# Create .env from template
 cp .env.example .env
-# Edit .env with your API keys
+# edit .env with your API keys
 
-# Install dependencies
 uv sync --python python3
-
-# Install CLI
 uv pip install -e .
 ```
 
-### Using pip (Fallback)
+### Using pip (fallback)
 
 ```bash
 pip install -e .
@@ -35,10 +30,12 @@ dailyinfo install
 ```
 
 This command:
-1. Validates `.env` configuration
-2. Creates workspace directories (`~/.dailyinfo/workspace/`)
-3. Installs Python dependencies
-4. Sets up crontab for scheduled runs
+
+1. Validates `.env` — `OPENROUTER_API_KEY` and `DISCORD_BOT_TOKEN` must be non-empty and not a placeholder.
+2. Creates the workspace under `~/.myagentdata/dailyinfo/` (`freshrss/data`, `briefings/*`, `pushed/*`).
+3. Installs Python dependencies via `uv sync` (falls back to `pip install -e .`).
+
+**It does NOT write to the host crontab.** Scheduling is expected to be driven by an external cron, e.g. myopenclaw's hermes cron.
 
 ## Commands
 
@@ -46,74 +43,70 @@ This command:
 
 ```bash
 dailyinfo start      # Start FreshRSS (Docker)
-dailyinfo stop      # Stop services
-dailyinfo restart  # Restart FreshRSS
+dailyinfo stop       # Stop services
+dailyinfo restart    # Restart FreshRSS
 ```
 
 ### Pipeline Execution
 
 ```bash
 dailyinfo run           # Run all pipelines
-dailyinfo run -p 1    # Run Pipeline 1 (RSS papers/news)
-dailyinfo run -p 2    # Run Pipeline 2 (code trending)
-dailyinfo run -p 3    # Run Pipeline 3 (university news)
+dailyinfo run -p 1      # Pipeline 1 (RSS papers/news)
+dailyinfo run -p 2      # Pipeline 2 (code trending)
+dailyinfo run -p 3      # Pipeline 3 (university news)
 ```
 
 ### Push to Discord
 
 ```bash
-dailyinfo push    # Push today's briefings to Discord
+dailyinfo push
 ```
+
+Scans today's files under `~/.myagentdata/dailyinfo/briefings/{category}/`, posts to the mapped Discord channel, and moves successfully pushed files to `pushed/{category}/`.
 
 ### Status & Logs
 
 ```bash
-dailyinfo status    # Show briefing file counts
-dailyinfo logs      # Tail execution log
+dailyinfo status    # Counts of today's briefings / pushed files
+dailyinfo logs      # Tail logs/dailyinfo.log (if enabled)
 ```
-
-## Cron Schedule
-
-After `dailyinfo install`, the following cron jobs are set:
-
-| Time | Command |
-|------|---------|
-| 06:00 | Pipeline 1 (RSS) |
-| 06:15 | Pipeline 2 (Code) |
-| 06:30 | Pipeline 3 (University) |
-| 07:00 | Push to Discord |
 
 ## Environment Variables
 
-Create `.env` in project root:
+Create `.env` in the project root:
 
 ```env
 OPENROUTER_API_KEY=sk-or-v1-xxxxx
 DISCORD_BOT_TOKEN=your_discord_token
 FRESHRSS_USER=owen
+FRESHRSS_PASSWORD=freshrss123
+# DAILYINFO_DATA_ROOT=   # optional override, defaults to ~/.myagentdata/dailyinfo
 ```
-
-### Required Keys
 
 | Key | Purpose |
 |-----|---------|
 | `OPENROUTER_API_KEY` | LLM API for generating summaries |
-| `DISCORD_BOT_TOKEN` | Discord Bot for pushing briefings |
+| `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
+| `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
+| `FRESHRSS_PASSWORD` | FreshRSS password |
+| `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`) |
 
-### Optional Keys
+## Scheduling via myopenclaw hermes cron
 
-| Key | Default |
-|-----|---------|
-| `FRESHRSS_USER` | System user (`$USER`) |
+dailyinfo 提供两个幂等命令供调度器调用：
 
-## Manual Crontab Setup
+| Command | Purpose |
+|---------|---------|
+| `dailyinfo run -p 1` | 06:00 — RSS papers + AI news |
+| `dailyinfo run -p 2` | 06:15 — code trending |
+| `dailyinfo run -p 3` | 06:30 — university news |
+| `dailyinfo push` | 07:00 — push to Discord |
 
-If you prefer manual setup:
+在 myopenclaw 的 hermes cron 或其他外部调度器中注册这些命令即可。
 
-```bash
-crontab -e
+如果暂时没用 hermes，可手动配置 crontab：
 
-# Add:
+```cron
 0 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 1 >> logs/pipeline1.log 2>&1
 15 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 2 >> logs/pipeline2.log 2>&1
 30 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 3 >> logs/pipeline3.log 2>&1
@@ -125,15 +118,10 @@ crontab -e
 Only FreshRSS runs in Docker:
 
 ```bash
-# Start
-docker compose up -d freshrss
-
-# Stop
-docker compose down
-
-# Logs
-docker compose logs -f freshrss
-
-# Access
-# http://localhost:8081
+docker compose up -d freshrss          # Start
+docker compose down                    # Stop
+docker compose logs -f freshrss        # Logs
+# Web UI: http://localhost:8081
 ```
+
+FreshRSS data is persisted at `~/.myagentdata/dailyinfo/freshrss/data/`.

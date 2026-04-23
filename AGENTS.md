@@ -8,9 +8,17 @@
 
 **DailyInfo** 是一个面向 AI for Science 研究者的学术情报自动聚合与推送系统。
 
-核心流程：**FreshRSS 采集 → Python 脚本 AI 摘要生成（存文件） → push_to_discord.py 定时推送到 Discord**
+核心流程：**FreshRSS 采集 → `dailyinfo run`（AI 摘要 + 写 markdown）→ `dailyinfo push`（推送 Discord + 归档）**
 
-设计原则：**配置驱动**（sources.json）+ **职责分离**（处理层只管生成文件，推送层只管推送）
+设计原则：**配置驱动**（`config/sources.json`）+ **幂等 CLI**（所有操作可重跑，无副作用）+ **外部调度**（cron 由 myopenclaw hermes 统一管理）
+
+---
+
+## 与 myopenclaw 的协作
+
+- dailyinfo 不再管 crontab。`dailyinfo install` 只做"验证 .env + 建目录 + 装依赖"。
+- 所有定时触发交给 myopenclaw 的 hermes cron 去调用 `dailyinfo run` 与 `dailyinfo push`。
+- 数据全部落在 `~/.myagentdata/dailyinfo/`，由 myopenclaw 的 `backup-cron` 自动备份到云盘。
 
 ---
 
@@ -19,7 +27,7 @@
 - **RSS 聚合**：FreshRSS（Docker + SQLite）
 - **处理引擎**：`scripts/run_pipelines.py`（Python, 宿主机直接运行）
 - **AI 模型**：OpenRouter（moonshotai/kimi-k2.5）
-- **推送脚本**：`scripts/push_to_discord.py`（Discord Bot API，宿主机 crontab 定时运行）
+- **推送脚本**：`scripts/push_to_discord.py`（纯 Python requests，无 AI 调用）
 - **容器编排**：Docker Compose（仅 FreshRSS）
 
 ---
@@ -44,20 +52,14 @@ dailyinfo status     # 查看简报文件数量
 ### 服务管理
 
 ```bash
-# 启动 FreshRSS
-dailyinfo start
-
-# 停止服务
-dailyinfo stop
-
-# 查看日志
-docker compose logs -f freshrss
+dailyinfo start            # 启动 FreshRSS
+dailyinfo stop             # 停止服务
+docker compose logs -f freshrss  # 查看日志
 ```
 
 ### 配置验证
 
 ```bash
-# 验证 sources.json 格式
 python3 -c "import json; json.load(open('config/sources.json'))"
 ```
 
@@ -122,32 +124,35 @@ python3 -c "import json; json.load(open('config/sources.json'))"
 ## 工作目录
 
 ```
-~/.dailyinfo/workspace/
-├── briefings/          # 生成简报
+~/.myagentdata/dailyinfo/
+├── freshrss/data/      # FreshRSS SQLite + 配置
+├── briefings/          # 今日生成、待推送
 │   ├── papers/
 │   ├── ai_news/
 │   ├── code/
 │   └── resource/
-└── pushed/           # 推送后归档
+└── pushed/             # 推送成功后归档（去重依据）
     ├── papers/
     ├── ai_news/
     ├── code/
     └── resource/
-
-~/.freshrss/data/    # FreshRSS 数据库
 ```
+
+可通过 `.env` 中的 `DAILYINFO_DATA_ROOT` 覆盖根路径（默认 `~/.myagentdata/dailyinfo`）。
 
 ---
 
 ## 输出路径
 
-所有简报输出到 `~/.dailyinfo/workspace/briefings/{category}/`：
+所有简报输出到 `~/.myagentdata/dailyinfo/briefings/{category}/`：
 
 - Pipeline 1：`papers/`、`ai_news/`
 - Pipeline 2：`code/`
 - Pipeline 3：`resource/`
 
 文件名格式：`{name}_briefing_{date}.md`
+
+推送成功后由 `push_to_discord.py` 移动到 `~/.myagentdata/dailyinfo/pushed/{category}/`。
 
 ---
 

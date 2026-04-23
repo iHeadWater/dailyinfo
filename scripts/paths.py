@@ -1,43 +1,45 @@
 """Shared path resolution for dailyinfo workspace.
 
 All scripts import from here to get WORKSPACE_ROOT.
-Priority: .env > ~/Google Drive/dailyinfo/workspace > ~/.dailyinfo/workspace
+
+Data root is fixed at ``~/.myagentdata/dailyinfo`` so the tree is naturally
+picked up by myopenclaw's ``backup-cron`` service. Override via the
+``DAILYINFO_DATA_ROOT`` environment variable or ``.env`` entry when needed.
 """
 
 import os
 import pathlib
 
 PROJECT_ROOT = pathlib.Path(__file__).parent.parent.resolve()
-ENV_FILE = PROJECT_ROOT / '.env'
+ENV_FILE = PROJECT_ROOT / ".env"
+
+_DEFAULT_ROOT = pathlib.Path.home() / ".myagentdata" / "dailyinfo"
 
 
-def _resolve_workspace_root() -> pathlib.Path:
-    """Resolve WORKSPACE_ROOT with fallback chain."""
-    workspace_from_env = None
-    if ENV_FILE.exists():
-        with open(ENV_FILE) as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith('WORKSPACE_ROOT=') and '=' in line:
-                    val = line.split('=', 1)[1].strip()
-                    if val:
-                        path = pathlib.Path(val).expanduser().resolve()
-                        if path.exists() or path.parent.exists():
-                            workspace_from_env = path
-                        break
-
-    if workspace_from_env:
-        return workspace_from_env
-
-    google_drive = pathlib.Path.home() / 'Google Drive' / 'dailyinfo' / 'workspace'
-    if google_drive.parent.exists():
-        google_drive.parent.mkdir(parents=True, exist_ok=True)
-        return google_drive
-
-    return pathlib.Path.home() / '.dailyinfo' / 'workspace'
+def _read_env_value(key: str) -> str:
+    """Read a key from .env without importing python-dotenv."""
+    if not ENV_FILE.exists():
+        return ""
+    prefix = f"{key}="
+    with open(ENV_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith(prefix):
+                return line[len(prefix) :].strip().strip('"').strip("'")
+    return ""
 
 
-WORKSPACE_ROOT = _resolve_workspace_root()
-BRIEFINGS_DIR = WORKSPACE_ROOT / 'briefings'
-PUSHED_DIR = WORKSPACE_ROOT / 'pushed'
-FRESHRSS_DATA = pathlib.Path.home() / '.freshrss' / 'data'
+def _resolve_data_root() -> pathlib.Path:
+    """Resolve the dailyinfo data root, honoring env overrides."""
+    override = os.environ.get("DAILYINFO_DATA_ROOT", "") or _read_env_value(
+        "DAILYINFO_DATA_ROOT"
+    )
+    if override:
+        return pathlib.Path(override).expanduser().resolve()
+    return _DEFAULT_ROOT
+
+
+WORKSPACE_ROOT = _resolve_data_root()
+BRIEFINGS_DIR = WORKSPACE_ROOT / "briefings"
+PUSHED_DIR = WORKSPACE_ROOT / "pushed"
+FRESHRSS_DATA = WORKSPACE_ROOT / "freshrss" / "data"

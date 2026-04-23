@@ -5,7 +5,7 @@ services:
     ports:
       - "8081:80"
     volumes:
-      - ~/.freshrss/data:/var/www/FreshRSS/data
+      - ~/.myagentdata/dailyinfo/freshrss/data:/var/www/FreshRSS/data
     environment:
       - TZ=Asia/Shanghai
       - CRON_MIN=*/15
