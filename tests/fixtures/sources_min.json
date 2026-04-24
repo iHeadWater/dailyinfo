@@ -1,0 +1,23 @@
+{
+  "defaults": {
+    "lookback_hours": 24,
+    "model": "stub/model",
+    "prompt_template": "one_line_summary",
+    "freshrss_user": "tester"
+  },
+  "prompt_templates": {
+    "one_line_summary": "Summarize {count} items from {display_name} on {date}:\n{article_list}",
+    "code_trending": "Describe these {display_name} items on {date}:\n{items}",
+    "university_news": "University news items: {items}"
+  },
+  "sources": [
+    {
+      "name": "github_trending",
+      "display_name": "GitHub Trending",
+      "category": "code",
+      "type": "scrape",
+      "url": "https://github.com/trending?since=daily",
+      "enabled": true
+    }
+  ]
+}

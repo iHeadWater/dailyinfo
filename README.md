@@ -1,767 +1,142 @@
 <!--
  * @Author: Wenyu Ouyang
  * @Date: 2026-03-20
- * @LastEditTime: 2026-04-20
+ * @LastEditTime: 2026-04-23
  * @LastEditors: Wenyu Ouyang
- * @Description: DailyInfo: AI for Science 自动化科研情报系统
+ * @Description: DailyInfo - AI for Science 自动化科研情报系统
  * @FilePath: /dailyinfo/README.md
  * Copyright (c) 2023-2024 Wenyu Ouyang. All rights reserved.
 -->
 
-# DailyInfo 🌊
+# DailyInfo
 
-面向 AI for Science 的**自动化科研情报聚合与精读系统**。
+面向 AI for Science 研究者的自动化科研情报聚合与推送系统。
 
-基于 **FreshRSS + Python/n8n + OpenRouter** 构建的本地化学术信息流水线，实现从 RSS 订阅到 AI 摘要生成的全链路自动化。
+**核心流程**: FreshRSS 采集 → AI 摘要生成（markdown 落盘）→ Discord 推送 + 归档
 
-**配置驱动设计**：通过 `config/feeds.json` 管理 RSS 源，通过 `config/scrapers.json` 管理 API 源（GitHub/HuggingFace/DUT），添加新数据源无需修改代码或工作流。
-
-**双引擎架构**：处理层支持 `scripts/run_pipelines.py`（宿主机直接运行）和 n8n 工作流（Docker 容器）两种执行方式，输出格式和路径完全一致。
+**设计原则**: 配置驱动（`config/sources.json`）+ 确定性 CLI + 外部调度
 
 ---
 
-## 🏗️ 系统架构
+## 与 myopenclaw 的分工
+
+dailyinfo 自身只提供幂等的 CLI 动作，调度由外部 cron 驱动。推荐的部署拓扑：
+
+| 职责 | 归属 |
+|------|------|
+| RSS 采集（FreshRSS 容器） | dailyinfo |
+| AI 摘要生成 `dailyinfo run` | dailyinfo |
+| Discord 推送 + 归档 `dailyinfo push` | dailyinfo（纯 Python，不含 AI） |
+| 定时触发上述 CLI | myopenclaw 的 hermes cron |
+| 数据备份 | myopenclaw 的 `backup-cron`（只读挂载 `~/.myagentdata`） |
+
+数据全部落在 `~/.myagentdata/dailyinfo/` 下，自然被 myopenclaw 的备份流程覆盖，无需额外配置。
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    📋 配置层                                         │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │  config/feeds.json  → 35 个 RSS 源（期刊 + AI 新闻）      │      │
-│  │  config/scrapers.json → 12 个数据源（GitHub Trending + HuggingFace + DUT 8 站点）│      │
-│  └──────────────────────┬───────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────────────────┘
-                          ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    🗄️ 采集层                                         │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │  FreshRSS（RSS 统一采集）                                  │      │
-│  │  • Nature / Science / PNAS / arXiv CS.AI ...             │      │
-│  │  • AI 新闻源（smol.ai 等）                                │      │
-│  │                                                           │      │
-│  │  API 直接抓取（scripts/run_pipelines.py 或 n8n 工作流）   │      │
-│  │  • GitHub Trending 页面爬取（每日真实热门项目）           │      │
-│  │  • HuggingFace API（趋势模型/数据集/Spaces）             │      │
-│  │                                                           │      │
-│  │  网页抓取（scripts/run_pipelines.py 或 n8n 工作流）       │      │
-│  │  • 大连理工大学各院所官网（HTML，正则/JS 解析）           │      │
-│  └──────────────────────┬───────────────────────────────────┘      │
-│                         │ SQLite / API 响应                          │
-└─────────────────────────────────────────────────────────────────────┘
-                          ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│     🤖 处理层（两种方式二选一）                    │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │  方式 A：scripts/run_pipelines.py（推荐，宿主机直接运行）  │      │
-│  │    Pipeline 1：读取 feeds.json → 查询 FreshRSS SQLite    │      │
-│  │      → AI 摘要 → 保存 briefings/papers/ & ai_news/      │      │
-│  │    Pipeline 2：读取 scrapers.json → GitHub/HF API/爬取   │      │
-│  │      → AI 摘要 → 保存 briefings/code/                   │      │
-│  │    Pipeline 3：读取 scrapers.json → DUT HTML 爬取+解析   │      │
-│  │      → AI 摘要 → 保存 briefings/resource/               │      │
-│  │                                                           │      │
-│  │  方式 B：n8n 工作流（workflows/*.json，Docker 容器内）     │      │
-│  │    3 个工作流对应同样的 3 条流水线（06:00/06:15/06:30）   │      │
-│  │                                                           │      │
-│  └──────────────────────┬───────────────────────────────────┘      │
-│                         │ 文件系统（持久化）                          │
-│                         │ workspace/briefings/                       │
-│                         │   ├── papers/     ← 论文简报               │
-│                         │   ├── ai_news/    ← AI 新闻简报            │
-│                         │   ├── code/       ← 技术趋势简报           │
-│                         │   └── resource/   ← 高校资讯简报           │
-└─────────────────────────────────────────────────────────────────────┘
-                          ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│           📤 推送层：宿主机 Cron + push_to_discord.py                │
-│  ┌──────────────────────────────────────────────────────────┐      │
-│  │  宿主机 crontab（由 setup.sh 自动安装）：                  │      │
-│  │                                                           │      │
-│  │  07:00 → scripts/push_to_discord.py（Discord Bot API）   │      │
-│  │    • briefings/papers/*   → #paper                       │      │
-│  │    • briefings/ai_news/*  → #deeplearning                │      │
-│  │    • briefings/code/*     → #code                        │      │
-│  │    • briefings/resource/* → #resource                    │      │
-│  │    • 超长内容自动分段推送                                 │      │
-│  │                                                           │      │
-│  │  推送后归档到 pushed/<category>/                           │      │
-│  └──────────────────────────────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### 核心组件
-
-| 组件 | 功能 | 端口 | 数据持久化 |
-|------|------|------|-----------|
-| **FreshRSS** | RSS 订阅管理与文献存储 | 8081 | `~/.freshrss/data/` |
-| **n8n** | 自动化工作流（定时查询 + AI 摘要 + 存文件，备选） | 5678 | `~/.n8n/` |
-| **OpenClaw** | 飞书/Feishu 推送中枢 | 18789 | `~/.openclaw/` |
-| **OpenRouter** | LLM API 聚合（Claude/GPT 等） | - | 云端服务 |
-
-### 两种执行方式
-
-| 方式 | 说明 | 适用场景 |
-|------|------|---------|
-| **`scripts/run_pipelines.py`** | 本地 Python 脚本，直接读取 FreshRSS DB + 调用 API | 推荐：宿主机直接运行，简单可靠 |
-| **n8n 工作流** | `workflows/*.json`，Docker 容器内执行 | 备选：可视化编排，适合调试 |
-
-### 职责分离
-
-| 层 | 职责 | 不做什么 |
-|----|------|---------|
-| **处理层**（Python 脚本 / n8n） | 查数据 → AI 处理 → 存文件 | ❌ 不推送 Discord |
-| **推送层**（push_to_discord.py） | 扫描文件 → 推送 Discord → 归档 | ❌ 不调用 AI |
-
----
-
-## 📁 目录结构
-
-```
-dailyinfo/
-├── .env                              # 环境变量（API Keys，已加入 .gitignore）
-├── .env.example                      # 环境变量模板
-├── .gitignore                        # Git 忽略配置
-├── docker-compose.yml                # 服务编排
-├── Dockerfile.openclaw               # OpenClaw 定制镜像
-├── setup.sh                          # 🚀 一键安装脚本
-├── pyproject.toml                    # Python 包定义（dailyinfo CLI）
-├── README.md                         # 本文档
-├── AGENTS.md                         # AI 代理项目上下文（Copilot 等）
-├── .github/
-│   └── copilot-instructions.md       # Copilot CLI 项目上下文
-├── config/
-│   ├── feeds.json                    # 📋 RSS 数据源配置（35 个源）
-│   └── scrapers.json                 # 📋 API/抓取数据源配置（12 源：GitHub + HuggingFace + DUT 8 站点）
-├── scripts/
-│   ├── run_pipelines.py              # 🐍 本地 Pipeline 运行脚本（独立于 n8n）
-│   ├── push_to_discord.py            # 📤 Discord 推送脚本
-│   └── cli.py                        # dailyinfo CLI 入口
-├── workflows/
-│   ├── daily_briefing_pipeline.json  # n8n 工作流：RSS 学术简报（备用）
-│   ├── code_trending_pipeline.json   # n8n 工作流：技术趋势简报（备用）
-│   ├── university_news_pipeline.json # n8n 工作流：大工院所新闻（备用）
-│   └── credentials-template.md       # n8n Credentials 配置指南
-└── prompts/
-    └── ai_news_rewriter.txt          # AI 深度改写提示词模板（预留）
-```
-
-### 数据持久化
-
-```yaml
-# 宿主机持久化（容器重建不丢失）
-
-~/.freshrss/data/                         # FreshRSS 数据库（所有 RSS 源）
-~/.n8n/                                   # n8n 工作流和配置
-~/.openclaw/                              # OpenClaw 配置
-~/.openclaw/workspace/                    # 工作区根目录
-    ├── briefings/                        # 处理层输出（中间产物，持久化）
-    │   ├── papers/                       # 论文简报
-    │   │   ├── nature_briefing_2026-03-29.md
-    │   │   └── science_briefing_2026-03-29.md
-    │   ├── ai_news/                      # AI 新闻简报
-    │   │   └── smolai_briefing_2026-03-29.md
-    │   ├── code/                         # 技术趋势简报（GitHub/HuggingFace）
-    │   │   └── code_trending_2026-03-30.md
-    │   └── resource/                     # 高校资讯简报（大工院所）
-    │       └── dlut_scidep_2026-03-30.md
-    ├── pushed/                           # 推送后归档
-    │   ├── papers/
-    │   ├── ai_news/
-    │   ├── code/
-    │   └── resource/
-```
-
-**数据流生命周期**：
-```
-处理层生成 → briefings/<category>/<name>_briefing_<date>.md  [持久化]
-    ↓
-push_to_discord.py 读取 → Discord 推送                        [推送]
-    ↓
-归档移动 → pushed/<category>/<name>_briefing_<date>.md      [持久化]
+~/.myagentdata/dailyinfo/
+├── freshrss/data/       # FreshRSS SQLite + 配置
+├── briefings/           # 今日待推送的 markdown
+│   ├── papers/
+│   ├── ai_news/
+│   ├── code/
+│   └── resource/
+└── pushed/              # 已推送归档（用于去重与审计）
+    ├── papers/
+    ├── ai_news/
+    ├── code/
+    └── resource/
 ```
 
 ---
 
-## 📋 配置文件：config/feeds.json
-
-这是系统的核心配置，所有数据源在此定义。目前已配置 **35 个 RSS 源**（33 papers + 2 ai_news）：
-
-| 类别 | 期刊/来源 |
-|------|-----------|
-| papers | Nature, Nature Communications, Scientific Data |
-| papers | Science, Science Advances, Science News |
-| papers | PNAS |
-| papers | Nature Machine Intelligence, Nature Reviews Physics |
-| papers | Nature Sustainability, Nature Geoscience, Nature Climate Change |
-| papers | Nature Reviews Earth & Environment |
-| papers | Nature Water |
-| papers | AIES, BAMS |
-| papers | ESSD（暂时无文章，Copernicus RSS bug） |
-| papers | GMD, NHESS |
-| papers | JAMES, Earth and Space Science, GRL, Reviews of Geophysics, Earth's Future |
-| papers | Remote Sensing of Environment, Environmental Modelling & Software |
-| papers | HESS, Journal of Hydrometeorology (JHM), Water Resources Research |
-| papers | Hydrological Processes, Water Research, Advances in Water Resources, Journal of Hydrology |
-| ai_news | SmolAI News (`use_content: true`, 四分类深度分析) |
-| ai_news | arXiv CS.AI（分批：10篇/批 × 5批） |
-
-**配置示例**：
-
-```json
-{
-  "version": 1,
-  "defaults": {
-    "model": "anthropic/claude-haiku-4-5",
-    "lookback_hours": 24,
-    "prompt_template": "one_line_summary",
-    "freshrss_user": ""
-  },
-  "feeds": [
-    {
-      "name": "nature",
-      "display_name": "Nature",
-      "url": "https://www.nature.com/nature.rss",
-      "category": "papers",
-      "enabled": true
-    },
-    {
-      "name": "arxiv_cs_ai",
-      "display_name": "arXiv CS.AI",
-      "url": "https://rss.arxiv.org/rss/cs.AI",
-      "category": "ai_news",
-      "enabled": true,
-      "max_articles_per_batch": 10,
-      "max_batches": 5
-    }
-  ]
-}
-```
-
-### 添加新期刊（零代码）
-
-1. 在 `feeds.json` 的 `feeds` 数组中添加一条（包含 RSS 地址）：
-   ```json
-   {
-     "name": "science",
-     "display_name": "Science",
-     "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
-     "category": "papers",
-     "enabled": true
-   }
-   ```
-2. 下次运行流水线时自动生效，无需修改代码或重启容器。
-3. 若需立即在 FreshRSS 中同步订阅：
-   ```bash
-   docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/actualize-user.php --user ${FRESHRSS_USER}
-   ```
-
-### 可覆盖的字段
-
-每个 feed 可覆盖 `defaults` 中的任何字段：
-
-| 字段 | 说明 | 默认值 |
-|------|------|--------|
-| `model` | OpenRouter 模型 ID | `anthropic/claude-haiku-4-5` |
-| `lookback_hours` | 查询多少小时内的文章 | `24` |
-| `prompt_template` | 使用的提示词模板 key | `one_line_summary` |
-| `freshrss_user` | FreshRSS 用户名（优先读 `.env` 中的 `FRESHRSS_USER`） | `""` (自动取 `$USER`) |
-| `max_articles_per_batch` | 分批处理时每批文章数（不设则不分批） | 不分批 |
-| `max_batches` | 最多生成几批（与上一字段配合使用） | `10` |
-
-> **高量期刊建议设置批处理**：Elsevier 期刊（Water Research、Journal of Hydrology、RSE 等）可能单日发布 15-100 篇，建议设置 `max_articles_per_batch: 15, max_batches: 2`，避免超大 prompt 导致 API 错误或费用激增。
-
-**分批文件命名**：设置 `max_articles_per_batch` 后，每批生成独立文件：
-```
-arxiv_cs_ai_briefing_2026-03-30_batch1.md
-arxiv_cs_ai_briefing_2026-03-30_batch2.md
-...
-```
-推送时逐文件发送，天然间隔，适合 arXiv 等高频更新源。
-
----
-
-## 💻 配置文件：config/scrapers.json
-
-API/抓取类数据源（非 RSS）的配置文件，目前配置了 **12 个源**：
-
-**Code 类别（4 个）：**
-
-| 来源 | 方式 | 说明 |
-|------|------|------|
-| GitHub Trending | HTML 爬取 `github.com/trending` | 每日真实热门项目（非 API 搜索） |
-| HuggingFace Models | HF API `/api/models` | 按 trendingScore 排序 |
-| HuggingFace Datasets | HF API `/api/datasets` | 按 trendingScore 排序 |
-| HuggingFace Spaces | HF API `/api/spaces` | 按 trendingScore 排序 |
-
-**Resource 类别（8 个）：**
-
-| 来源 | URL | 说明 |
-|------|-----|------|
-| 大工新闻网-综合新闻 | `news.dlut.edu.cn/zhxw.htm` | 48h 增量过滤 |
-| 大工新闻网-人才培养 | `news.dlut.edu.cn/rcpy.htm` | 48h 增量过滤 |
-| 大工新闻网-学术科研 | `news.dlut.edu.cn/xsky.htm` | 48h 增量过滤 |
-| 大工新闻网-合作交流 | `news.dlut.edu.cn/hzjl.htm` | 48h 增量过滤 |
-| 大工新闻网-一线风采 | `news.dlut.edu.cn/yxfc.htm` | 48h 增量过滤 |
-| 建设工程学院 | `sche.dlut.edu.cn` | 48h 增量过滤 |
-| 未来技术学院 | `futureschool.dlut.edu.cn` | 48h 增量过滤 |
-| 科研院 | `scidep.dlut.edu.cn/zytz.htm` | 48h 增量过滤 |
-
-**配置示例**：
-```json
-{
-  "name": "github_trending",
-  "display_name": "GitHub Trending",
-  "category": "code",
-  "enabled": true,
-  "source_type": "scrape",
-  "url": "https://github.com/trending?since=daily",
-  "selector": "article.Box-row"
-}
-```
-
-> **增量过滤**：所有 DUT 站点配置了 `lookback_hours: 48`，只推送最近 48 小时内的新闻。无更新时生成 "📭 过去48小时无新内容" 提示文件。
-
-> **GitHub Token**：GitHub Trending 使用 HTML 爬取（非 API），无需 Token。HuggingFace API 为公开接口，也无需 Token。
-
----
-
-## 🚀 快速启动
-
-### 1. 环境准备
+## 快速开始
 
 ```bash
-# 克隆仓库
-git clone <your-repo-url>
+# 1. 克隆并进入项目
+git clone <repo-url>
 cd dailyinfo
 
-# 创建环境变量文件
+# 2. 创建配置文件
 cp .env.example .env
-# 编辑 .env，填入 API Keys
-```
-
-**.env 文件示例：**
-```env
-# OpenRouter API Key（必需）
-# 获取地址：https://openrouter.ai/keys
-OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxx
-
-# Discord Bot Token（必需，用于推送简报到 Discord）
-# 获取地址：Discord Developer Portal → Bot → Token
-DISCORD_BOT_TOKEN=your_discord_bot_token
-
-# FreshRSS 密码（可选，不填默认 freshrss123）
-FRESHRSS_PASSWORD=your_freshrss_password
-```
-
-### 2. 一键安装（推荐）
-
-```bash
-./setup.sh
-```
-
-`setup.sh` 自动完成以下所有步骤：
-- 创建工作目录（`~/.openclaw/workspace/`、`~/.freshrss/`、`~/.n8n/`）
-- 启动 Docker 服务（FreshRSS、n8n、OpenClaw）
-- 创建 FreshRSS 账号，通过 OPML 批量导入所有 RSS 订阅源
-- 安装 Python 包（含 `dailyinfo` CLI）
-- 安装宿主机 crontab（06:00/06:15/06:30 运行流水线，07:00 推送到 Discord）
-
-安装完成后可用以下 CLI 命令：
-
-```bash
-dailyinfo run        # 立即运行全部流水线
-dailyinfo run -p 2   # 仅运行技术趋势流水线（Pipeline 2）
-dailyinfo push       # 立即推送今日简报到 Discord
-dailyinfo status     # 查看各分类简报文件数量
-```
-
-### 3. 手动安装（备选）
-
-若不使用 `setup.sh`，手动步骤如下：
-
-```bash
-# 3.1 启动 Docker 服务
-docker compose up -d
-sleep 30
-docker compose ps
-
-# 3.2 安装 Python 包（含 dailyinfo CLI）
-pip install -e .
-
-# 3.3 创建 FreshRSS 账号并导入 RSS 订阅
-#     访问 http://localhost:8081，选择 SQLite 数据库
-#     创建账号（用户名需与 .env 中 FRESHRSS_USER 一致）
-#     进入 订阅 → 导入/导出，上传用 feeds.json 中 url 字段生成的 OPML 文件
-
-# 3.4 配置 n8n（如使用 n8n 作为流水线引擎，可选）
-#     访问 http://localhost:5678，导入 workflows/ 下三个工作流并激活
-
-# 3.5 手动安装 crontab（替换 /path/to/dailyinfo 为实际路径）
-crontab -e
-# 添加：
-# 0  6 * * *  cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 1 >> logs/pipeline1.log 2>&1
-# 15 6 * * *  cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 2 >> logs/pipeline2.log 2>&1
-# 30 6 * * *  cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 3 >> logs/pipeline3.log 2>&1
-# 0  7 * * *  cd /path/to/dailyinfo && python3 scripts/push_to_discord.py >> logs/discord_push.log 2>&1
-```
-
-**Discord 频道 ID 参考：**
-
-| 频道 | Channel ID |
-|------|------------|
-| #paper | `1489102139597787181` |
-| #deeplearning | `1489102139597787182` |
-| #code | `1489102139597787183` |
-| #resource | `1489102139597787178` |
-
-**飞书（Feishu/Lark）**：
-
-OpenClaw 同时配置了飞书插件（WebSocket 模式），支持：
-- **私聊**：`dmPolicy: "open"`，任何用户可直接私聊 OpenClaw bot
-- **群聊**：`groupPolicy: "allowlist"`，需将群聊 chat_id 添加到 `groupAllowFrom` 白名单
-- 配置位于 `~/.openclaw/openclaw.json` → `channels.feishu`
-
----
-
-## ⚙️ 自动化流程详解
-
-### 流程一：每日学术简报生成（06:00 AM）
-
-**触发**：宿主机 crontab（`setup.sh` 安装）/ n8n Cron 节点，每天 06:00（Asia/Shanghai）执行
-
-**步骤**：
-```
-1. Read feeds.json
-   └─ 读取所有 enabled feed 配置（含 url 字段）
-
-2. Loop Over Feeds（循环每个 feed）
-   │
-   ├─ 3. Query FreshRSS DB
-   │     └─ 查询 SQLite：WHERE id_feed=<id> AND date > now-{lookback_hours}h
-   │
-   ├─ 4. Has Articles?（条件分支）
-   │     ├─ 有文章 → Build Prompt → Call OpenRouter → Save Briefing
-   │     │     └─ 保存到 workspace/briefings/{category}/{name}_briefing_{date}.md
-   │     └─ 无文章 → Skip（跳过，不生成文件）
-   │
-   └─ 5. Next feed（继续下一个 feed）
-```
-
-**输出示例**（`briefings/papers/nature_briefing_2026-03-29.md`）：
-```markdown
-## 📚 Nature 今日简报 (2026-03-29) - 6篇文章
-
-1. **Eye drops made from pig semen deliver cancer treatment to mice**
-   > 研究人员首次利用精子细胞膜制成眼药水，可有效递送抗癌药物...
-
-2. **Motherhood derails women's academic careers**
-   > 大规模调查数据显示，生育对女性学者的学术产出和职业发展...
-
-...
-
-🔭 **Today's Highlight**: 今日最值得关注的研究方向是...
-```
-
-### 流程二：技术趋势简报生成（06:15 AM）
-
-**触发**：宿主机 crontab / n8n Cron 节点，每天 06:15（Asia/Shanghai）执行
-
-**数据源**（配置在 `config/scrapers.json`）：
-- **GitHub Trending**：HTML 爬取 github.com/trending 真实热门项目（非 API 搜索）
-- **HuggingFace API**：趋势模型、数据集、Spaces（按 `trendingScore` 排序）
-
-**步骤**：
-```
-1. Read scrapers.json
-   └─ 读取所有 enabled API 数据源配置
-
-2. Loop Over Sources（循环每个 API 源）
-   │
-   ├─ 3. Fetch Data（GitHub HTML 爬取 / HuggingFace API 调用）
-   │     └─ GitHub: 解析 article.Box-row 提取项目信息; HF: JSON API 响应
-   │
-   ├─ 4. Has Items?（条件分支）
-   │     ├─ 有结果 → Build Prompt → Call OpenRouter → Save Briefing
-   │     │     └─ 保存到 workspace/briefings/code/code_trending_{date}.md
-   │     └─ 无结果 → Skip
-   │
-   └─ 5. Next source
-```
-
-**说明**：GitHub Trending 使用 HTML 爬取，无需 API Token。HuggingFace API 为公开接口。
-
-### 流程三：大工院所资讯抓取（06:30 AM）
-
-**触发**：宿主机 crontab / n8n Cron 节点，每天 06:30（Asia/Shanghai）执行
-
-**数据源**（配置在 `config/scrapers.json`，category=resource）：
-
-| 站点 | URL | 说明 |
-|------|-----|------|
-| 学校新闻网-综合新闻 | news.dlut.edu.cn/zhxw.htm | `<h4><a class="l2">` 标题 |
-| 学校新闻网-人才培养 | news.dlut.edu.cn/rcpy.htm | 同上 |
-| 学校新闻网-学术科研 | news.dlut.edu.cn/xsky.htm | 同上 |
-| 学校新闻网-合作交流 | news.dlut.edu.cn/hzjl.htm | 同上 |
-| 学校新闻网-一线风采 | news.dlut.edu.cn/yxfc.htm | 同上 |
-| 建设工程学院 | sche.dlut.edu.cn | `<a class="name">` |
-| 未来技术学院 | futureschool.dlut.edu.cn | `<a class="name">` |
-| 科研院（重要通知） | scidep.dlut.edu.cn/zytz.htm | `div.tz-ul-tt` |
-
-**步骤**：
-```
-1. Read scrapers.json（filter: category=resource）
-2. Loop Over Sources
-   ├─ HTTP Request → 获取页面 HTML
-   ├─ Code 节点（JS）→ 正则解析提取 title/date/url
-   ├─ Has Items? → 有内容 → Build Prompt → Call OpenRouter → Save Briefing
-   │                          └─ 保存到 workspace/briefings/resource/{site}_{date}.md
-   └─ 无内容 → Skip
-```
-
-**技术说明**：各站点 HTML 结构不同，使用 JavaScript Code 节点（而非 HTML Extract 节点）进行正则解析，更可靠。
-
-**增量过滤**：所有站点配置 `lookback_hours: 48`，仅推送 48 小时内新闻。无更新时生成提示文件，不留空白。
-
-### 🐍 本地运行方式：`scripts/run_pipelines.py`
-
-除 n8n 工作流外，项目还提供了独立的 Python 脚本 `scripts/run_pipelines.py`，可在**宿主机直接运行**三条流水线，无需依赖 n8n 容器。
-
-**功能与 n8n 工作流等价**：读取相同的配置文件（feeds.json / scrapers.json），查询相同的 FreshRSS SQLite 数据库，调用相同的 OpenRouter API，输出到相同的 `~/.openclaw/workspace/briefings/` 目录。
-
-```bash
-# 运行全部 3 条流水线
-python3 scripts/run_pipelines.py
-
-# 仅运行 RSS 学术简报（Pipeline 1）
-python3 scripts/run_pipelines.py --pipeline 1
-
-# 仅运行技术趋势（Pipeline 2）
-python3 scripts/run_pipelines.py --pipeline 2
-
-# 仅运行大工院所资讯（Pipeline 3）
-python3 scripts/run_pipelines.py --pipeline 3
-```
-
-**依赖**：`requests`、`python-dotenv`（`pip install -e .` 一并安装）。
-
-**特点**：
-- 直接从宿主机读取 `~/.freshrss/data/users/${FRESHRSS_USER}/db.sqlite`（不需要进容器，用户名从 `.env` 读取）
-- SmolAI 深度内容路径：自动提取 HTML 全文 → 去标签 → 按模板生成 AI 摘要
-- GitHub Trending 通过正则解析 HTML（与 n8n 工作流中的 JS Code 节点逻辑一致）
-- DUT 各站点 HTML 解析：针对不同站点结构（dlut_news / standard / dlut_future / dlut_scidep）使用不同的正则解析器
-- 无更新时自动生成 placeholder 文件（保证推送不留空白）
-- 支持批处理：对配置了 `max_articles_per_batch` 的高量期刊自动分批，输出 `_batch1.md`、`_batch2.md`…
-
-### 流程四：自动推送（宿主机 Cron + push_to_discord.py）
-
-**触发**：宿主机 crontab，每天 07:00（Asia/Shanghai），由 `setup.sh` 自动安装。
-
-**推送脚本**：`scripts/push_to_discord.py`，使用 `DISCORD_BOT_TOKEN` 直接调用 Discord REST API。
-
-```
-push_to_discord.py 扫描 briefings/<category>/ 下的 .md 文件
-    ↓
-读取简报内容
-    ↓
-Discord REST API（DISCORD_BOT_TOKEN）→ 推送到频道
-  - papers/*   → #paper (1489102139597787181)
-  - ai_news/*  → #deeplearning (1489102139597787182)
-  - code/*     → #code (1489102139597787183)
-  - resource/* → #resource (1489102139597787178)
-  - 超长消息自动分段（Discord 单消息上限 2000 字符）
-    ↓
-推送成功 → 归档到 pushed/<category>/
-推送失败 → 保留原位等待下次重试
-```
-
----
-
-## 🔧 常用命令
-
-### dailyinfo CLI
-
-安装（`pip install -e .`）后可用：
-
-```bash
-dailyinfo run          # 运行全部 3 条流水线
-dailyinfo run -p 1     # 仅运行 Pipeline 1（RSS 学术简报）
-dailyinfo run -p 2     # 仅运行 Pipeline 2（技术趋势）
-dailyinfo run -p 3     # 仅运行 Pipeline 3（大工院所资讯）
-dailyinfo push         # 推送今日简报到 Discord
-dailyinfo status       # 查看各分类简报文件数量
-```
-
-### 服务管理
-
-```bash
-# 查看所有服务状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f freshrss          # FreshRSS 日志
-docker compose logs -f n8n               # n8n 执行日志
-docker compose logs -f openclaw-gateway  # OpenClaw 日志
-
-# 重启单个服务
-docker compose restart n8n
-
-# 停止所有服务
-docker compose down
-```
-
-### FreshRSS 管理
-
-```bash
-# 手动刷新所有 RSS 订阅（将 ${FRESHRSS_USER} 替换为 .env 中配置的用户名）
-docker exec dailyinfo_freshrss php /var/www/FreshRSS/cli/actualize-user.php --user ${FRESHRSS_USER}
-
-# 查看某个 feed 的文章（通过 n8n 容器，因 FreshRSS 容器无 sqlite3）
-docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
-const sqlite3 = require('sqlite3');
-const db = new sqlite3.Database('/freshrss-data/users/${FRESHRSS_USER}/db.sqlite');
-db.all('SELECT title FROM entry WHERE id_feed=2 ORDER BY date DESC LIMIT 5',
-  (err, rows) => { rows.forEach(r => console.log(r.title)); db.close(); });
-"
-
-# 查看所有 feed 和文章数
-docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
-const sqlite3 = require('sqlite3');
-const db = new sqlite3.Database('/freshrss-data/users/${FRESHRSS_USER}/db.sqlite');
-db.all('SELECT f.id, f.name, COUNT(e.id) as n FROM feed f LEFT JOIN entry e ON e.id_feed=f.id GROUP BY f.id',
-  (err, rows) => { rows.forEach(r => console.log(r.id, r.name, r.n)); db.close(); });
-"
-```
-
-### n8n 工作流
-
-```bash
-# 手动触发工作流执行
-# 访问 http://localhost:5678，点击 "Execute Workflow"
-
-# 查看生成的简报文件
-ls -lt ~/.openclaw/workspace/briefings/papers/
-ls -lt ~/.openclaw/workspace/briefings/ai_news/
-ls -lt ~/.openclaw/workspace/briefings/code/
-
-# 查看某个简报
-cat ~/.openclaw/workspace/briefings/papers/nature_briefing_2026-03-29.md
-```
-
-### Discord 推送
-
-```bash
-# 手动立即推送
-python3 scripts/push_to_discord.py
-
-# 或使用 CLI
+# 编辑 .env，填入 OPENROUTER_API_KEY 和 DISCORD_BOT_TOKEN
+
+# 3. 环境初始化（创建 ~/.myagentdata/dailyinfo 目录，安装依赖）
+uv sync --python python3
+uv pip install -e .
+dailyinfo install
+
+# 4. 启动 FreshRSS
+dailyinfo start
+# 首次启动需到 http://localhost:8081 创建账号并订阅源
+
+# 5. 手动跑一次验证
+dailyinfo run
 dailyinfo push
-
-# 查看推送日志
-tail -f logs/discord_push.log
-
-# 查看 crontab 配置
-crontab -l
 ```
 
----
+## CLI 命令
 
-## 🛡️ 数据安全
+| 命令 | 说明 |
+|------|------|
+| `dailyinfo install` | 验证 `.env` + 创建数据目录 + 安装依赖（一次性） |
+| `dailyinfo start` | 启动 FreshRSS 容器 |
+| `dailyinfo stop` | 停止 FreshRSS 容器 |
+| `dailyinfo restart` | 重启 FreshRSS 容器 |
+| `dailyinfo run` | 运行全部流水线（生成 markdown，**幂等**：今日已有 briefing 的源会跳过） |
+| `dailyinfo run -p 2` | 仅运行指定流水线（1=RSS、2=code、3=university） |
+| `dailyinfo run -f all` / `-f arxiv_cs_ai` | 强制重生（`all` 或具体源名，可重复 `-f`） |
+| `dailyinfo push` | 扫描 `briefings/` → 推送 Discord → 归档到 `pushed/` |
+| `dailyinfo push -d 2026-04-22` | 补推指定日期的 briefings |
+| `dailyinfo status` | 查看今日 briefings / pushed 文件数量 |
 
-### 持久化策略
+> `dailyinfo install` 不再写系统 crontab；调度请交给 myopenclaw 的 hermes cron 或外部调度器。
+> `run` 的 AI 调用会在主模型（`moonshotai/kimi-k2.5`）连续返回空响应时自动切到 `DAILYINFO_FALLBACK_MODEL`（默认 `deepseek/deepseek-chat-v3.1`）。
 
-**全部数据本地持久化，容器重启/重建不丢失：**
+## 配置
+
+所有数据源在 `config/sources.json` 中配置（RSS + API + Scrape 三种类型），添加新源无需改代码。
+
+主要环境变量（在 `.env`）：
+
+| 变量 | 说明 |
+|------|------|
+| `OPENROUTER_API_KEY` | OpenRouter LLM API key（必填） |
+| `DISCORD_BOT_TOKEN` | Discord Bot Token（`dailyinfo push` 需要） |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` | 四个频道 ID，缺失则跳过该分类 |
+| `FRESHRSS_USER` | FreshRSS 用户名，默认 `$USER` |
+| `FRESHRSS_PASSWORD` | FreshRSS 初始密码 |
+| `DAILYINFO_DATA_ROOT` | 覆盖默认数据根（默认 `~/.myagentdata/dailyinfo`） |
+| `DAILYINFO_FALLBACK_MODEL` | AI 备用模型（主模型空响应后切换，默认 `deepseek/deepseek-chat-v3.1`） |
+
+## 从旧版本迁移
+
+如果旧数据在 `~/.freshrss/data/` 和 `~/.dailyinfo/workspace/`：
 
 ```bash
-~/.freshrss/data/          # RSS 订阅与文章数据库（SQLite）
-~/.n8n/                    # n8n 工作流、执行历史、加密密钥
-~/.openclaw/               # OpenClaw 配置
-~/.openclaw/workspace/     # 简报文件（briefings/）、推送日志、归档（pushed/）
+mkdir -p ~/.myagentdata/dailyinfo/freshrss
+[ -d ~/.freshrss/data ] && mv ~/.freshrss/data ~/.myagentdata/dailyinfo/freshrss/data
+[ -d ~/.dailyinfo/workspace/briefings ] && mv ~/.dailyinfo/workspace/briefings ~/.myagentdata/dailyinfo/briefings
+[ -d ~/.dailyinfo/workspace/pushed ] && mv ~/.dailyinfo/workspace/pushed ~/.myagentdata/dailyinfo/pushed
+
+# 如存在旧 crontab 条目，手动移除：
+crontab -l | grep -v dailyinfo | crontab -
+
+# 重启 FreshRSS 生效
+docker compose down && dailyinfo start
 ```
 
-### 安全建议
+## 文档
 
-1. **API Keys 管理**：
-   - 所有密钥存储在 `.env` 文件
-   - `.env` 已加入 `.gitignore`，不会泄露
-   - 通过 Docker `env_file` 注入容器
-   - `config/feeds.json` 中**不含任何 API Key**
+- [系统架构](docs/architecture.md)
+- [Agent 配置指南](docs/agent-config.md)
+- [CLI 参考](docs/cli.md)
 
-2. **备份策略**：
-   ```bash
-   # 定期备份（建议每周）
-   tar czf backup-$(date +%Y%m%d).tar.gz \
-     ~/.freshrss/data \
-     ~/.n8n \
-     ~/.openclaw \
-     ~/dailyinfo/.env
-   ```
+## 技术栈
 
----
+- **RSS 聚合**: FreshRSS (Docker)
+- **AI 处理**: OpenRouter (moonshotai/kimi-k2.5)
+- **推送**: Discord Bot API（Python `requests`）
 
-## 🐛 故障排查
+## License
 
-### Q: 流水线执行失败？
-
-**检查点：**
-1. `.env` 文件中 `OPENROUTER_API_KEY` 是否正确配置
-2. 环境变量是否注入容器：`docker exec dailyinfo_n8n env | grep OPENROUTER`
-3. `config/feeds.json` 格式是否正确：`python3 -c "import json; json.load(open('config/feeds.json'))"`
-4. n8n 日志：`docker compose logs -f n8n`
-
-### Q: 简报文件未生成？
-
-**检查点：**
-1. FreshRSS 中是否有新文章（在 `lookback_hours` 时间窗口内）
-2. 查询数据库确认文章是否存在：
-   ```bash
-   docker exec -e NODE_PATH=/usr/local/lib/node_modules/n8n/node_modules dailyinfo_n8n node -e "
-   const sqlite3 = require('sqlite3');
-   const db = new sqlite3.Database('/freshrss-data/users/${FRESHRSS_USER}/db.sqlite');
-   db.all('SELECT f.id, f.name, COUNT(e.id) as n FROM feed f LEFT JOIN entry e ON e.id_feed=f.id GROUP BY f.id',
-     (err, rows) => { rows.forEach(r => console.log(r.id, r.name, r.n)); db.close(); });"
-   ```
-3. OpenRouter API 额度是否充足
-
-### Q: Discord 未收到推送？
-
-**检查点：**
-1. briefings/ 目录下是否有新文件：`ls -lt ~/.openclaw/workspace/briefings/papers/`
-2. `.env` 中 `DISCORD_BOT_TOKEN` 是否正确配置
-3. 手动测试推送：`python3 scripts/push_to_discord.py`
-4. 查看推送日志：`tail -f logs/discord_push.log`
-5. OpenClaw 是否连接飞书：`docker compose logs openclaw-gateway | tail -20`
-
-### Q: 容器重启后数据丢失？
-
-**检查 volumes 映射：**
-```bash
-docker inspect dailyinfo_n8n | grep -A 10 "Mounts"
-docker inspect dailyinfo_freshrss | grep -A 10 "Mounts"
-```
-
----
-
-## 📝 技术栈
-
-- **RSS 聚合**：FreshRSS (Docker + SQLite)
-- **处理引擎**：`scripts/run_pipelines.py` (Python, 宿主机) / n8n (Docker, 备选)
-- **AI 模型**：OpenRouter (Claude Haiku 4-5)
-- **推送中枢**：`scripts/push_to_discord.py`（Discord Bot API）/ OpenClaw Gateway（飞书/Feishu）
-- **定时调度**：宿主机 crontab（由 `setup.sh` 自动安装）
-- **API/抓取数据源**：GitHub Trending (HTML) + HuggingFace API + DUT 8 站点 (HTML)
-- **容器编排**：Docker Compose
-- **配置管理**：feeds.json + scrapers.json (配置驱动，零代码扩展)
-
----
-
-## 📄 License
-
-MIT License - Wenyu Ouyang
-
----
-
-## 🙏 致谢
-
-- [FreshRSS](https://freshrss.org/) - 开源 RSS 阅读器
-- [n8n](https://n8n.io/) - 工作流自动化平台
-- [OpenClaw](https://github.com/openclaw) - AI 助手框架
-- [OpenRouter](https://openrouter.ai/) - LLM API 聚合服务
+BSD 3-Clause License. See [LICENSE](LICENSE) for the full text.
