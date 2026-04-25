@@ -24,6 +24,18 @@ def test_split_message_splits_on_newlines_under_limit():
     assert "\n".join(out).replace("\n", "") == content.replace("\n", "")
 
 
+def test_split_discord_messages_reserves_prefix_budget():
+    import push_to_discord as pd
+
+    content = "\n".join(["x" * 1900 for _ in range(3)])
+    chunks = pd.split_discord_messages(content)
+
+    assert len(chunks) > 1
+    for i, chunk in enumerate(chunks, start=1):
+        prefixed = f"{pd._chunk_prefix(i, len(chunks))}{chunk}"
+        assert len(prefixed) <= pd.DISCORD_CONTENT_LIMIT
+
+
 def test_split_message_never_breaks_mid_line():
     import push_to_discord as pd
 
@@ -117,7 +129,8 @@ def test_push_category_deletes_placeholder_without_push(monkeypatch):
     assert not (PUSHED_DIR / "papers" / filename).exists()
     # One notice should be sent (all files filtered out)
     assert len(sent) == 1
-    assert "暂无新内容" in sent[0][1] or "均无新内容" in sent[0][1]
+    assert "论文频道推送总结" in sent[0][1]
+    assert "今日无文章更新" in sent[0][1]
 
 
 def test_push_category_sends_notice_when_no_files(monkeypatch):
@@ -137,6 +150,33 @@ def test_push_category_sends_notice_when_no_files(monkeypatch):
     assert pushed == 0
     assert len(sent) == 1
     assert "暂无新简报" in sent[0][1]
+
+
+def test_build_push_summary_lists_pushed_and_no_update(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    sources = tmp_path / "sources.json"
+    sources.write_text(
+        """
+{
+  "sources": [
+    {"name": "nature", "display_name": "Nature", "category": "papers", "enabled": true},
+    {"name": "wrr", "display_name": "Water Resources Research (WRR)", "category": "papers", "enabled": true},
+    {"name": "code", "display_name": "Code", "category": "code", "enabled": true}
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pd, "SOURCES_JSON", str(sources))
+
+    summary = pd.build_push_summary(
+        "papers", "2026-04-25", pushed_names=["nature"], placeholder_names=["wrr"]
+    )
+
+    assert "Nature (`nature`)" in summary
+    assert "Water Resources Research (WRR) (`wrr`)" in summary
+    assert "Code" not in summary
 
 
 def test_push_category_returns_zero_when_directory_missing(monkeypatch):
