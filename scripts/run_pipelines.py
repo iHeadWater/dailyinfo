@@ -190,6 +190,21 @@ def _count_numbered_items(content: str) -> int:
     return len(re.findall(r"(?m)^\s*\d+\.\s+\*\*", content))
 
 
+def _normalise_title(text: str) -> str:
+    """Normalise article titles for tolerant generated-output matching."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _count_matched_titles(content: str, expected_titles: list[str]) -> int:
+    """Count how many input article titles appear in the generated briefing."""
+    normalised_content = _normalise_title(content)
+    return sum(
+        1
+        for title in expected_titles
+        if title and _normalise_title(title) in normalised_content
+    )
+
+
 def _looks_cut_off(content: str) -> bool:
     """Return True for common half-written markdown or sentence endings."""
     stripped = content.strip()
@@ -204,14 +219,24 @@ def _looks_cut_off(content: str) -> bool:
     return False
 
 
-def validate_briefing_content(content: str, expected_count: int) -> None:
+def validate_briefing_content(
+    content: str, expected_count: int, expected_titles: list[str] | None = None
+) -> None:
     """Validate that a regular RSS briefing appears complete before saving."""
     if not content.strip():
         raise BriefingGenerationError("empty briefing")
     actual_count = _count_numbered_items(content)
-    if expected_count > 1 and actual_count < expected_count:
+    matched_titles = (
+        _count_matched_titles(content, expected_titles) if expected_titles else 0
+    )
+    if (
+        expected_count > 1
+        and actual_count < expected_count
+        and matched_titles < expected_count
+    ):
         raise BriefingGenerationError(
-            f"incomplete briefing: expected {expected_count} items, got {actual_count}"
+            f"incomplete briefing: expected {expected_count} items, "
+            f"got {actual_count} numbered items and {matched_titles} title matches"
         )
     if _looks_cut_off(content):
         raise BriefingGenerationError("briefing appears cut off")
@@ -239,7 +264,7 @@ def _generate_regular_briefings(
     prompt = _build_regular_prompt(prompt_template, ds, batch)
     try:
         content = call_ai(prompt, model=model, max_tokens=max_tokens)
-        validate_briefing_content(content, len(batch))
+        validate_briefing_content(content, len(batch), [item.title for item in batch])
         log(
             f"    AI ok: source={ds.name}, articles={len(batch)}, "
             f"prompt_chars={len(prompt)}, response_chars={len(content)}"

@@ -391,6 +391,23 @@ def test_validate_briefing_content_rejects_missing_items():
         rp.validate_briefing_content(content, expected_count=3)
 
 
+def test_validate_briefing_content_accepts_title_matches_without_numbering():
+    import run_pipelines as rp
+
+    content = (
+        "## Briefing\n\n"
+        "**Alpha Paper**\n摘要。\n\n"
+        "**Beta Paper**\n摘要。\n\n"
+        "**Gamma Paper**\n摘要。\n"
+    )
+
+    rp.validate_briefing_content(
+        content,
+        expected_count=3,
+        expected_titles=["Alpha Paper", "Beta Paper", "Gamma Paper"],
+    )
+
+
 def test_validate_briefing_content_rejects_cutoff_markdown():
     import run_pipelines as rp
 
