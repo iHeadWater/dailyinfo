@@ -125,7 +125,7 @@ crontab -l | grep -v dailyinfo | crontab -
 docker compose down && dailyinfo start
 ```
 
-## Discord Bot 论文下载（可选功能）
+## Discord Bot 论文下载
 `scripts/discord_bot.py` 提供一个交互式 Discord Bot，用户可在频道中通过命令触发论文下载
 
 | 命令 | 说明 |                                                                                                                  
