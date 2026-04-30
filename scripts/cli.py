@@ -289,6 +289,22 @@ def status():
 
 
 @cli.command()
+def bot():
+    """Start the Discord bot (deep-fetch, paper download, briefing Q&A)."""
+    import importlib
+    # aiohttp (used by discord.py) only reads uppercase proxy env vars
+    for _low, _up in (("https_proxy", "HTTPS_PROXY"), ("http_proxy", "HTTP_PROXY")):
+        if not os.environ.get(_up) and os.environ.get(_low):
+            os.environ[_up] = os.environ[_low]
+
+    _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+    if str(_PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PROJECT_ROOT))
+    mod = importlib.import_module("dailyinfo_fetcher.discord_handler")
+    mod.main()
+
+
+@cli.command()
 def logs():
     """Tail the pipeline execution log."""
     log_file = LOGS_DIR / "dailyinfo.log"

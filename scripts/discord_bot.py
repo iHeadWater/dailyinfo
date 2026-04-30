@@ -11,12 +11,12 @@ from datetime import datetime, timedelta
 
 import requests
 
+from paths import BRIEFINGS_DIR, PUSHED_DIR
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BRIEFINGS_DIR = os.path.expanduser("~/.openclaw/workspace/briefings")
-PUSHED_DIR = os.path.expanduser("~/.openclaw/workspace/pushed")
 DISCORD_API = "https://discord.com/api/v10"
 OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
 ANALYSIS_MODEL = "anthropic/claude-sonnet-4-5"

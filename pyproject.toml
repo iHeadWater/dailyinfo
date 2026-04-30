@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "dailyinfo"
 version = "0.3.0"
 description = "Daily briefing pipeline: scrape → AI summary → Discord push"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Wenyu Ouyang" }]
@@ -14,6 +14,11 @@ dependencies = [
     "requests>=2.31",
     "python-dotenv>=1.0",
     "click>=8.1",
+    "websocket-client>=1.9.0",
+    "discord-py>=2.3",
+    "httpx[socks]>=0.27",
+    "ddgs>=9.14.1",
+    "browser-use==0.12.6",
 ]
 
 [project.optional-dependencies]
@@ -22,13 +27,17 @@ dev = [
     "ruff>=0.4",
     "pytest>=8",
 ]
+paper = [
+    "browser-use",
+    "langchain-anthropic",
+]
 
 [project.scripts]
 dailyinfo = "scripts.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["scripts*"]
+include = ["scripts*", "dailyinfo_fetcher*"]
 
 [tool.uv]
 dev-dependencies = []
