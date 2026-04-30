@@ -3,6 +3,7 @@
   "defaults": {
     "model": "moonshotai/kimi-k2.5",
     "lookback_hours": 24,
+    "max_articles_per_batch": 10,
     "freshrss_user": ""
   },
   "prompt_templates": {
@@ -42,9 +43,6 @@
       "display_name": "Science Advances",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 96,
-      "max_articles_per_batch": 15,
-      "max_batches": 2,
       "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv",
       "type": "rss"
     },
@@ -77,7 +75,6 @@
       "display_name": "PNAS",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 72,
       "url": "https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=PNAS",
       "type": "rss"
     },
@@ -86,9 +83,6 @@
       "display_name": "Science",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 168,
-      "max_articles_per_batch": 20,
-      "max_batches": 2,
       "url": "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
       "type": "rss"
     },
@@ -105,7 +99,6 @@
       "display_name": "Nature Geoscience",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 48,
       "url": "https://www.nature.com/ngeo.rss",
       "type": "rss"
     },
@@ -114,7 +107,6 @@
       "display_name": "Nature Reviews Earth & Environment",
       "category": "papers",
       "enabled": true,
-      "max_articles": 5,
       "url": "https://www.nature.com/natrevearthenviron.rss",
       "type": "rss"
     },
@@ -171,7 +163,6 @@
       "display_name": "Journal of Advances in Modeling Earth Systems (JAMES)",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 72,
       "url": "https://agupubs.onlinelibrary.wiley.com/feed/19422466/most-recent",
       "type": "rss"
     },
@@ -180,7 +171,6 @@
       "display_name": "Earth and Space Science",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 48,
       "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=23335084&type=etoc&feed=rss",
       "type": "rss"
     },
@@ -189,10 +179,7 @@
       "display_name": "Geophysical Research Letters (GRL)",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 48,
       "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=19448007&type=etoc&feed=rss",
-      "max_articles_per_batch": 15,
-      "max_batches": 2,
       "type": "rss"
     },
     {
@@ -200,7 +187,6 @@
       "display_name": "Reviews of Geophysics",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 240,
       "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=19449208&type=etoc&feed=rss",
       "type": "rss"
     },
@@ -209,7 +195,6 @@
       "display_name": "Earth's Future",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 72,
       "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=23284277&type=etoc&feed=rss",
       "type": "rss"
     },
@@ -219,9 +204,6 @@
       "category": "papers",
       "enabled": true,
       "url": "https://rss.sciencedirect.com/publication/science/00344257",
-      "max_articles": 10,
-      "max_articles_per_batch": 15,
-      "max_batches": 1,
       "type": "rss"
     },
     {
@@ -230,9 +212,6 @@
       "category": "papers",
       "enabled": true,
       "url": "https://rss.sciencedirect.com/publication/science/13648152",
-      "max_articles": 10,
-      "max_articles_per_batch": 15,
-      "max_batches": 1,
       "type": "rss"
     },
     {
@@ -240,7 +219,6 @@
       "display_name": "Nature Water",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 48,
       "url": "https://www.nature.com/natwater.rss",
       "type": "rss"
     },
@@ -265,10 +243,7 @@
       "display_name": "Water Resources Research (WRR)",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 48,
       "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=19447973&type=etoc&feed=rss",
-      "max_articles_per_batch": 15,
-      "max_batches": 2,
       "type": "rss"
     },
     {
@@ -276,10 +251,7 @@
       "display_name": "Hydrological Processes",
       "category": "papers",
       "enabled": true,
-      "lookback_hours": 48,
       "url": "https://onlinelibrary.wiley.com/action/showFeed?jc=10991085&type=etoc&feed=rss",
-      "max_articles_per_batch": 15,
-      "max_batches": 2,
       "type": "rss"
     },
     {
@@ -288,9 +260,6 @@
       "category": "papers",
       "enabled": true,
       "url": "https://rss.sciencedirect.com/publication/science/00431354",
-      "max_articles": 10,
-      "max_articles_per_batch": 15,
-      "max_batches": 1,
       "type": "rss"
     },
     {
@@ -299,9 +268,6 @@
       "category": "papers",
       "enabled": true,
       "url": "https://rss.sciencedirect.com/publication/science/03091708",
-      "max_articles": 10,
-      "max_articles_per_batch": 15,
-      "max_batches": 1,
       "type": "rss"
     },
     {
@@ -310,9 +276,6 @@
       "category": "papers",
       "enabled": true,
       "url": "https://rss.sciencedirect.com/publication/science/00221694",
-      "max_articles": 10,
-      "max_articles_per_batch": 15,
-      "max_batches": 1,
       "type": "rss"
     },
     {
@@ -320,7 +283,6 @@
       "display_name": "SmolAI News",
       "category": "ai_news",
       "enabled": true,
-      "lookback_hours": 48,
       "prompt_template": "smolai_categorized",
       "use_content": true,
       "url": "https://news.smol.ai/rss.xml",
@@ -331,8 +293,8 @@
       "display_name": "arXiv CS.AI",
       "category": "ai_news",
       "enabled": true,
-      "max_articles_per_batch": 20,
-      "max_batches": 5,
+      "max_articles_per_batch": 10,
+      "max_batches": 50,
       "url": "https://rss.arxiv.org/rss/cs.AI",
       "type": "rss"
     },
@@ -430,7 +392,6 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/zhxw.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -449,7 +410,6 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/rcpy.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -468,7 +428,6 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/xsky.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -487,7 +446,6 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/hzjl.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -506,7 +464,6 @@
       "enabled": true,
       "url": "https://news.dlut.edu.cn/yxfc.htm",
       "base_url": "https://news.dlut.edu.cn/",
-      "lookback_hours": 24,
       "selector": "li.bg-mask",
       "fields": {
         "title": "h4 a.l2",
@@ -525,7 +482,6 @@
       "enabled": true,
       "url": "http://sche.dlut.edu.cn",
       "base_url": "http://sche.dlut.edu.cn/",
-      "lookback_hours": 24,
       "selector": "div.sublist ul > li",
       "fields": {
         "title": "a",
@@ -543,7 +499,6 @@
       "enabled": true,
       "url": "http://futureschool.dlut.edu.cn",
       "base_url": "http://futureschool.dlut.edu.cn/",
-      "lookback_hours": 24,
       "selector": "div.list ul > li",
       "fields": {
         "title": "div.name",
@@ -561,7 +516,6 @@
       "enabled": true,
       "url": "http://scidep.dlut.edu.cn/zytz.htm",
       "base_url": "http://scidep.dlut.edu.cn/",
-      "lookback_hours": 24,
       "selector": "ul.tz-ul > li",
       "fields": {
         "title": "div.tz-ul-tt",
@@ -591,7 +545,6 @@
           "date": "startTime"
         }
       },
-      "lookback_hours": 24,
       "max_items": 10,
       "prompt_template": "recruitment",
       "type": "api"
@@ -615,7 +568,6 @@
           "date": "startTime"
         }
       },
-      "lookback_hours": 24,
       "max_items": 10,
       "prompt_template": "recruitment",
       "type": "api"
@@ -639,7 +591,6 @@
           "date": "startTime"
         }
       },
-      "lookback_hours": 24,
       "max_items": 10,
       "prompt_template": "recruitment",
       "type": "api"
