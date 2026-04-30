@@ -32,6 +32,12 @@ paper = [
     "langchain-anthropic",
 ]
 
+[dependency-groups]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+]
+
 [project.scripts]
 dailyinfo = "scripts.cli:cli"
 

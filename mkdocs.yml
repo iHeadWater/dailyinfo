@@ -1,0 +1,25 @@
+site_name: DailyInfo
+site_description: AI for Science automated research briefing system
+repo_url: https://github.com/OuyangWenyu/dailyinfo
+repo_name: OuyangWenyu/dailyinfo
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - System Architecture: architecture.md
+  - CLI Reference: cli.md
+  - Agent Config: agent-config.md
+  - Information Sources: sources.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables

@@ -349,6 +349,26 @@ def test_call_ai_falls_back_after_primary_empty_responses(monkeypatch):
     assert "primary/model attempt 3/3" in joined
 
 
+def test_call_ai_treats_length_finish_as_incomplete(monkeypatch):
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    responses = [
+        _StubAIResponse(content="1. **Half", finish_reason="length"),
+        _StubAIResponse(content="", finish_reason="length"),
+        _StubAIResponse(content="", finish_reason="length"),
+        _StubAIResponse(content="fallback complete", finish_reason="stop"),
+    ]
+    _install_call_ai_stubs(monkeypatch, responses, logs)
+
+    result = rp.call_ai(
+        "prompt", model="primary/model", fallback_model="fallback/model"
+    )
+
+    assert result == "fallback complete"
+    assert "finish_reason=length" in "\n".join(logs)
+
+
 def test_call_ai_raises_when_both_models_empty(monkeypatch):
     import run_pipelines as rp
 
@@ -360,6 +380,71 @@ def test_call_ai_raises_when_both_models_empty(monkeypatch):
         rp.call_ai("prompt", model="primary/model", fallback_model="fallback/model")
     assert "primary/model" in str(excinfo.value)
     assert "fallback/model" in str(excinfo.value)
+
+
+def test_validate_briefing_content_rejects_missing_items():
+    import run_pipelines as rp
+
+    content = "1. **A**\n   > 摘要。\n\n2. **B**\n   > 摘要。"
+
+    with pytest.raises(rp.BriefingGenerationError):
+        rp.validate_briefing_content(content, expected_count=3)
+
+
+def test_validate_briefing_content_accepts_title_matches_without_numbering():
+    import run_pipelines as rp
+
+    content = (
+        "## Briefing\n\n"
+        "**Alpha Paper**\n摘要。\n\n"
+        "**Beta Paper**\n摘要。\n\n"
+        "**Gamma Paper**\n摘要。\n"
+    )
+
+    rp.validate_briefing_content(
+        content,
+        expected_count=3,
+        expected_titles=["Alpha Paper", "Beta Paper", "Gamma Paper"],
+    )
+
+
+def test_validate_briefing_content_rejects_cutoff_markdown():
+    import run_pipelines as rp
+
+    with pytest.raises(rp.BriefingGenerationError):
+        rp.validate_briefing_content("1. **A**\n   > 摘要。\n\n2. **N", 2)
+
+
+def test_generate_regular_briefings_splits_incomplete_batch(monkeypatch):
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "demo", "display_name": "Demo", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    items = [Item(title=f"Paper {i}", date="2026-04-25") for i in range(4)]
+    calls = []
+
+    def fake_call_ai(prompt, model="stub", max_tokens=0, **kwargs):
+        count = prompt.count(". Paper")
+        calls.append(count)
+        if count > 2:
+            return "1. **Paper 0**\n   > 摘要。"
+        return "\n\n".join(f"{i + 1}. **Paper {i}**\n   > 摘要。" for i in range(count))
+
+    monkeypatch.setattr(rp, "call_ai", fake_call_ai)
+    monkeypatch.setattr(rp, "log", lambda *_: None)
+
+    out = rp._generate_regular_briefings(
+        ds,
+        items,
+        "请总结 {count} 篇 {display_name}：\n{article_list}\n{date}",
+        "stub",
+    )
+
+    assert calls == [4, 2, 2]
+    assert len(out) == 2
 
 
 def test_run_pipeline_2_smoke(monkeypatch, fake_requests, fake_call_ai):

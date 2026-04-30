@@ -43,6 +43,14 @@ def strip_html(text: str) -> str:
     return text.strip()
 
 
+def _normalise_url(url: str) -> str:
+    """Normalise a feed URL for tolerant matching."""
+    u = html_lib.unescape(url).strip()
+    u = re.sub(r"^https?://", "", u)          # strip scheme
+    u = u.rstrip("/")                          # strip trailing slash
+    return u
+
+
 def build_feed_url_map(db) -> tuple[dict, dict]:
     """Build url→feed_id maps from FreshRSS DB for fast lookup."""
     full_map, base_map = {}, {}
@@ -52,6 +60,10 @@ def build_feed_url_map(db) -> tuple[dict, dict]:
         base = clean.split("?")[0]
         if base not in base_map:
             base_map[base] = fid
+        # normalised key for tolerant matching (no scheme, no trailing slash)
+        nkey = _normalise_url(base)
+        if nkey not in base_map:
+            base_map[nkey] = fid
     return full_map, base_map
 
 
@@ -59,7 +71,20 @@ def resolve_feed_id(url: str, full_map: dict, base_map: dict) -> Optional[int]:
     if not url:
         return None
     clean = html_lib.unescape(url)
-    return full_map.get(clean) or base_map.get(clean.split("?")[0])
+    # exact match
+    fid = full_map.get(clean)
+    if fid:
+        return fid
+    # base URL (strip query params)
+    base = clean.split("?")[0]
+    fid = base_map.get(base)
+    if fid:
+        return fid
+    # tolerant match (ignore scheme + trailing slash)
+    fid = base_map.get(_normalise_url(base))
+    if fid:
+        return fid
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -215,15 +240,22 @@ class RSSDataSource(DataSource):
         self.max_articles_per_batch: Optional[int] = config.get(
             "max_articles_per_batch"
         )
-        self.max_batches: int = config.get("max_batches", 10)
+        self.max_batches: int = config.get("max_batches", 1000)
 
     def fetch(self) -> list[Item]:
         if not self._db:
             return []
-        fid = resolve_feed_id(
-            self.config.get("url", ""), self._full_map, self._base_map
-        )
+        url = self.config.get("url", "")
+        fid = resolve_feed_id(url, self._full_map, self._base_map)
         if not fid:
+            available = list(self._full_map.values())[:5]
+            sample_urls = [k for k, v in self._full_map.items() if v in available]
+            print(
+                f"  [WARN] resolve_feed_id: no match for {self.name!r} "
+                f"(url={url!r}). DB has {len(self._full_map)} feeds. "
+                f"Sample DB urls: {sample_urls[:5]}",
+                flush=True,
+            )
             return []
 
         if self.use_content:

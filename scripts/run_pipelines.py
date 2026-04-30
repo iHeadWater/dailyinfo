@@ -16,6 +16,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -102,6 +103,10 @@ DEFAULT_FALLBACK_MODEL = "deepseek/deepseek-chat-v3.1"
 _BACKOFF_SECONDS = (2, 5, 10)
 
 
+class BriefingGenerationError(ValueError):
+    """Raised when an AI response is empty, truncated, or structurally incomplete."""
+
+
 def _resolve_fallback_model(explicit: str | None) -> str:
     """Pick the fallback model: explicit arg > env override > built-in default."""
     return (
@@ -156,18 +161,17 @@ def call_ai(
 
             choice = (data.get("choices") or [{}])[0]
             message = choice.get("message") or {}
+            finish_reason = choice.get("finish_reason") or "unknown"
             content = (message.get("content") or "").strip()
-            if content:
+            if content and finish_reason != "length":
                 return content
 
             reason = (
-                choice.get("finish_reason")
-                or (data.get("error") or {}).get("message")
-                or "empty"
+                finish_reason or (data.get("error") or {}).get("message") or "empty"
             )
             log(
-                f"  [call_ai] {mdl} attempt {i + 1}/{attempts} empty "
-                f"(finish_reason={reason})"
+                f"  [call_ai] {mdl} attempt {i + 1}/{attempts} incomplete "
+                f"(finish_reason={reason}, chars={len(content)})"
             )
             time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
 
@@ -176,9 +180,109 @@ def call_ai(
                 f"  [call_ai] primary {model} exhausted, switching to fallback {fallback}"
             )
 
-    raise ValueError(
+    raise BriefingGenerationError(
         f"call_ai: empty response after retries (model={model}, fallback={fallback})"
     )
+
+
+def _count_numbered_items(content: str) -> int:
+    """Count markdown numbered list entries in a model-generated briefing."""
+    return len(re.findall(r"(?m)^\s*\d+\.\s+\*\*", content))
+
+
+def _normalise_title(text: str) -> str:
+    """Normalise article titles for tolerant generated-output matching."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _count_matched_titles(content: str, expected_titles: list[str]) -> int:
+    """Count how many input article titles appear in the generated briefing."""
+    normalised_content = _normalise_title(content)
+    return sum(
+        1
+        for title in expected_titles
+        if title and _normalise_title(title) in normalised_content
+    )
+
+
+def _looks_cut_off(content: str) -> bool:
+    """Return True for common half-written markdown or sentence endings."""
+    stripped = content.strip()
+    if not stripped:
+        return True
+    if re.search(r"\*\*[^*\n]{1,160}$", stripped):
+        return True
+    if stripped.endswith(("**", "*", "`", "：", ":", "，", ",")):
+        return True
+    if "Today's Highlight" in stripped and stripped[-1] not in "。！？.!?)）】”’":
+        return True
+    return False
+
+
+def validate_briefing_content(
+    content: str, expected_count: int, expected_titles: list[str] | None = None
+) -> None:
+    """Validate that a regular RSS briefing appears complete before saving."""
+    if not content.strip():
+        raise BriefingGenerationError("empty briefing")
+    actual_count = _count_numbered_items(content)
+    matched_titles = (
+        _count_matched_titles(content, expected_titles) if expected_titles else 0
+    )
+    if (
+        expected_count > 1
+        and actual_count < expected_count
+        and matched_titles < expected_count
+    ):
+        raise BriefingGenerationError(
+            f"incomplete briefing: expected {expected_count} items, "
+            f"got {actual_count} numbered items and {matched_titles} title matches"
+        )
+    if _looks_cut_off(content):
+        raise BriefingGenerationError("briefing appears cut off")
+
+
+def _build_regular_prompt(prompt_template: str, ds: RSSDataSource, batch: list) -> str:
+    article_list = ds.format_items(batch)
+    return (
+        prompt_template.replace("{count}", str(len(batch)))
+        .replace("{display_name}", ds.display_name)
+        .replace("{article_list}", article_list)
+        .replace("{date}", DATE)
+    )
+
+
+def _generate_regular_briefings(
+    ds: RSSDataSource,
+    batch: list,
+    prompt_template: str,
+    model: str,
+    *,
+    max_tokens: int = 2500,
+) -> list[str]:
+    """Generate one or more complete briefings, splitting oversized batches."""
+    prompt = _build_regular_prompt(prompt_template, ds, batch)
+    try:
+        content = call_ai(prompt, model=model, max_tokens=max_tokens)
+        validate_briefing_content(content, len(batch), [item.title for item in batch])
+        log(
+            f"    AI ok: source={ds.name}, articles={len(batch)}, "
+            f"prompt_chars={len(prompt)}, response_chars={len(content)}"
+        )
+        return [content]
+    except BriefingGenerationError as exc:
+        if len(batch) <= 1:
+            raise
+        midpoint = max(1, len(batch) // 2)
+        log(
+            f"    AI incomplete for {ds.name} ({len(batch)} articles): {exc}; "
+            f"splitting into {midpoint}+{len(batch) - midpoint}"
+        )
+        return _generate_regular_briefings(
+            ds, batch[:midpoint], prompt_template, model, max_tokens=max_tokens
+        ) + _generate_regular_briefings(
+            ds, batch[midpoint:], prompt_template, model, max_tokens=max_tokens
+        )
 
 
 def save(directory: str, filename: str, content: str) -> str:
@@ -344,25 +448,29 @@ def run_pipeline_1() -> int:
             log(f"  SKIP {name}: no prompt template")
             continue
 
+        generated_parts: list[str] = []
         batches = ds.get_batches(items)
         for idx, batch in enumerate(batches):
-            article_list = ds.format_items(batch)
-            prompt = (
-                prompt_template.replace("{count}", str(len(batch)))
-                .replace("{display_name}", ds.display_name)
-                .replace("{article_list}", article_list)
-                .replace("{date}", DATE)
-            )
-            suffix = f"_batch{idx+1}" if feed_cfg.get("max_articles_per_batch") else ""
+            try:
+                generated_parts.extend(
+                    _generate_regular_briefings(ds, batch, prompt_template, model)
+                )
+            except Exception as e:
+                log(f"    ERR batch {idx + 1}: {e}")
+
+        should_suffix = (
+            bool(feed_cfg.get("max_articles_per_batch")) or len(generated_parts) > 1
+        )
+        for part_idx, content_text in enumerate(generated_parts, start=1):
+            suffix = f"_batch{part_idx}" if should_suffix else ""
             filename = f"{name}_briefing_{DATE}{suffix}.md"
             try:
-                content_text = call_ai(prompt, model=model, max_tokens=2500)
                 save(category, filename, content_text)
                 saved += 1
                 log(f"    -> saved {filename}")
                 time.sleep(0.5)
             except Exception as e:
-                log(f"    ERR: {e}")
+                log(f"    SAVE ERR: {e}")
 
     db.close()
     log(f"  Pipeline 1 done: {saved} files saved")
