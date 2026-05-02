@@ -36,12 +36,17 @@ def cli_mod(monkeypatch):
 
 def _write_valid_env(path):
     path.write_text(
-        "OPENROUTER_API_KEY=sk-real-test\n"
-        "DISCORD_BOT_TOKEN=test-bot-token\n"
+        "OPENROUTER_API_KEY=***\n"
+        "DISCORD_BOT_TOKEN=***\n"
         "DISCORD_CHANNEL_PAPERS=1\n"
         "DISCORD_CHANNEL_AI_NEWS=2\n"
         "DISCORD_CHANNEL_CODE=3\n"
-        "DISCORD_CHANNEL_RESOURCE=4\n",
+        "DISCORD_CHANNEL_RESOURCE=4\n"
+        # Also include dev channel keys so the test passes in any environment
+        "DISCORD_CHANNEL_PAPERS_DEV=101\n"
+        "DISCORD_CHANNEL_AI_NEWS_DEV=102\n"
+        "DISCORD_CHANNEL_CODE_DEV=103\n"
+        "DISCORD_CHANNEL_RESOURCE_DEV=104\n",
         encoding="utf-8",
     )
 
