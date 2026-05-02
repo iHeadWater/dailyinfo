@@ -125,23 +125,24 @@ crontab -l | grep -v dailyinfo | crontab -
 docker compose down && dailyinfo start
 ```
 
-## Discord Bot 论文下载
-`scripts/discord_bot.py` 提供一个交互式 Discord Bot，用户可在频道中通过命令触发论文下载
+## Discord Bot 论文下载（可选功能）
 
-| 命令 | 说明 |                                                                                                                  
-|------|------|                                                                                                                  
-| `!paper <标题或DOI>` | 搜索并下载论文 PDF，Bot 回复下载结果 | 
+`scripts/discord_bot.py` 提供一个交互式 Discord Bot，用户可在频道中通过命令触发论文下载：
 
-**下载链路**（按优先级依次尝试）：arXiv → Unpaywall → Semantic Scholar → Crossref → PMC → OA Publisher 
+| 命令 | 说明 |
+|------|------|
+| `!paper <标题或DOI>` | 搜索并下载论文 PDF，Bot 回复下载结果 |
 
-启动方式
+**下载链路**（按优先级依次尝试）：arXiv → Unpaywall → Semantic Scholar → Crossref → PMC → OA Publisher
 
-```bash                                                                                                                   
-python3 scripts/discord_bot.py                                                                                            
-# 或用 systemd 托管（见 scripts/discord_bot.service.example） 
+启动方式：
+
+```bash
+python3 scripts/discord_bot.py
+# 或用 systemd 托管（见 scripts/discord_bot.service.example）
 ```
 
---- 
+---
 
 ## 文档
 

@@ -242,7 +242,7 @@ def validate_briefing_content(
         raise BriefingGenerationError("briefing appears cut off")
 
 
-def _build_regular_prompt(prompt_template: str, ds: RSSDataSource, batch: list) -> str:
+def _build_regular_prompt(prompt_template: str, ds: DataSource, batch: list) -> str:
     article_list = ds.format_items(batch)
     return (
         prompt_template.replace("{count}", str(len(batch)))
@@ -253,7 +253,7 @@ def _build_regular_prompt(prompt_template: str, ds: RSSDataSource, batch: list) 
 
 
 def _generate_regular_briefings(
-    ds: RSSDataSource,
+    ds: DataSource,
     batch: list,
     prompt_template: str,
     model: str,
@@ -473,6 +473,77 @@ def run_pipeline_1() -> int:
                 log(f"    SAVE ERR: {e}")
 
     db.close()
+
+    # Non-RSS papers/ai_news sources (scrape + api)
+    for source_cfg in cfg["sources"]:
+        if source_cfg.get("type") == "rss" or not source_cfg.get("enabled", True):
+            continue
+        if source_cfg.get("category") not in ("papers", "ai_news"):
+            continue
+
+        ds = DataSource.create(source_cfg, defaults)
+        name, category = ds.name, ds.category
+        log(f"  {name}...")
+
+        if _has_real_briefing_today(name, category):
+            log(f"    briefing already exists for {DATE}, skip")
+            continue
+
+        try:
+            items = ds.fetch()
+        except Exception as e:
+            log(f"    FETCH ERR: {e}")
+            save(
+                category,
+                f"{name}_briefing_{DATE}.md",
+                f"# {ds.display_name} - {DATE}\n\n⚠️ 获取失败\n",
+            )
+            saved += 1
+            continue
+
+        if not items:
+            log(f"    no items → placeholder")
+            save(
+                category,
+                f"{name}_briefing_{DATE}.md",
+                f"# {ds.display_name} - {DATE}\n\n📭 过去 {ds.lookback_hours} 小时无新内容\n",
+            )
+            saved += 1
+            continue
+
+        if ds.lookback_hours > 24 and _already_pushed_within(name, category, ds.lookback_hours):
+            log(f"    {len(items)} articles — already pushed within {ds.lookback_hours}h, skip")
+            continue
+
+        log(f"  {name}: {len(items)} articles")
+        model = source_cfg.get("model") or model_default
+        tmpl_key = source_cfg.get("prompt_template") or default_tmpl_key
+        prompt_template = templates.get(tmpl_key) or templates.get("one_line_summary", "")
+        if not prompt_template:
+            log(f"    SKIP {name}: no prompt template")
+            continue
+
+        generated_parts: list[str] = []
+        for idx, batch in enumerate(ds.get_batches(items)):
+            try:
+                generated_parts.extend(
+                    _generate_regular_briefings(ds, batch, prompt_template, model)
+                )
+            except Exception as e:
+                log(f"    ERR batch {idx + 1}: {e}")
+
+        should_suffix = bool(source_cfg.get("max_articles_per_batch")) or len(generated_parts) > 1
+        for part_idx, content_text in enumerate(generated_parts, start=1):
+            suffix = f"_batch{part_idx}" if should_suffix else ""
+            filename = f"{name}_briefing_{DATE}{suffix}.md"
+            try:
+                save(category, filename, content_text)
+                saved += 1
+                log(f"    -> saved {filename}")
+                time.sleep(0.5)
+            except Exception as e:
+                log(f"    SAVE ERR: {e}")
+
     log(f"  Pipeline 1 done: {saved} files saved")
     return saved
 

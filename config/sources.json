@@ -279,6 +279,38 @@
       "type": "rss"
     },
     {
+      "name": "skxjz",
+      "display_name": "水科学进展",
+      "category": "papers",
+      "enabled": true,
+      "url": "http://skxjz.nhri.cn/article/current",
+      "type": "scrape",
+      "lookback_hours": 2160,
+      "max_items": 30
+    },
+    {
+      "name": "shuili_xuebao",
+      "display_name": "水利学报",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://api.crossref.org/works?filter=issn:0559-9350&sort=published&order=desc&rows=20",
+      "type": "api",
+      "parser": "crossref",
+      "lookback_hours": 2160,
+      "max_items": 20
+    },
+    {
+      "name": "chinawater",
+      "display_name": "中国水利",
+      "category": "papers",
+      "enabled": true,
+      "url": "http://www.chinawater.com.cn/",
+      "type": "scrape",
+      "base_url": "http://www.chinawater.com.cn",
+      "lookback_hours": 48,
+      "max_items": 20
+    },
+    {
       "name": "smolai_news",
       "display_name": "SmolAI News",
       "category": "ai_news",

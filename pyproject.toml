@@ -46,7 +46,9 @@ where = ["."]
 include = ["scripts*", "dailyinfo_fetcher*"]
 
 [tool.uv]
-dev-dependencies = []
+dev-dependencies = [
+    "pytest>=9.0.3",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

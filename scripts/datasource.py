@@ -209,6 +209,13 @@ class DataSource(ABC):
             f"{i+1}. [{item.date}] {item.title}" for i, item in enumerate(items)
         )
 
+    def get_batches(self, items: list[Item]) -> list[list[Item]]:
+        """Split items into batches; override in subclasses for finer control."""
+        batch_size = self.config.get("max_articles_per_batch")
+        if not batch_size:
+            return [items]
+        return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
+
     @staticmethod
     def create(config: dict, defaults: dict, **ctx) -> "DataSource":
         """Factory: instantiate the correct subclass for config['type']."""
@@ -331,6 +338,10 @@ class ScrapeDataSource(DataSource):
             },
         )
         resp.encoding = resp.apparent_encoding or "utf-8"
+        if self.name == "skxjz":
+            return self._parse_skxjz(resp.text)
+        if self.name == "chinawater":
+            return self._parse_chinawater(resp.text)
         return self._parse_dlut_html(resp.text)
 
     # --- GitHub Trending ---
@@ -383,6 +394,63 @@ class ScrapeDataSource(DataSource):
                     },
                 )
             )
+        return items
+
+    def _parse_skxjz(self, page_html: str) -> list[Item]:
+        """水科学进展 (skxjz.nhri.cn) — current-issue article list.
+
+        DOI issue numbers don't map to calendar months, so use today's date
+        for all items; the _already_pushed_within guard prevents re-delivery.
+        """
+        max_items = self.config.get("max_items", 30)
+        base_url = "http://skxjz.nhri.cn"
+        today = NOW.strftime("%Y-%m-%d")
+        rgx = re.compile(
+            r'class="article-list-title[^"]*"[^>]*>[\s\S]*?'
+            r"<a\s+href=['\"](?P<path>/article/doi/[^'\"]+)['\"][^>]*>\s*(?P<title>[\s\S]*?)\s*</a>",
+            re.I,
+        )
+        items = []
+        for m in rgx.finditer(page_html):
+            title = re.sub(r"<[^>]+>", "", m.group("title")).strip()
+            if not title:
+                continue
+            items.append(Item(title=title, date=today, url=base_url + m.group("path")))
+            if len(items) >= max_items:
+                break
+        return items
+
+    def _parse_chinawater(self, page_html: str) -> list[Item]:
+        """中国水利 (chinawater.com.cn) — news list with date embedded in URL."""
+        max_items = self.config.get("max_items", 20)
+        base_url = self.config.get("base_url", "http://www.chinawater.com.cn")
+        rgx = re.compile(
+            r'<li[^>]*>\s*<a[^>]+href=["\']([^"\']*t(\d{8})[^"\']*\.html)["\'][^>]*>'
+            r"\s*([^<]{3,150})\s*</a>\s*</li>",
+            re.I,
+        )
+        items: list[Item] = []
+        seen: set[str] = set()
+        for m in rgx.finditer(page_html):
+            href, date_str, raw_title = m.group(1), m.group(2), m.group(3).strip()
+            title = html_lib.unescape(raw_title).strip()
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            try:
+                dt = datetime.datetime.strptime(date_str, "%Y%m%d")
+            except ValueError:
+                dt = None
+            if dt and dt < self._cutoff_dt:
+                continue
+            url = href if href.startswith("http") else f"{base_url}/{href.lstrip('./')}"
+            items.append(Item(
+                title=title,
+                date=dt.strftime("%Y-%m-%d") if dt else NOW.strftime("%Y-%m-%d"),
+                url=url,
+            ))
+            if len(items) >= max_items:
+                break
         return items
 
     def format_items(self, items: list[Item]) -> str:
@@ -539,7 +607,46 @@ class APIDataSource(DataSource):
 
         if self.name.startswith("huggingface_"):
             return self._parse_huggingface(data)
+        if self.config.get("parser") == "crossref":
+            return self._parse_crossref(data)
         return self._parse_dlut_api(data)
+
+    def _parse_crossref(self, api_data: dict) -> list[Item]:
+        """Crossref REST API (/works) — returns English titles with publication dates."""
+        rows = api_data.get("message", {}).get("items", [])
+        max_items = self.config.get("max_items", 20)
+        items: list[Item] = []
+        for row in rows:
+            titles = row.get("title") or []
+            title = titles[0] if titles else ""
+            if not title:
+                continue
+            pub = (
+                row.get("published")
+                or row.get("published-print")
+                or row.get("published-online")
+                or {}
+            )
+            parts = (pub.get("date-parts") or [[]])[0]
+            try:
+                if len(parts) >= 3:
+                    dt: Optional[datetime.datetime] = datetime.datetime(parts[0], parts[1], parts[2])
+                elif len(parts) >= 2:
+                    dt = datetime.datetime(parts[0], parts[1], 1)
+                else:
+                    dt = None
+            except (ValueError, TypeError):
+                dt = None
+            if dt and dt < self._cutoff_dt:
+                continue
+            items.append(Item(
+                title=title,
+                date=dt.strftime("%Y-%m-%d") if dt else NOW.strftime("%Y-%m-%d"),
+                url=row.get("URL", ""),
+            ))
+            if len(items) >= max_items:
+                break
+        return items
 
     def _parse_huggingface(self, data) -> list[Item]:
         extract = self.config.get("extract", {})
