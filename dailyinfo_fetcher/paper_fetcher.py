@@ -534,7 +534,11 @@ async def fetch_paper_oa(title: str) -> tuple[Optional[Path], str]:
 
     # Pass 5: browser-use AI agent (DLUT library, persistent session, LLM fallback)
     log.info("  browser-use: trying DLUT library")
-    from .browser_use_agent import find_and_download_paper
+    try:
+        from .browser_use_agent import find_and_download_paper
+    except ImportError:
+        log.debug("  browser_use_agent not available, skipping")
+        return None, "未能获取"
     lib_path = await find_and_download_paper(
         title, doi=doi, journal=journal, publisher=publisher
     )

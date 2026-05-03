@@ -103,6 +103,7 @@ def test_lookup_crossref_ok():
                 "container-title": ["Test Journal"],
                 "ISSN": ["1234-5678"],
                 "link": [{"content-type": "application/pdf", "URL": "https://pub.com/paper.pdf"}],
+                "title": ["Some Paper Title"],
             }]
         }
     }
