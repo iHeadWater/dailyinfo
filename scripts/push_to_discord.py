@@ -414,7 +414,7 @@ def main(date=None):
 
     total_pushed = 0
 
-    for category in ["papers", "ai_news", "code", "resource"]:
+    for category in ["papers", "code", "resource", "ai_news"]:
         channel_id = DISCORD_CHANNELS.get(category, "")
         if not channel_id:
             log(f"⚠️  {category} 未配置 DISCORD_CHANNEL_{category.upper()}，跳过")
