@@ -55,7 +55,7 @@ if not DISCORD_BOT_TOKEN:
 # Missing entries cause that category to be skipped at push time, not a fatal error.
 DISCORD_CHANNELS = {
     category: _load_env_value(f"DISCORD_CHANNEL_{category.upper()}")
-    for category in ("papers", "ai_news", "code", "resource")
+    for category in ("papers", "ai_news", "code", "resource", "weekly")
 }
 
 
@@ -406,15 +406,24 @@ def _parse_date(value):
         ) from exc
 
 
-def main(date=None):
+ALL_CATEGORIES = ["papers", "ai_news", "code", "resource", "weekly"]
+DAILY_CATEGORIES = ["papers", "ai_news", "code", "resource"]
+
+
+def main(date=None, categories=None):
     date = date or _today()
+    active = categories if categories is not None else DAILY_CATEGORIES
 
     log("=== Discord 推送开始 ===")
     log(f"日期: {date}")
+    log(f"频道: {', '.join(active)}")
 
     total_pushed = 0
 
-    for category in ["papers", "code", "resource", "ai_news"]:
+    PUSH_ORDER = ["papers", "code", "resource", "ai_news", "weekly"]
+    for category in PUSH_ORDER:
+        if category not in active:
+            continue
         channel_id = DISCORD_CHANNELS.get(category, "")
         if not channel_id:
             log(f"⚠️  {category} 未配置 DISCORD_CHANNEL_{category.upper()}，跳过")
@@ -440,7 +449,21 @@ if __name__ == "__main__":
         default=None,
         help="Date to push in YYYY-MM-DD format. Defaults to today.",
     )
+    parser.add_argument(
+        "--categories",
+        default=None,
+        help=(
+            "Comma-separated list of categories to push "
+            "(e.g. 'papers,ai_news,code,resource' or 'weekly'). "
+            f"Defaults to all: {','.join(ALL_CATEGORIES)}."
+        ),
+    )
     args = parser.parse_args()
 
-    resolved = _parse_date(args.date) if args.date else None
-    sys.exit(main(resolved))
+    resolved_date = _parse_date(args.date) if args.date else None
+    resolved_cats = (
+        [c.strip() for c in args.categories.split(",") if c.strip()]
+        if args.categories
+        else None
+    )
+    sys.exit(main(resolved_date, resolved_cats))
