@@ -626,16 +626,107 @@ def run_pipeline_2() -> int:
 # =====================================================================
 # PIPELINE 3: University News (DLUT HTML + API)
 # =====================================================================
+_DLUT_NEWS_GROUP = "dlut_news"
+_DLUT_NEWS_SECTION_ORDER = ["综合新闻", "人才培养", "学术科研", "合作交流", "一线风采", "学院动态"]
+
+
+def _generate_unified_news(
+    news_sources: list,
+    defaults: dict,
+    prompt_templates: dict,
+    model_default: str,
+) -> int:
+    """Batch-fetch all news-group sources, merge by section, URL-dedup, one AI call."""
+    sections: dict = {}   # section_name -> list[Item]
+    seen_urls: set = set()
+
+    for src in news_sources:
+        ds = DataSource.create(src, defaults)
+        section = src.get("section", ds.display_name)
+        log(f"  {ds.name} [{section}]...")
+        try:
+            raw = ds.fetch()
+        except Exception as e:
+            log(f"    FETCH ERR: {e}")
+            raw = []
+
+        deduped = []
+        for item in raw:
+            if item.url and item.url in seen_urls:
+                continue
+            if item.url:
+                seen_urls.add(item.url)
+            deduped.append(item)
+
+        sections.setdefault(section, []).extend(deduped)
+        log(f"    {len(deduped)} items")
+
+    total = sum(len(v) for v in sections.values())
+
+    if total == 0:
+        placeholder = (
+            f"# 大连理工大学校园动态 - {DATE}\n\n"
+            f"📭 过去 48 小时无新内容\n"
+        )
+        save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", placeholder)
+        log(f"    no updates -> placeholder")
+        return 1
+
+    section_parts = []
+    for section_name in _DLUT_NEWS_SECTION_ORDER:
+        items = sections.get(section_name, [])
+        if not items:
+            continue
+        lines = [f"{i+1}. [{item.date}] {item.title}" for i, item in enumerate(items)]
+        section_parts.append(f"### {section_name}\n" + "\n".join(lines))
+
+    items_text = "\n\n".join(section_parts)
+    tmpl = prompt_templates.get("university_news_unified", "")
+    prompt = tmpl.replace("{items}", items_text).replace("{date}", DATE)
+
+    try:
+        content_text = call_ai(prompt, model=model_default, max_tokens=3000)
+        full_content = (
+            f"# 大连理工大学校园动态 - {DATE}\n\n"
+            f"{content_text}\n\n"
+            f"---\n*共 {total} 条动态，来自 {len(news_sources)} 个信源汇总*\n"
+        )
+        save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", full_content)
+        log(f"    -> saved {_DLUT_NEWS_GROUP}_briefing_{DATE}.md")
+        return 1
+    except Exception as e:
+        log(f"    AI ERR: {e}")
+        return 0
+
+
 def run_pipeline_3() -> int:
     log("=== Pipeline 3: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
     model_default = defaults.get("model", "moonshotai/kimi-k2.5")
     saved = 0
 
+    # --- Part A: unified news briefing (8 news sources → 1 file) ---
+    news_sources = [
+        s for s in cfg["sources"]
+        if s.get("category") == "resource"
+        and s.get("news_group") == _DLUT_NEWS_GROUP
+        and s.get("enabled", True) is not False
+    ]
+    if news_sources:
+        if _has_real_briefing_today(_DLUT_NEWS_GROUP, "resource"):
+            log(
+                f"  unified news briefing already exists for {DATE}, skip "
+                f"(use --force {_DLUT_NEWS_GROUP} to regenerate)"
+            )
+        else:
+            saved += _generate_unified_news(news_sources, defaults, prompt_templates, model_default)
+
+    # --- Part B: recruitment sources (per-source, logic unchanged) ---
     for source_cfg in cfg["sources"]:
         if (
             source_cfg.get("category") != "resource"
             or source_cfg.get("enabled") is False
+            or source_cfg.get("news_group") == _DLUT_NEWS_GROUP
         ):
             continue
 

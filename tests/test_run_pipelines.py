@@ -447,6 +447,211 @@ def test_generate_regular_briefings_splits_incomplete_batch(monkeypatch):
     assert len(out) == 2
 
 
+def _make_dlut_news_sources_json(path, templates_extra=None):
+    """Write a minimal sources.json with two dlut_news group sources + one recruitment source."""
+    from datetime import datetime
+
+    now = datetime.now()
+    fresh_day = now.strftime("%d")
+    fresh_ym = now.strftime("%Y-%m")
+    html = (
+        read_fixture("dlut_news_snippet.html")
+        .replace("{FRESH_DAY}", fresh_day)
+        .replace("{FRESH_YM}", fresh_ym)
+        .replace("{OLD_DAY}", "01")
+        .replace("{OLD_YM}", "2020-01")
+    )
+    # write html to a known path so fake_requests can serve it
+    (path.parent / "dlut_zhxw.html").write_text(html, encoding="utf-8")
+    (path.parent / "dlut_xsky.html").write_text(html, encoding="utf-8")
+
+    import json
+
+    data = {
+        "defaults": {"lookback_hours": 48, "model": "stub/model"},
+        "prompt_templates": {
+            "university_news_unified": "Unified news: {items}",
+            "recruitment": "Recruitment: {items}",
+        },
+        "sources": [
+            {
+                "name": "dlut_zhxw",
+                "display_name": "大连理工大学 - 综合新闻",
+                "category": "resource",
+                "enabled": True,
+                "news_group": "dlut_news",
+                "section": "综合新闻",
+                "url": "https://news.dlut.test/zhxw.htm",
+                "base_url": "https://news.dlut.test/",
+                "selector": "li.bg-mask",
+                "fields": {
+                    "title": "h4 a",
+                    "url": "h4 a[href]",
+                    "date_day": "time > span",
+                    "date_ym": "time",
+                },
+                "date_format": "dlut_news",
+                "max_items": 10,
+                "type": "scrape",
+            },
+            {
+                "name": "dlut_xsky",
+                "display_name": "大连理工大学 - 学术科研",
+                "category": "resource",
+                "enabled": True,
+                "news_group": "dlut_news",
+                "section": "学术科研",
+                "url": "https://news.dlut.test/xsky.htm",
+                "base_url": "https://news.dlut.test/",
+                "selector": "li.bg-mask",
+                "fields": {
+                    "title": "h4 a",
+                    "url": "h4 a[href]",
+                    "date_day": "time > span",
+                    "date_ym": "time",
+                },
+                "date_format": "dlut_news",
+                "max_items": 10,
+                "type": "scrape",
+            },
+        ],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return html
+
+
+def test_run_pipeline_3_unified_news_saves_single_file(
+    monkeypatch, tmp_path, fake_requests, fake_call_ai
+):
+    """8 news sources → 1 dlut_news_briefing file, recruitment untouched."""
+    import run_pipelines as rp
+    from paths import BRIEFINGS_DIR
+
+    sources_json = tmp_path / "sources.json"
+    html = _make_dlut_news_sources_json(sources_json)
+
+    monkeypatch.setattr(rp, "SOURCES_JSON", str(sources_json))
+    rp.FORCE_ALL = False
+    rp.FORCE_SOURCES = set()
+
+    fake_requests.register("https://news.dlut.test/zhxw.htm", FakeResponse(200, html))
+    fake_requests.register("https://news.dlut.test/xsky.htm", FakeResponse(200, html))
+
+    saved = rp.run_pipeline_3()
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    unified = BRIEFINGS_DIR / "resource" / f"dlut_news_briefing_{today}.md"
+    assert unified.exists(), "expected unified briefing file"
+    body = unified.read_text(encoding="utf-8")
+    assert "大连理工大学校园动态" in body
+    assert "[AI-SUMMARY]" in body
+
+    # Individual source files must NOT exist
+    for name in ("dlut_zhxw", "dlut_xsky"):
+        assert not (
+            BRIEFINGS_DIR / "resource" / f"{name}_briefing_{today}.md"
+        ).exists(), f"{name} individual file should not exist"
+
+
+def test_run_pipeline_3_unified_news_idempotent(
+    monkeypatch, fake_requests, fake_call_ai
+):
+    """Second run on same day skips unified news generation."""
+    import run_pipelines as rp
+    from paths import BRIEFINGS_DIR
+
+    monkeypatch.setattr(rp, "SOURCES_JSON", str(FIXTURES_DIR / "sources_min.json"))
+    rp.FORCE_ALL = False
+    rp.FORCE_SOURCES = set()
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    resource_dir = BRIEFINGS_DIR / "resource"
+    resource_dir.mkdir(parents=True, exist_ok=True)
+    existing = resource_dir / f"dlut_news_briefing_{today}.md"
+    existing.write_text("# 大连理工大学校园动态\n\nReal content.\n", encoding="utf-8")
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("network should not be hit when skipping")
+
+    import requests
+    monkeypatch.setattr(requests, "get", boom)
+
+    saved = rp.run_pipeline_3()
+
+    assert saved == 0
+    assert existing.read_text(encoding="utf-8").startswith("# 大连理工大学校园动态")
+
+
+def test_run_pipeline_3_url_dedup_across_sections(
+    monkeypatch, tmp_path, fake_requests, fake_call_ai
+):
+    """Same URL appearing in two sections should only appear once in prompt."""
+    import json
+    import run_pipelines as rp
+    from paths import BRIEFINGS_DIR
+
+    from datetime import datetime
+
+    now = datetime.now()
+    fresh_day = now.strftime("%d")
+    fresh_ym = now.strftime("%Y-%m")
+    html = (
+        read_fixture("dlut_news_snippet.html")
+        .replace("{FRESH_DAY}", fresh_day)
+        .replace("{FRESH_YM}", fresh_ym)
+        .replace("{OLD_DAY}", "01")
+        .replace("{OLD_YM}", "2020-01")
+    )
+
+    sources_json = tmp_path / "sources.json"
+    sources_json.write_text(json.dumps({
+        "defaults": {"lookback_hours": 48, "model": "stub/model"},
+        "prompt_templates": {"university_news_unified": "Unified: {items}"},
+        "sources": [
+            {
+                "name": "src_a", "display_name": "Section A", "category": "resource",
+                "enabled": True, "news_group": "dlut_news", "section": "综合新闻",
+                "url": "https://dlut.test/a", "base_url": "https://dlut.test/",
+                "selector": "li.bg-mask",
+                "fields": {"title": "h4 a", "url": "h4 a[href]",
+                           "date_day": "time > span", "date_ym": "time"},
+                "date_format": "dlut_news", "max_items": 10, "type": "scrape",
+            },
+            {
+                "name": "src_b", "display_name": "Section B", "category": "resource",
+                "enabled": True, "news_group": "dlut_news", "section": "学术科研",
+                "url": "https://dlut.test/b", "base_url": "https://dlut.test/",
+                "selector": "li.bg-mask",
+                "fields": {"title": "h4 a", "url": "h4 a[href]",
+                           "date_day": "time > span", "date_ym": "time"},
+                "date_format": "dlut_news", "max_items": 10, "type": "scrape",
+            },
+        ],
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(rp, "SOURCES_JSON", str(sources_json))
+    rp.FORCE_ALL = False
+    rp.FORCE_SOURCES = set()
+
+    # Both sections return the same URL → should be deduped to 1 item total
+    fake_requests.register("https://dlut.test/a", FakeResponse(200, html))
+    fake_requests.register("https://dlut.test/b", FakeResponse(200, html))
+
+    prompts_seen = []
+    def capture_ai(prompt, **kwargs):
+        prompts_seen.append(prompt)
+        return "[AI-SUMMARY]"
+
+    monkeypatch.setattr(rp, "call_ai", capture_ai)
+
+    rp.run_pipeline_3()
+
+    assert prompts_seen, "AI should have been called"
+    # The same URL should not appear twice in the prompt
+    url_occurrences = prompts_seen[0].count("info/1234.htm")
+    assert url_occurrences <= 1, f"duplicate URL in prompt: appeared {url_occurrences} times"
+
+
 def test_run_pipeline_2_smoke(monkeypatch, fake_requests, fake_call_ai):
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
