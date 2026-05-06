@@ -425,8 +425,8 @@ class ScrapeDataSource(DataSource):
         max_items = self.config.get("max_items", 20)
         base_url = self.config.get("base_url", "http://www.chinawater.com.cn")
         rgx = re.compile(
-            r'<li[^>]*>\s*<a[^>]+href=["\']([^"\']*t(\d{8})[^"\']*\.html)["\'][^>]*>'
-            r"\s*([^<]{3,150})\s*</a>\s*</li>",
+            r'<a[^>]+href=["\']([^"\']*t(\d{8})[^"\']*\.html)["\'][^>]*>'
+            r"\s*([^<]{3,150})\s*</a>",
             re.I,
         )
         items: list[Item] = []
@@ -643,10 +643,38 @@ class APIDataSource(DataSource):
                 title=title,
                 date=dt.strftime("%Y-%m-%d") if dt else NOW.strftime("%Y-%m-%d"),
                 url=row.get("URL", ""),
+                extra={"doi": row.get("DOI", "")},
             ))
             if len(items) >= max_items:
                 break
+
+        chinese_title_url = self.config.get("chinese_title_url", "")
+        if chinese_title_url and items:
+            self._enrich_chinese_titles(items, chinese_title_url)
+
         return items
+
+    _CHINESE_TITLE_RGX = re.compile(
+        r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
+        re.I,
+    )
+
+    def _enrich_chinese_titles(self, items: list[Item], url_template: str) -> None:
+        """Fetch Chinese titles from per-article pages and replace English titles in-place."""
+        headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"}
+        for item in items:
+            doi = item.extra.get("doi", "")
+            if not doi:
+                continue
+            url = url_template.format(doi=doi)
+            try:
+                resp = requests.get(url, headers=headers, timeout=15)
+                if resp.ok:
+                    m = self._CHINESE_TITLE_RGX.search(resp.text)
+                    if m:
+                        item.title = html_lib.unescape(m.group(1)).strip()
+            except Exception:
+                pass
 
     def _parse_huggingface(self, data) -> list[Item]:
         extract = self.config.get("extract", {})
