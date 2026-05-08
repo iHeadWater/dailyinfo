@@ -37,7 +37,7 @@ DATE = datetime.now().strftime("%Y-%m-%d")
 ENV_FILE = PROJECT_ROOT / ".env"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
-CATEGORIES = ["papers", "ai_news", "code", "resource"]
+CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
 
 
 def _python() -> str:
@@ -103,6 +103,7 @@ def install():
         "DISCORD_CHANNEL_AI_NEWS",
         "DISCORD_CHANNEL_CODE",
         "DISCORD_CHANNEL_RESOURCE",
+        "DISCORD_CHANNEL_ARXIV",
     ]
     env = _read_env_keys(required + channel_keys)
 

@@ -478,7 +478,7 @@ def run_pipeline_1() -> int:
     for source_cfg in cfg["sources"]:
         if source_cfg.get("type") == "rss" or not source_cfg.get("enabled", True):
             continue
-        if source_cfg.get("category") not in ("papers", "ai_news"):
+        if source_cfg.get("category") not in ("papers", "ai_news", "arxiv"):
             continue
 
         ds = DataSource.create(source_cfg, defaults)
@@ -835,7 +835,7 @@ def main() -> int:
             traceback.print_exc()
 
     log("=== Summary ===")
-    for d in ["papers", "ai_news", "code", "resource"]:
+    for d in ["papers", "ai_news", "code", "resource", "arxiv"]:
         path = BRIEFINGS_DIR / d
         if path.exists():
             files = [f.name for f in sorted(path.iterdir()) if DATE in f.name]

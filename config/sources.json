@@ -325,7 +325,7 @@
     {
       "name": "arxiv_cs_ai",
       "display_name": "arXiv CS.AI",
-      "category": "ai_news",
+      "category": "arxiv",
       "enabled": true,
       "max_articles_per_batch": 10,
       "max_batches": 50,

@@ -145,8 +145,9 @@ def run_weekly_summary(days: int = 7, force: bool = False) -> int:
         log(f"  weekly recap already exists for {DATE}, skip (use --force to overwrite)")
         return 0
 
-    log(f"  collecting last {days} days of ai_news briefings...")
+    log(f"  collecting last {days} days of ai_news + arxiv briefings...")
     briefings = collect_week_briefings("ai_news", days)
+    briefings += collect_week_briefings("arxiv", days)
     if not briefings:
         log("  no briefings found in the past week, abort")
         return 1

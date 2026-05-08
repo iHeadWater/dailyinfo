@@ -55,8 +55,11 @@ if not DISCORD_BOT_TOKEN:
 # Missing entries cause that category to be skipped at push time, not a fatal error.
 DISCORD_CHANNELS = {
     category: _load_env_value(f"DISCORD_CHANNEL_{category.upper()}")
-    for category in ("papers", "ai_news", "code", "resource", "weekly")
+    for category in ("papers", "ai_news", "code", "resource", "arxiv", "weekly")
 }
+# arxiv shares the ai_news Discord channel
+if not DISCORD_CHANNELS.get("arxiv"):
+    DISCORD_CHANNELS["arxiv"] = DISCORD_CHANNELS.get("ai_news")
 
 
 def _today() -> str:
@@ -244,7 +247,7 @@ def build_push_summary(
         and name not in pending_set
     ]
 
-    title = "📊 论文频道推送总结" if category == "papers" else f"📊 {category} 推送总结"
+    title = "📊 论文频道推送总结" if category in ("papers", "arxiv") else f"📊 {category} 推送总结"
     lines = [
         f"{title} ({date})",
         "",
@@ -350,7 +353,7 @@ def push_category(category, channel_id, date=None):
         )
         summary = (
             build_push_summary(category, date, [], placeholder_names)
-            if category == "papers"
+            if category in ("papers", "arxiv")
             else ""
         )
         if summary and send_to_discord(channel_id, summary):
@@ -384,7 +387,7 @@ def push_category(category, channel_id, date=None):
         except Exception as e:
             log(f"  ❌ 处理 {filename} 出错: {e}")
 
-    if category == "papers":
+    if category in ("papers", "arxiv"):
         summary = build_push_summary(
             category, date, pushed_names, placeholder_names, pending_names
         )
@@ -406,8 +409,8 @@ def _parse_date(value):
         ) from exc
 
 
-ALL_CATEGORIES = ["papers", "ai_news", "code", "resource", "weekly"]
-DAILY_CATEGORIES = ["papers", "ai_news", "code", "resource"]
+ALL_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv", "weekly"]
+DAILY_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
 
 
 def main(date=None, categories=None):
@@ -420,7 +423,7 @@ def main(date=None, categories=None):
 
     total_pushed = 0
 
-    PUSH_ORDER = ["papers", "code", "resource", "ai_news", "weekly"]
+    PUSH_ORDER = ["papers", "code", "resource", "ai_news", "arxiv", "weekly"]
     for category in PUSH_ORDER:
         if category not in active:
             continue
