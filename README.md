@@ -12,6 +12,11 @@
 
 面向 AI for Science 研究者的自动化科研情报聚合与推送系统。
 
+## 项目架构
+![DailyInfo 架构图](framework.png)
+
+---
+
 **核心流程**: FreshRSS 采集 → AI 摘要生成（markdown 落盘）→ Discord 推送 + 归档
 
 **设计原则**: 配置驱动（`config/sources.json`）+ 确定性 CLI + 外部调度
