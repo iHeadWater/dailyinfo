@@ -4,12 +4,24 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import datetime
 import html as html_lib
+import json
+import os
+import pathlib
 import re
 import requests
 import time
 from typing import Optional
 
 NOW = datetime.datetime.now()
+
+
+def _resolve_state_dir() -> pathlib.Path:
+    override = os.environ.get("DAILYINFO_DATA_ROOT", "")
+    root = pathlib.Path(override).expanduser() if override else pathlib.Path.home() / ".myagentdata" / "dailyinfo"
+    return root / "state"
+
+
+_STATE_DIR = _resolve_state_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +227,9 @@ class DataSource(ABC):
         if not batch_size:
             return [items]
         return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
+
+    def commit_cursor(self) -> None:
+        """Persist cursor after a successful briefing save. No-op for most sources."""
 
     @staticmethod
     def create(config: dict, defaults: dict, **ctx) -> "DataSource":
@@ -590,10 +605,33 @@ class ScrapeDataSource(DataSource):
 # APIDataSource — REST API sources (HuggingFace + DLUT recruitment)
 # ---------------------------------------------------------------------------
 class APIDataSource(DataSource):
+    def __init__(self, config: dict, defaults: dict):
+        super().__init__(config, defaults)
+        self._pending_cursor: Optional[dict] = None
+
+    def _load_cursor(self) -> Optional[dict]:
+        cursor_file = _STATE_DIR / f"{self.name}_cursor.json"
+        if cursor_file.exists():
+            try:
+                return json.loads(cursor_file.read_text())
+            except Exception:
+                return None
+        return None
+
+    def commit_cursor(self) -> None:
+        if self._pending_cursor is None:
+            return
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        cursor_file = _STATE_DIR / f"{self.name}_cursor.json"
+        cursor_file.write_text(json.dumps(self._pending_cursor))
+        self._pending_cursor = None
+
     def fetch(self) -> list[Item]:
         method = self.config.get("method", "GET").upper()
         params = self.config.get("params", {})
         if method == "POST":
+            if self.config.get("paginate"):
+                return self._fetch_dlut_paginated(params)
             resp = requests.post(self.config["url"], data=params, timeout=20)
         else:
             params_str = {k: str(v) for k, v in params.items()}
@@ -610,6 +648,48 @@ class APIDataSource(DataSource):
         if self.config.get("parser") == "crossref":
             return self._parse_crossref(data)
         return self._parse_dlut_api(data)
+
+    def _fetch_dlut_paginated(self, base_params: dict) -> list[Item]:
+        """Paginate DLUT POST API.
+
+        Uses cursor-based fetching when a saved cursor exists (no time window,
+        no duplicates). Falls back to lookback_hours on first run or reset.
+        """
+        cursor = self._load_cursor()
+        max_items = self.config.get("max_items", 100)
+        all_items: list[Item] = []
+        page = 1
+        max_pages = 20
+
+        while page <= max_pages:
+            params = {**base_params, "pageNo": page}
+            resp = requests.post(self.config["url"], data=params, timeout=20)
+            resp.raise_for_status()
+            api_data = resp.json()
+
+            obj = api_data.get("object", {}) if isinstance(api_data, dict) else {}
+            data_list = obj.get("list", []) if isinstance(obj, dict) else []
+            last_page = obj.get("lastPage", True)
+
+            new_items, should_stop = self._parse_dlut_api_rows(data_list, cursor=cursor)
+            all_items.extend(new_items)
+
+            if should_stop or last_page or (max_items and len(all_items) >= max_items):
+                break
+            page += 1
+
+        result = all_items[:max_items] if max_items else all_items
+
+        # Stage the cursor — only written to disk when commit_cursor() is called
+        # (i.e. after run_pipelines confirms the briefing was saved successfully).
+        if result:
+            newest = result[0]  # API returns newest first
+            self._pending_cursor = {
+                "last_id": newest.extra.get("item_id", ""),
+                "last_time": newest.extra.get("item_time", newest.date),
+            }
+
+        return result
 
     def _parse_crossref(self, api_data: dict) -> list[Item]:
         """Crossref REST API (/works) — returns English titles with publication dates."""
@@ -696,14 +776,81 @@ class APIDataSource(DataSource):
             )
         return items
 
-    def _parse_dlut_api(self, api_data) -> list[Item]:
-        max_items = self.config.get("max_items", 10)
+    def _parse_dlut_api_rows(
+        self, data_list: list, cursor: Optional[dict] = None
+    ) -> tuple[list[Item], bool]:
+        """Process a list of rows from a DLUT API page.
+
+        Returns (new_items, should_stop).
+
+        Cursor mode (cursor provided): stop when the previously-seen item is
+        reached (matched by ID, or by timestamp as fallback). No time window.
+
+        Lookback mode (no cursor): stop when an item older than the lookback
+        cutoff is encountered (original behaviour).
+        """
         extract = self.config.get("extract", {})
         field_map = extract.get("fields", {})
         list_url = self.config.get("list_url", self.config.get("url", ""))
-        cutoff = self._cutoff_dt
-        items = []
+        items: list[Item] = []
+        should_stop = False
 
+        cursor_id = (cursor or {}).get("last_id", "")
+        cursor_time_str = (cursor or {}).get("last_time", "")
+        cursor_dt: Optional[datetime.datetime] = None
+        if cursor_time_str:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    cursor_dt = datetime.datetime.strptime(cursor_time_str[:19], fmt)
+                    break
+                except ValueError:
+                    pass
+
+        for row in data_list:
+            if not isinstance(row, dict):
+                continue
+            title = row.get(field_map.get("title", "title"), "").strip()
+            date_val = row.get(field_map.get("date", "date"), "")
+            item_id = row.get("id", "")
+            if not title:
+                continue
+            dt: Optional[datetime.datetime] = None
+            if isinstance(date_val, str) and date_val:
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d"):
+                    try:
+                        dt = datetime.datetime.strptime(date_val[:19], fmt)
+                        break
+                    except ValueError:
+                        pass
+
+            if cursor:
+                # Cursor mode: stop at the previously-seen item
+                if cursor_id and item_id == cursor_id:
+                    should_stop = True
+                    break
+                if cursor_dt and dt and dt < cursor_dt:
+                    # Fallback: timestamp strictly before cursor → already seen
+                    should_stop = True
+                    break
+            else:
+                # Lookback mode: skip items older than the time cutoff
+                if dt and dt < self._cutoff_dt:
+                    should_stop = True
+                    continue
+
+            items.append(
+                Item(
+                    title=title[:100],
+                    date=(dt.strftime("%Y-%m-%d") if dt else (date_val[:10] if date_val else "unknown")),
+                    url=list_url,
+                    extra={"item_id": item_id, "item_time": date_val},
+                )
+            )
+
+        return items, should_stop
+
+    def _parse_dlut_api(self, api_data) -> list[Item]:
+        max_items = self.config.get("max_items", 10)
         data_list: list = []
         if isinstance(api_data, dict):
             if "object" in api_data and isinstance(api_data["object"], dict):
@@ -713,37 +860,8 @@ class APIDataSource(DataSource):
         elif isinstance(api_data, list):
             data_list = api_data
 
-        for row in data_list:
-            if not isinstance(row, dict):
-                continue
-            title = row.get(field_map.get("title", "title"), "").strip()
-            date_val = row.get(field_map.get("date", "date"), "")
-            if not title:
-                continue
-            dt = None
-            if isinstance(date_val, str) and date_val:
-                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d"):
-                    try:
-                        dt = datetime.datetime.strptime(date_val[:19], fmt)
-                        break
-                    except ValueError:
-                        pass
-            if dt and dt < cutoff:
-                continue
-            items.append(
-                Item(
-                    title=title[:100],
-                    date=(
-                        dt.strftime("%Y-%m-%d")
-                        if dt
-                        else (date_val[:10] if date_val else "unknown")
-                    ),
-                    url=list_url,
-                )
-            )
-            if len(items) >= max_items:
-                break
-        return items
+        items, _ = self._parse_dlut_api_rows(data_list)
+        return items[:max_items] if max_items else items
 
     def format_items(self, items: list[Item]) -> str:
         if self.name == "huggingface_models":

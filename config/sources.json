@@ -595,7 +595,9 @@
           "date": "startTime"
         }
       },
-      "max_items": 10,
+      "paginate": true,
+      "max_items": 100,
+      "max_articles_per_batch": 20,
       "prompt_template": "recruitment",
       "type": "api"
     },
@@ -618,7 +620,9 @@
           "date": "startTime"
         }
       },
-      "max_items": 10,
+      "paginate": true,
+      "max_items": 100,
+      "max_articles_per_batch": 20,
       "prompt_template": "recruitment",
       "type": "api"
     },
@@ -641,7 +645,9 @@
           "date": "startTime"
         }
       },
-      "max_items": 10,
+      "paginate": true,
+      "max_items": 100,
+      "max_articles_per_batch": 20,
       "prompt_template": "recruitment",
       "type": "api"
     }
