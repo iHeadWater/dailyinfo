@@ -263,6 +263,46 @@ class RSSDataSource(DataSource):
             "max_articles_per_batch"
         )
         self.max_batches: int = config.get("max_batches", 1000)
+        self._seen: dict[str, str] = self._load_seen()  # link -> first-seen date
+        self._total_before_filter: int = 0  # for logging
+
+    # --- seen-links dedup ---
+    def _seen_path(self) -> pathlib.Path:
+        return _STATE_DIR / f"{self.name}_seen.json"
+
+    def _load_seen(self) -> dict[str, str]:
+        p = self._seen_path()
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _save_seen(self) -> None:
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self._seen_path().write_text(
+            json.dumps(self._seen, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _filter_seen(self, items: list[Item]) -> list[Item]:
+        self._total_before_filter = len(items)
+        return [it for it in items if it.url not in self._seen]
+
+    def commit_seen(self, items: list[Item]) -> None:
+        """Record item URLs as processed. Called after briefing is saved."""
+        today = datetime.date.today().isoformat()
+        for it in items:
+            if it.url and it.url not in self._seen:
+                self._seen[it.url] = today
+        self._save_seen()
+
+    def cleanup_seen(self, max_age_days: int = 30) -> None:
+        """Remove seen records older than max_age_days."""
+        cutoff = (datetime.date.today() - datetime.timedelta(days=max_age_days)).isoformat()
+        self._seen = {k: v for k, v in self._seen.items() if v >= cutoff}
+        self._save_seen()
 
     def fetch(self) -> list[Item]:
         if not self._db:
@@ -283,7 +323,7 @@ class RSSDataSource(DataSource):
         if self.use_content:
             rows = self._db.execute(
                 "SELECT title, content, link, date FROM entry "
-                "WHERE id_feed=? AND date>? ORDER BY date DESC LIMIT 3",
+                "WHERE id_feed=? AND lastSeen>? ORDER BY date DESC LIMIT 3",
                 [fid, self._cutoff_ts],
             ).fetchall()
             items = []
@@ -306,16 +346,16 @@ class RSSDataSource(DataSource):
                         content=plain,
                     )
                 )
-            return items
+            return self._filter_seen(items)
 
         rows = self._db.execute(
-            "SELECT title, link, date FROM entry WHERE id_feed=? AND date>? ORDER BY date DESC",
+            "SELECT title, link, date FROM entry WHERE id_feed=? AND lastSeen>? ORDER BY date DESC",
             [fid, self._cutoff_ts],
         ).fetchall()
         entries = list(rows)
         if self.max_articles and len(entries) > self.max_articles:
             entries = entries[: self.max_articles]
-        return [
+        items = [
             Item(
                 title=row["title"] or "",
                 date=datetime.datetime.fromtimestamp(row["date"]).strftime("%Y-%m-%d"),
@@ -323,6 +363,7 @@ class RSSDataSource(DataSource):
             )
             for row in entries
         ]
+        return self._filter_seen(items)
 
     def get_batches(self, items: list[Item]) -> list[list[Item]]:
         """Split items into AI-processing batches respecting max_articles_per_batch."""
