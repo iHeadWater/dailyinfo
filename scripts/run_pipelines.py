@@ -397,7 +397,9 @@ def run_pipeline_1() -> int:
         model = feed_cfg.get("model") or model_default
 
         if not items:
-            log(f"  {name}: 0 articles — placeholder")
+            log(f"  {name}: 0 new articles — placeholder")
+            ds.commit_seen(items)  # no new items, but record any seen state
+            ds.cleanup_seen()
             placeholder = f"# {ds.display_name} - {DATE}\n\n📭 过去 {ds.lookback_hours} 小时无新内容\n"
             save(category, f"{name}_briefing_{DATE}.md", placeholder)
             saved += 1
@@ -436,10 +438,15 @@ def run_pipeline_1() -> int:
                     time.sleep(1)
                 except Exception as e:
                     log(f"    ERR: {e}")
+            ds.commit_seen(items)
+            ds.cleanup_seen()
             continue
 
         # Regular path — batch by max_articles_per_batch
-        log(f"  {name}: {len(items)} articles")
+        total = ds._total_before_filter
+        new = len(items)
+        dup = total - new
+        log(f"  {name}: {new} new articles" + (f" ({dup} duplicates skipped)" if dup else ""))
         tmpl_key = feed_cfg.get("prompt_template") or default_tmpl_key
         prompt_template = templates.get(tmpl_key) or templates.get(
             "one_line_summary", ""
@@ -471,6 +478,9 @@ def run_pipeline_1() -> int:
                 time.sleep(0.5)
             except Exception as e:
                 log(f"    SAVE ERR: {e}")
+
+        ds.commit_seen(items)
+        ds.cleanup_seen()
 
     db.close()
 
