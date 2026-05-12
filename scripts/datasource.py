@@ -386,6 +386,10 @@ class ScrapeDataSource(DataSource):
     def fetch(self) -> list[Item]:
         if self.name == "github_trending":
             return self._fetch_github()
+        if self.name == "chinawater":
+            return self._fetch_chinawater_journal()
+        if self.name == "skxjz":
+            return self._fetch_skxjz_journal()
         resp = requests.get(
             self.config["url"],
             timeout=20,
@@ -396,8 +400,6 @@ class ScrapeDataSource(DataSource):
         resp.encoding = resp.apparent_encoding or "utf-8"
         if self.name == "skxjz":
             return self._parse_skxjz(resp.text)
-        if self.name == "chinawater":
-            return self._parse_chinawater(resp.text)
         return self._parse_dlut_html(resp.text)
 
     # --- GitHub Trending ---
@@ -452,62 +454,132 @@ class ScrapeDataSource(DataSource):
             )
         return items
 
-    def _parse_skxjz(self, page_html: str) -> list[Item]:
-        """水科学进展 (skxjz.nhri.cn) — current-issue article list.
-
-        DOI issue numbers don't map to calendar months, so use today's date
-        for all items; the _already_pushed_within guard prevents re-delivery.
-        """
-        max_items = self.config.get("max_items", 30)
+    def _fetch_skxjz_journal(self) -> list[Item]:
+        """水科学进展 (skxjz.nhri.cn) — fetch current issue list, then get real
+        online-publication date from the first article page for _cutoff_dt filtering."""
         base_url = "http://skxjz.nhri.cn"
-        today = NOW.strftime("%Y-%m-%d")
+        hdrs = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+
+        resp = requests.get(
+            self.config["url"], headers=hdrs, timeout=20
+        )
+        resp.encoding = resp.apparent_encoding or "utf-8"
+
+        max_items = self.config.get("max_items", 30)
         rgx = re.compile(
             r'class="article-list-title[^"]*"[^>]*>[\s\S]*?'
             r"<a\s+href=['\"](?P<path>/article/doi/[^'\"]+)['\"][^>]*>\s*(?P<title>[\s\S]*?)\s*</a>",
             re.I,
         )
-        items = []
-        for m in rgx.finditer(page_html):
+        raw_items: list[tuple[str, str]] = []
+        for m in rgx.finditer(resp.text):
             title = re.sub(r"<[^>]+>", "", m.group("title")).strip()
             if not title:
                 continue
-            items.append(Item(title=title, date=today, url=base_url + m.group("path")))
-            if len(items) >= max_items:
+            raw_items.append((m.group("path"), title))
+            if len(raw_items) >= max_items:
                 break
-        return items
 
-    def _parse_chinawater(self, page_html: str) -> list[Item]:
-        """中国水利 (chinawater.com.cn) — news list with date embedded in URL."""
-        max_items = self.config.get("max_items", 20)
-        base_url = self.config.get("base_url", "http://www.chinawater.com.cn")
-        rgx = re.compile(
-            r'<a[^>]+href=["\']([^"\']*t(\d{8})[^"\']*\.html)["\'][^>]*>'
-            r"\s*([^<]{3,150})\s*</a>",
+        if not raw_items:
+            return []
+
+        # Fetch first article page to get real online-publication date
+        pub_date = NOW.strftime("%Y-%m-%d")
+        try:
+            detail_resp = requests.get(
+                base_url + raw_items[0][0], headers=hdrs, timeout=15
+            )
+            detail_resp.encoding = "utf-8"
+            date_m = re.search(r"online[^0-9]*(\d{4}-\d{2}-\d{2})", detail_resp.text, re.I)
+            if date_m:
+                pub_date = date_m.group(1)
+        except Exception:
+            pass
+
+        pub_dt = datetime.datetime.strptime(pub_date, "%Y-%m-%d")
+        if pub_dt.date() < self._cutoff_dt.date():
+            return []
+
+        return [Item(title=title, date=pub_date, url=base_url + path) for path, title in raw_items]
+
+    def _fetch_chinawater_journal(self) -> list[Item]:
+        """《中国水利》期刊 (slzg.cbpt.cnki.net) — three-step:
+        1. index page → current issue year/issue + UUID params
+        2. guokan_list → article list
+        3. first article page → real publication date for _cutoff_dt filtering
+        """
+        base = "https://slzg.cbpt.cnki.net"
+        hdrs = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+
+        index_resp = requests.get(
+            f"{base}/portal/journal/portal/client/index", headers=hdrs, timeout=20
+        )
+        index_resp.encoding = "utf-8"
+
+        issue_matches = re.findall(r"(\d{4})年(\d+)期", index_resp.text)
+        if not issue_matches:
+            return []
+        year, issue = max(issue_matches, key=lambda m: (int(m[0]), int(m[1])))
+
+        uuid_m = re.search(
+            r"guokan_list\?year=\d+&issue=\d+&yearId=([^&\"']+)&issueId=([^&\"']+)",
+            index_resp.text,
+        )
+        if not uuid_m:
+            return []
+        year_id, issue_id = uuid_m.group(1), uuid_m.group(2)
+
+        list_resp = requests.get(
+            f"{base}/portal/journal/portal/client/guokan_list"
+            f"?year={year}&issue={issue}&yearId={year_id}&issueId={issue_id}",
+            headers=hdrs,
+            timeout=20,
+        )
+        list_resp.encoding = "utf-8"
+
+        paper_rgx = re.compile(
+            r'href=["\'](?:' + re.escape(base) + r')?'
+            r'(/portal/journal/portal/client/paper/([a-f0-9]{32}))["\'][^>]*>'
+            r"([^<]{3,200})</a>",
             re.I,
         )
-        items: list[Item] = []
+        max_items = self.config.get("max_items", 20)
+        raw_items: list[tuple[str, str, str]] = []
         seen: set[str] = set()
-        for m in rgx.finditer(page_html):
-            href, date_str, raw_title = m.group(1), m.group(2), m.group(3).strip()
+        for m in paper_rgx.finditer(list_resp.text):
+            path, hash_id, raw_title = m.group(1), m.group(2), m.group(3).strip()
             title = html_lib.unescape(raw_title).strip()
-            if not title or title in seen:
+            if not title or hash_id in seen:
                 continue
-            seen.add(title)
-            try:
-                dt = datetime.datetime.strptime(date_str, "%Y%m%d")
-            except ValueError:
-                dt = None
-            if dt and dt < self._cutoff_dt:
-                continue
-            url = href if href.startswith("http") else f"{base_url}/{href.lstrip('./')}"
-            items.append(Item(
-                title=title,
-                date=dt.strftime("%Y-%m-%d") if dt else NOW.strftime("%Y-%m-%d"),
-                url=url,
-            ))
-            if len(items) >= max_items:
+            seen.add(hash_id)
+            raw_items.append((path, hash_id, title))
+            if len(raw_items) >= max_items:
                 break
-        return items
+
+        if not raw_items:
+            return []
+
+        # Fetch first article page to get the real publication date
+        pub_date = NOW.strftime("%Y-%m-%d")
+        try:
+            detail_resp = requests.get(
+                f"{base}{raw_items[0][0]}", headers=hdrs, timeout=15
+            )
+            detail_resp.encoding = "utf-8"
+            date_m = re.search(r"出版时间[：:]\s*(\d{4}-\d{2}-\d{2})", detail_resp.text)
+            if date_m:
+                pub_date = date_m.group(1)
+        except Exception:
+            pass
+
+        pub_dt = datetime.datetime.strptime(pub_date, "%Y-%m-%d")
+        if pub_dt.date() < self._cutoff_dt.date():
+            return []
+
+        return [
+            Item(title=title, date=pub_date, url=f"{base}{path}")
+            for path, _, title in raw_items
+        ]
 
     def format_items(self, items: list[Item]) -> str:
         if self.name == "github_trending":

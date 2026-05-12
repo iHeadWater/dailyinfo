@@ -286,7 +286,7 @@
       "enabled": true,
       "url": "http://skxjz.nhri.cn/article/current",
       "type": "scrape",
-      "lookback_hours": 2160,
+      "lookback_hours": 48,
       "max_items": 30
     },
     {
@@ -297,7 +297,7 @@
       "url": "https://api.crossref.org/works?filter=issn:0559-9350&sort=published&order=desc&rows=20",
       "type": "api",
       "parser": "crossref",
-      "lookback_hours": 2160,
+      "lookback_hours": 720,
       "max_items": 20,
       "chinese_title_url": "https://www.sciengine.com/JHE/doi/{doi}"
     },
@@ -306,9 +306,8 @@
       "display_name": "中国水利",
       "category": "papers",
       "enabled": true,
-      "url": "http://www.chinawater.com.cn/",
+      "url": "https://slzg.cbpt.cnki.net/portal/journal/portal/client/index",
       "type": "scrape",
-      "base_url": "http://www.chinawater.com.cn",
       "lookback_hours": 48,
       "max_items": 20
     },
