@@ -259,8 +259,12 @@ def _generate_regular_briefings(
     model: str,
     *,
     max_tokens: int = 2500,
-) -> list[str]:
-    """Generate one or more complete briefings, splitting oversized batches."""
+) -> list[tuple[str, list]]:
+    """Generate one or more complete briefings, splitting oversized batches.
+
+    Returns list of (content, batch_items) tuples so callers can track which
+    items were successfully processed for commit_seen.
+    """
     prompt = _build_regular_prompt(prompt_template, ds, batch)
     try:
         content = call_ai(prompt, model=model, max_tokens=max_tokens)
@@ -269,7 +273,7 @@ def _generate_regular_briefings(
             f"    AI ok: source={ds.name}, articles={len(batch)}, "
             f"prompt_chars={len(prompt)}, response_chars={len(content)}"
         )
-        return [content]
+        return [(content, batch)]
     except BriefingGenerationError as exc:
         if len(batch) <= 1:
             raise
@@ -418,6 +422,7 @@ def run_pipeline_1() -> int:
             log(f"  {name}: {len(items)} articles (deep content)")
             tmpl_key = feed_cfg.get("prompt_template", "smolai_categorized")
             tmpl = templates.get(tmpl_key, "")
+            committed_items: list = []
             for idx, item in enumerate(items):
                 prompt = (
                     tmpl.replace("{content}", item.content).replace("{date}", DATE)
@@ -434,11 +439,12 @@ def run_pipeline_1() -> int:
                         f"# AI Daily Digest - {DATE}\n\n{content_text}",
                     )
                     saved += 1
+                    committed_items.append(item)
                     log(f"    -> saved {filename}")
                     time.sleep(1)
                 except Exception as e:
                     log(f"    ERR: {e}")
-            ds.commit_seen(items)
+            ds.commit_seen(committed_items)
             ds.cleanup_seen()
             continue
 
@@ -455,7 +461,7 @@ def run_pipeline_1() -> int:
             log(f"  SKIP {name}: no prompt template")
             continue
 
-        generated_parts: list[str] = []
+        generated_parts: list[tuple[str, list]] = []
         batches = ds.get_batches(items)
         for idx, batch in enumerate(batches):
             try:
@@ -468,18 +474,20 @@ def run_pipeline_1() -> int:
         should_suffix = (
             bool(feed_cfg.get("max_articles_per_batch")) or len(generated_parts) > 1
         )
-        for part_idx, content_text in enumerate(generated_parts, start=1):
+        committed_items: list = []
+        for part_idx, (content_text, batch_items) in enumerate(generated_parts, start=1):
             suffix = f"_batch{part_idx}" if should_suffix else ""
             filename = f"{name}_briefing_{DATE}{suffix}.md"
             try:
                 save(category, filename, content_text)
                 saved += 1
+                committed_items.extend(batch_items)
                 log(f"    -> saved {filename}")
                 time.sleep(0.5)
             except Exception as e:
                 log(f"    SAVE ERR: {e}")
 
-        ds.commit_seen(items)
+        ds.commit_seen(committed_items)
         ds.cleanup_seen()
 
     db.close()
@@ -533,7 +541,7 @@ def run_pipeline_1() -> int:
             log(f"    SKIP {name}: no prompt template")
             continue
 
-        generated_parts: list[str] = []
+        generated_parts: list[tuple[str, list]] = []
         for idx, batch in enumerate(ds.get_batches(items)):
             try:
                 generated_parts.extend(
@@ -543,7 +551,7 @@ def run_pipeline_1() -> int:
                 log(f"    ERR batch {idx + 1}: {e}")
 
         should_suffix = bool(source_cfg.get("max_articles_per_batch")) or len(generated_parts) > 1
-        for part_idx, content_text in enumerate(generated_parts, start=1):
+        for part_idx, (content_text, _batch_items) in enumerate(generated_parts, start=1):
             suffix = f"_batch{part_idx}" if should_suffix else ""
             filename = f"{name}_briefing_{DATE}{suffix}.md"
             try:

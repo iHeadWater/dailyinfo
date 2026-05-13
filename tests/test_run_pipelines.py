@@ -445,6 +445,43 @@ def test_generate_regular_briefings_splits_incomplete_batch(monkeypatch):
 
     assert calls == [4, 2, 2]
     assert len(out) == 2
+    # Each element is now (content, batch_items) tuple
+    for content, batch_items in out:
+        assert isinstance(content, str)
+        assert isinstance(batch_items, list)
+
+
+def test_generate_regular_briefings_returns_batch_items_for_tracking(monkeypatch):
+    """_generate_regular_briefings returns (content, batch_items) so callers
+    can commit_seen only for successfully processed items."""
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "track_test", "display_name": "Track", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    batch_a = [Item(title=f"Paper {i}", date="2026-04-25") for i in range(2)]
+    batch_b = [Item(title=f"Paper {i}", date="2026-04-25") for i in range(2, 4)]
+
+    def fake_call_ai(prompt, model="stub", max_tokens=0, **kwargs):
+        return "1. **Paper A**\n   > 摘要。\n\n2. **Paper B**\n   > 摘要。"
+
+    monkeypatch.setattr(rp, "call_ai", fake_call_ai)
+    monkeypatch.setattr(rp, "log", lambda *_: None)
+
+    out = rp._generate_regular_briefings(
+        ds,
+        batch_a + batch_b,
+        "请总结 {count} 篇 {display_name}：\n{article_list}\n{date}",
+        "stub",
+    )
+
+    # All items should be tracked in their respective tuples
+    all_items = []
+    for content, batch_items in out:
+        all_items.extend(batch_items)
+    assert len(all_items) == 4
 
 
 def _make_dlut_news_sources_json(path, templates_extra=None):
