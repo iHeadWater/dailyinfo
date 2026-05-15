@@ -484,6 +484,243 @@ def test_generate_regular_briefings_returns_batch_items_for_tracking(monkeypatch
     assert len(all_items) == 4
 
 
+def test_make_placeholder_briefing_format():
+    """Placeholder briefing contains titles and links for failed items."""
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "test_ph", "display_name": "Test Placeholder", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    items = [
+        Item(title="Alpha Paper", date="2026-04-25", url="https://doi.org/10.1/a"),
+        Item(title="Beta Paper", date="2026-04-25", url="https://doi.org/10.1/b"),
+    ]
+
+    result = rp._make_placeholder_briefing(ds, items)
+    assert "Test Placeholder" in result
+    assert "⚠️" in result
+    assert "Alpha Paper" in result
+    assert "Beta Paper" in result
+    assert "https://doi.org/10.1/a" in result
+    assert "https://doi.org/10.1/b" in result
+
+
+def test_make_placeholder_briefing_handles_no_url():
+    """Items without a URL should not crash the placeholder generator."""
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "no_url", "display_name": "No URL", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    items = [Item(title="No Link", date="2026-04-25")]
+    result = rp._make_placeholder_briefing(ds, items)
+    assert "No Link" in result
+    assert "查看原文" not in result
+
+
+def test_retry_failed_items_succeeds_on_second_try(monkeypatch):
+    """Phase 2 retries failed items with smaller batches; items that succeed
+    on retry should be returned with their batch_items."""
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "retry_ok", "display_name": "Retry OK", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    failed_items = [
+        Item(title=f"Failed {i}", date="2026-04-25", url=f"https://doi.org/f{i}")
+        for i in range(3)
+    ]
+
+    call_count = 0
+
+    def fake_call_ai(prompt, model="stub", max_tokens=0, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        count = prompt.count(". Failed")
+        return "\n\n".join(f"{i+1}. **Failed {i}**\n   > 摘要。" for i in range(count))
+
+    monkeypatch.setattr(rp, "call_ai", fake_call_ai)
+    monkeypatch.setattr(rp, "log", lambda *_: None)
+
+    results = rp._retry_failed_items(
+        ds, failed_items,
+        "请总结 {count} 篇 {display_name}：\n{article_list}\n{date}",
+        "stub",
+    )
+
+    assert len(results) == 1
+    content, batch_items = results[0]
+    assert len(batch_items) == 3
+    assert "Failed 0" in content
+
+
+def test_retry_failed_items_falls_back_to_placeholder(monkeypatch):
+    """Phase 2 items that still fail should get placeholder content,
+    and their batch_items should still be returned for commit_seen."""
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "retry_fail", "display_name": "Retry Fail", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    failed_items = [
+        Item(title=f"Lost {i}", date="2026-04-25", url=f"https://doi.org/l{i}")
+        for i in range(2)
+    ]
+
+    def fake_call_ai(prompt, model="stub", max_tokens=0, **kwargs):
+        raise rp.BriefingGenerationError("always fails")
+
+    monkeypatch.setattr(rp, "call_ai", fake_call_ai)
+    logs = []
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    results = rp._retry_failed_items(
+        ds, failed_items,
+        "请总结 {count} 篇 {display_name}：\n{article_list}\n{date}",
+        "stub",
+    )
+
+    assert len(results) == 1
+    content, batch_items = results[0]
+    assert "⚠️" in content  # placeholder
+    assert "Lost 0" in content
+    assert len(batch_items) == 2  # returned for commit_seen
+
+
+def test_retry_failed_items_returns_empty_for_no_failures():
+    """No failed items → empty result, no AI calls."""
+    import run_pipelines as rp
+    from datasource import RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "empty", "display_name": "Empty", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    results = rp._retry_failed_items(ds, [], "template", "model")
+    assert results == []
+
+
+def test_merge_briefing_parts_single_part_passthrough():
+    """A single part should be returned as-is."""
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "single", "display_name": "Single Source", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    content = "## 📚 Single Source 今日简报 (2026-05-14) - 2篇文章\n\n1. **A**\n2. **B**"
+    items = [Item(title="A", date="2026-05-14"), Item(title="B", date="2026-05-14")]
+
+    merged, all_items = rp._merge_briefing_parts(ds, [(content, items)])
+    assert merged == content
+    assert all_items == items
+
+
+def test_merge_briefing_parts_empty_returns_empty():
+    """No parts → empty string and empty list."""
+    import run_pipelines as rp
+    from datasource import RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "empty", "display_name": "Empty", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+    merged, all_items = rp._merge_briefing_parts(ds, [])
+    assert merged == ""
+    assert all_items == []
+
+
+def test_merge_briefing_parts_merges_multiple_parts():
+    """Multiple parts should be merged with one header, sequential numbering,
+    and collected highlights."""
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "multi", "display_name": "Multi Source", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+
+    part1_content = (
+        "## 📚 Multi Source 今日简报 (2026-05-14) - 2篇文章\n\n"
+        "1. **Alpha**\n   > 摘要A\n\n"
+        "2. **Beta**\n   > 摘要B\n\n"
+        "🔭 **Today's Highlight**\n亮点1"
+    )
+    part2_content = (
+        "## 📚 Multi Source 今日简报 (2026-05-14) - 2篇文章\n\n"
+        "1. **Gamma**\n   > 摘要C\n\n"
+        "2. **Delta**\n   > 摘要D\n\n"
+        "🔭 **Today's Highlight**\n亮点2"
+    )
+    items1 = [Item(title="Alpha", date="2026-05-14"), Item(title="Beta", date="2026-05-14")]
+    items2 = [Item(title="Gamma", date="2026-05-14"), Item(title="Delta", date="2026-05-14")]
+
+    merged, all_items = rp._merge_briefing_parts(
+        ds, [(part1_content, items1), (part2_content, items2)]
+    )
+
+    # Should have one header with total count
+    assert "4篇文章" in merged
+    assert merged.count("## 📚") == 1  # only one header
+
+    # Articles should be renumbered 1-4
+    assert "1. **Alpha**" in merged
+    assert "2. **Beta**" in merged
+    assert "3. **Gamma**" in merged
+    assert "4. **Delta**" in merged
+
+    # Should NOT have duplicate "1." entries
+    assert merged.count("1. **") == 1
+
+    # Highlights should be collected
+    assert "亮点1" in merged
+    assert "亮点2" in merged
+
+    # All items returned
+    assert len(all_items) == 4
+
+
+def test_merge_briefing_parts_without_highlights():
+    """Parts without highlights (e.g. placeholder content) should still merge."""
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+
+    ds = RSSDataSource(
+        {"name": "no_hl", "display_name": "No Highlight", "category": "papers"},
+        {"lookback_hours": 24},
+    )
+
+    part1 = (
+        "## 📚 No Highlight 今日简报 (2026-05-14) - 1篇文章\n\n"
+        "1. **Paper A**\n   > 摘要"
+    )
+    part2 = (
+        "## 📚 No Highlight 今日简报 (2026-05-14) - 1篇文章\n\n"
+        "1. **Paper B**\n   > 摘要"
+    )
+    items1 = [Item(title="Paper A", date="2026-05-14")]
+    items2 = [Item(title="Paper B", date="2026-05-14")]
+
+    merged, all_items = rp._merge_briefing_parts(
+        ds, [(part1, items1), (part2, items2)]
+    )
+
+    assert "2篇文章" in merged
+    assert "1. **Paper A**" in merged
+    assert "2. **Paper B**" in merged
+    assert len(all_items) == 2
+
+
 def _make_dlut_news_sources_json(path, templates_extra=None):
     """Write a minimal sources.json with two dlut_news group sources + one recruitment source."""
     from datetime import datetime
