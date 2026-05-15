@@ -498,9 +498,16 @@ def run_pipeline_1() -> int:
     full_map, base_map = build_feed_url_map(db)
     saved = 0
 
-    for feed_cfg in cfg["sources"]:
-        if feed_cfg.get("type") != "rss" or not feed_cfg.get("enabled", True):
-            continue
+    # Process RSS sources in category priority order so that ai_news (6:00 push)
+    # and arxiv (8:30 push) are generated before papers (7:30 push).
+    _CATEGORY_PRIORITY = {"ai_news": 0, "arxiv": 1, "papers": 2}
+    rss_sources = [
+        s for s in cfg["sources"]
+        if s.get("type") == "rss" and s.get("enabled", True)
+    ]
+    rss_sources.sort(key=lambda s: _CATEGORY_PRIORITY.get(s.get("category"), 9))
+
+    for feed_cfg in rss_sources:
 
         ds = DataSource.create(
             feed_cfg, defaults, db=db, full_map=full_map, base_map=base_map
