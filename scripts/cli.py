@@ -42,7 +42,7 @@ def _env_banner() -> str:
     """Return a short env tag for display (e.g. '[env:dev]')."""
     return f"[env:{CURRENT_ENV}]"
 
-CATEGORIES = ["papers", "ai_news", "code", "resource"]
+CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
 
 
 def _python() -> str:
@@ -112,6 +112,7 @@ def install():
         f"DISCORD_CHANNEL_AI_NEWS{suffix}",
         f"DISCORD_CHANNEL_CODE{suffix}",
         f"DISCORD_CHANNEL_RESOURCE{suffix}",
+        f"DISCORD_CHANNEL_ARXIV{suffix}",
     ]
     env = _read_env_keys(required + channel_keys)
 
@@ -253,8 +254,22 @@ def run(pipeline, force):
     default=None,
     help="Date to push in YYYY-MM-DD format. Defaults to today; use this to backfill.",
 )
-def push(date_str):
-    """Push briefings for the given date (default: today) to Discord channels."""
+@click.option(
+    "-c",
+    "--categories",
+    default=None,
+    help=(
+        "Comma-separated list of categories to push "
+        "(e.g. 'papers,ai_news,code,resource' or 'weekly'). "
+        "Defaults to all five categories."
+    ),
+)
+def push(date_str, categories):
+    """Push briefings for the given date (default: today) to Discord channels.
+
+    Use --categories to restrict which channels are pushed.
+    Morning cron omits 'weekly'; noon cron passes 'weekly' only.
+    """
     if date_str:
         try:
             datetime.strptime(date_str, "%Y-%m-%d")
@@ -266,6 +281,21 @@ def push(date_str):
     cmd = [_python(), str(script)]
     if date_str:
         cmd += ["--date", date_str]
+    if categories:
+        cmd += ["--categories", categories]
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    sys.exit(result.returncode)
+
+
+@cli.command()
+@click.option("--days", default=7, show_default=True, help="Lookback window in days.")
+@click.option("--force", is_flag=True, help="Overwrite existing recap for today.")
+def weekly(days, force):
+    """Generate a weekly AI news recap from the past N days of briefings."""
+    script = SCRIPTS_DIR / "weekly_summary.py"
+    cmd = [_python(), str(script), "--days", str(days)]
+    if force:
+        cmd.append("--force")
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
 

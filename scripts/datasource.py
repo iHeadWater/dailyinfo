@@ -4,12 +4,24 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 import datetime
 import html as html_lib
+import json
+import os
+import pathlib
 import re
 import requests
 import time
 from typing import Optional
 
 NOW = datetime.datetime.now()
+
+
+def _resolve_state_dir() -> pathlib.Path:
+    override = os.environ.get("DAILYINFO_DATA_ROOT", "")
+    root = pathlib.Path(override).expanduser() if override else pathlib.Path.home() / ".myagentdata" / "dailyinfo"
+    return root / "state"
+
+
+_STATE_DIR = _resolve_state_dir()
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +228,9 @@ class DataSource(ABC):
             return [items]
         return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
 
+    def commit_cursor(self) -> None:
+        """Persist cursor after a successful briefing save. No-op for most sources."""
+
     @staticmethod
     def create(config: dict, defaults: dict, **ctx) -> "DataSource":
         """Factory: instantiate the correct subclass for config['type']."""
@@ -248,6 +263,46 @@ class RSSDataSource(DataSource):
             "max_articles_per_batch"
         )
         self.max_batches: int = config.get("max_batches", 1000)
+        self._seen: dict[str, str] = self._load_seen()  # link -> first-seen date
+        self._total_before_filter: int = 0  # for logging
+
+    # --- seen-links dedup ---
+    def _seen_path(self) -> pathlib.Path:
+        return _STATE_DIR / f"{self.name}_seen.json"
+
+    def _load_seen(self) -> dict[str, str]:
+        p = self._seen_path()
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _save_seen(self) -> None:
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        self._seen_path().write_text(
+            json.dumps(self._seen, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _filter_seen(self, items: list[Item]) -> list[Item]:
+        self._total_before_filter = len(items)
+        return [it for it in items if it.url not in self._seen]
+
+    def commit_seen(self, items: list[Item]) -> None:
+        """Record item URLs as processed. Called after briefing is saved."""
+        today = datetime.date.today().isoformat()
+        for it in items:
+            if it.url and it.url not in self._seen:
+                self._seen[it.url] = today
+        self._save_seen()
+
+    def cleanup_seen(self, max_age_days: int = 30) -> None:
+        """Remove seen records older than max_age_days."""
+        cutoff = (datetime.date.today() - datetime.timedelta(days=max_age_days)).isoformat()
+        self._seen = {k: v for k, v in self._seen.items() if v >= cutoff}
+        self._save_seen()
 
     def fetch(self) -> list[Item]:
         if not self._db:
@@ -268,7 +323,7 @@ class RSSDataSource(DataSource):
         if self.use_content:
             rows = self._db.execute(
                 "SELECT title, content, link, date FROM entry "
-                "WHERE id_feed=? AND date>? ORDER BY date DESC LIMIT 3",
+                "WHERE id_feed=? AND lastSeen>? ORDER BY date DESC LIMIT 3",
                 [fid, self._cutoff_ts],
             ).fetchall()
             items = []
@@ -291,16 +346,16 @@ class RSSDataSource(DataSource):
                         content=plain,
                     )
                 )
-            return items
+            return self._filter_seen(items)
 
         rows = self._db.execute(
-            "SELECT title, link, date FROM entry WHERE id_feed=? AND date>? ORDER BY date DESC",
+            "SELECT title, link, date FROM entry WHERE id_feed=? AND lastSeen>? ORDER BY date DESC",
             [fid, self._cutoff_ts],
         ).fetchall()
         entries = list(rows)
         if self.max_articles and len(entries) > self.max_articles:
             entries = entries[: self.max_articles]
-        return [
+        items = [
             Item(
                 title=row["title"] or "",
                 date=datetime.datetime.fromtimestamp(row["date"]).strftime("%Y-%m-%d"),
@@ -308,6 +363,7 @@ class RSSDataSource(DataSource):
             )
             for row in entries
         ]
+        return self._filter_seen(items)
 
     def get_batches(self, items: list[Item]) -> list[list[Item]]:
         """Split items into AI-processing batches respecting max_articles_per_batch."""
@@ -330,6 +386,10 @@ class ScrapeDataSource(DataSource):
     def fetch(self) -> list[Item]:
         if self.name == "github_trending":
             return self._fetch_github()
+        if self.name == "chinawater":
+            return self._fetch_chinawater_journal()
+        if self.name == "skxjz":
+            return self._fetch_skxjz_journal()
         resp = requests.get(
             self.config["url"],
             timeout=20,
@@ -340,8 +400,6 @@ class ScrapeDataSource(DataSource):
         resp.encoding = resp.apparent_encoding or "utf-8"
         if self.name == "skxjz":
             return self._parse_skxjz(resp.text)
-        if self.name == "chinawater":
-            return self._parse_chinawater(resp.text)
         return self._parse_dlut_html(resp.text)
 
     # --- GitHub Trending ---
@@ -396,62 +454,132 @@ class ScrapeDataSource(DataSource):
             )
         return items
 
-    def _parse_skxjz(self, page_html: str) -> list[Item]:
-        """水科学进展 (skxjz.nhri.cn) — current-issue article list.
-
-        DOI issue numbers don't map to calendar months, so use today's date
-        for all items; the _already_pushed_within guard prevents re-delivery.
-        """
-        max_items = self.config.get("max_items", 30)
+    def _fetch_skxjz_journal(self) -> list[Item]:
+        """水科学进展 (skxjz.nhri.cn) — fetch current issue list, then get real
+        online-publication date from the first article page for _cutoff_dt filtering."""
         base_url = "http://skxjz.nhri.cn"
-        today = NOW.strftime("%Y-%m-%d")
+        hdrs = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+
+        resp = requests.get(
+            self.config["url"], headers=hdrs, timeout=20
+        )
+        resp.encoding = resp.apparent_encoding or "utf-8"
+
+        max_items = self.config.get("max_items", 30)
         rgx = re.compile(
             r'class="article-list-title[^"]*"[^>]*>[\s\S]*?'
             r"<a\s+href=['\"](?P<path>/article/doi/[^'\"]+)['\"][^>]*>\s*(?P<title>[\s\S]*?)\s*</a>",
             re.I,
         )
-        items = []
-        for m in rgx.finditer(page_html):
+        raw_items: list[tuple[str, str]] = []
+        for m in rgx.finditer(resp.text):
             title = re.sub(r"<[^>]+>", "", m.group("title")).strip()
             if not title:
                 continue
-            items.append(Item(title=title, date=today, url=base_url + m.group("path")))
-            if len(items) >= max_items:
+            raw_items.append((m.group("path"), title))
+            if len(raw_items) >= max_items:
                 break
-        return items
 
-    def _parse_chinawater(self, page_html: str) -> list[Item]:
-        """中国水利 (chinawater.com.cn) — news list with date embedded in URL."""
-        max_items = self.config.get("max_items", 20)
-        base_url = self.config.get("base_url", "http://www.chinawater.com.cn")
-        rgx = re.compile(
-            r'<li[^>]*>\s*<a[^>]+href=["\']([^"\']*t(\d{8})[^"\']*\.html)["\'][^>]*>'
-            r"\s*([^<]{3,150})\s*</a>\s*</li>",
+        if not raw_items:
+            return []
+
+        # Fetch first article page to get real online-publication date
+        pub_date = NOW.strftime("%Y-%m-%d")
+        try:
+            detail_resp = requests.get(
+                base_url + raw_items[0][0], headers=hdrs, timeout=15
+            )
+            detail_resp.encoding = "utf-8"
+            date_m = re.search(r"online[^0-9]*(\d{4}-\d{2}-\d{2})", detail_resp.text, re.I)
+            if date_m:
+                pub_date = date_m.group(1)
+        except Exception:
+            pass
+
+        pub_dt = datetime.datetime.strptime(pub_date, "%Y-%m-%d")
+        if pub_dt.date() < self._cutoff_dt.date():
+            return []
+
+        return [Item(title=title, date=pub_date, url=base_url + path) for path, title in raw_items]
+
+    def _fetch_chinawater_journal(self) -> list[Item]:
+        """《中国水利》期刊 (slzg.cbpt.cnki.net) — three-step:
+        1. index page → current issue year/issue + UUID params
+        2. guokan_list → article list
+        3. first article page → real publication date for _cutoff_dt filtering
+        """
+        base = "https://slzg.cbpt.cnki.net"
+        hdrs = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+
+        index_resp = requests.get(
+            f"{base}/portal/journal/portal/client/index", headers=hdrs, timeout=20
+        )
+        index_resp.encoding = "utf-8"
+
+        issue_matches = re.findall(r"(\d{4})年(\d+)期", index_resp.text)
+        if not issue_matches:
+            return []
+        year, issue = max(issue_matches, key=lambda m: (int(m[0]), int(m[1])))
+
+        uuid_m = re.search(
+            r"guokan_list\?year=\d+&issue=\d+&yearId=([^&\"']+)&issueId=([^&\"']+)",
+            index_resp.text,
+        )
+        if not uuid_m:
+            return []
+        year_id, issue_id = uuid_m.group(1), uuid_m.group(2)
+
+        list_resp = requests.get(
+            f"{base}/portal/journal/portal/client/guokan_list"
+            f"?year={year}&issue={issue}&yearId={year_id}&issueId={issue_id}",
+            headers=hdrs,
+            timeout=20,
+        )
+        list_resp.encoding = "utf-8"
+
+        paper_rgx = re.compile(
+            r'href=["\'](?:' + re.escape(base) + r')?'
+            r'(/portal/journal/portal/client/paper/([a-f0-9]{32}))["\'][^>]*>'
+            r"([^<]{3,200})</a>",
             re.I,
         )
-        items: list[Item] = []
+        max_items = self.config.get("max_items", 20)
+        raw_items: list[tuple[str, str, str]] = []
         seen: set[str] = set()
-        for m in rgx.finditer(page_html):
-            href, date_str, raw_title = m.group(1), m.group(2), m.group(3).strip()
+        for m in paper_rgx.finditer(list_resp.text):
+            path, hash_id, raw_title = m.group(1), m.group(2), m.group(3).strip()
             title = html_lib.unescape(raw_title).strip()
-            if not title or title in seen:
+            if not title or hash_id in seen:
                 continue
-            seen.add(title)
-            try:
-                dt = datetime.datetime.strptime(date_str, "%Y%m%d")
-            except ValueError:
-                dt = None
-            if dt and dt < self._cutoff_dt:
-                continue
-            url = href if href.startswith("http") else f"{base_url}/{href.lstrip('./')}"
-            items.append(Item(
-                title=title,
-                date=dt.strftime("%Y-%m-%d") if dt else NOW.strftime("%Y-%m-%d"),
-                url=url,
-            ))
-            if len(items) >= max_items:
+            seen.add(hash_id)
+            raw_items.append((path, hash_id, title))
+            if len(raw_items) >= max_items:
                 break
-        return items
+
+        if not raw_items:
+            return []
+
+        # Fetch first article page to get the real publication date
+        pub_date = NOW.strftime("%Y-%m-%d")
+        try:
+            detail_resp = requests.get(
+                f"{base}{raw_items[0][0]}", headers=hdrs, timeout=15
+            )
+            detail_resp.encoding = "utf-8"
+            date_m = re.search(r"出版时间[：:]\s*(\d{4}-\d{2}-\d{2})", detail_resp.text)
+            if date_m:
+                pub_date = date_m.group(1)
+        except Exception:
+            pass
+
+        pub_dt = datetime.datetime.strptime(pub_date, "%Y-%m-%d")
+        if pub_dt.date() < self._cutoff_dt.date():
+            return []
+
+        return [
+            Item(title=title, date=pub_date, url=f"{base}{path}")
+            for path, _, title in raw_items
+        ]
 
     def format_items(self, items: list[Item]) -> str:
         if self.name == "github_trending":
@@ -590,10 +718,33 @@ class ScrapeDataSource(DataSource):
 # APIDataSource — REST API sources (HuggingFace + DLUT recruitment)
 # ---------------------------------------------------------------------------
 class APIDataSource(DataSource):
+    def __init__(self, config: dict, defaults: dict):
+        super().__init__(config, defaults)
+        self._pending_cursor: Optional[dict] = None
+
+    def _load_cursor(self) -> Optional[dict]:
+        cursor_file = _STATE_DIR / f"{self.name}_cursor.json"
+        if cursor_file.exists():
+            try:
+                return json.loads(cursor_file.read_text())
+            except Exception:
+                return None
+        return None
+
+    def commit_cursor(self) -> None:
+        if self._pending_cursor is None:
+            return
+        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        cursor_file = _STATE_DIR / f"{self.name}_cursor.json"
+        cursor_file.write_text(json.dumps(self._pending_cursor))
+        self._pending_cursor = None
+
     def fetch(self) -> list[Item]:
         method = self.config.get("method", "GET").upper()
         params = self.config.get("params", {})
         if method == "POST":
+            if self.config.get("paginate"):
+                return self._fetch_dlut_paginated(params)
             resp = requests.post(self.config["url"], data=params, timeout=20)
         else:
             params_str = {k: str(v) for k, v in params.items()}
@@ -610,6 +761,48 @@ class APIDataSource(DataSource):
         if self.config.get("parser") == "crossref":
             return self._parse_crossref(data)
         return self._parse_dlut_api(data)
+
+    def _fetch_dlut_paginated(self, base_params: dict) -> list[Item]:
+        """Paginate DLUT POST API.
+
+        Uses cursor-based fetching when a saved cursor exists (no time window,
+        no duplicates). Falls back to lookback_hours on first run or reset.
+        """
+        cursor = self._load_cursor()
+        max_items = self.config.get("max_items", 100)
+        all_items: list[Item] = []
+        page = 1
+        max_pages = 20
+
+        while page <= max_pages:
+            params = {**base_params, "pageNo": page}
+            resp = requests.post(self.config["url"], data=params, timeout=20)
+            resp.raise_for_status()
+            api_data = resp.json()
+
+            obj = api_data.get("object", {}) if isinstance(api_data, dict) else {}
+            data_list = obj.get("list", []) if isinstance(obj, dict) else []
+            last_page = obj.get("lastPage", True)
+
+            new_items, should_stop = self._parse_dlut_api_rows(data_list, cursor=cursor)
+            all_items.extend(new_items)
+
+            if should_stop or last_page or (max_items and len(all_items) >= max_items):
+                break
+            page += 1
+
+        result = all_items[:max_items] if max_items else all_items
+
+        # Stage the cursor — only written to disk when commit_cursor() is called
+        # (i.e. after run_pipelines confirms the briefing was saved successfully).
+        if result:
+            newest = result[0]  # API returns newest first
+            self._pending_cursor = {
+                "last_id": newest.extra.get("item_id", ""),
+                "last_time": newest.extra.get("item_time", newest.date),
+            }
+
+        return result
 
     def _parse_crossref(self, api_data: dict) -> list[Item]:
         """Crossref REST API (/works) — returns English titles with publication dates."""
@@ -643,10 +836,38 @@ class APIDataSource(DataSource):
                 title=title,
                 date=dt.strftime("%Y-%m-%d") if dt else NOW.strftime("%Y-%m-%d"),
                 url=row.get("URL", ""),
+                extra={"doi": row.get("DOI", "")},
             ))
             if len(items) >= max_items:
                 break
+
+        chinese_title_url = self.config.get("chinese_title_url", "")
+        if chinese_title_url and items:
+            self._enrich_chinese_titles(items, chinese_title_url)
+
         return items
+
+    _CHINESE_TITLE_RGX = re.compile(
+        r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
+        re.I,
+    )
+
+    def _enrich_chinese_titles(self, items: list[Item], url_template: str) -> None:
+        """Fetch Chinese titles from per-article pages and replace English titles in-place."""
+        headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"}
+        for item in items:
+            doi = item.extra.get("doi", "")
+            if not doi:
+                continue
+            url = url_template.format(doi=doi)
+            try:
+                resp = requests.get(url, headers=headers, timeout=15)
+                if resp.ok:
+                    m = self._CHINESE_TITLE_RGX.search(resp.text)
+                    if m:
+                        item.title = html_lib.unescape(m.group(1)).strip()
+            except Exception:
+                pass
 
     def _parse_huggingface(self, data) -> list[Item]:
         extract = self.config.get("extract", {})
@@ -668,14 +889,81 @@ class APIDataSource(DataSource):
             )
         return items
 
-    def _parse_dlut_api(self, api_data) -> list[Item]:
-        max_items = self.config.get("max_items", 10)
+    def _parse_dlut_api_rows(
+        self, data_list: list, cursor: Optional[dict] = None
+    ) -> tuple[list[Item], bool]:
+        """Process a list of rows from a DLUT API page.
+
+        Returns (new_items, should_stop).
+
+        Cursor mode (cursor provided): stop when the previously-seen item is
+        reached (matched by ID, or by timestamp as fallback). No time window.
+
+        Lookback mode (no cursor): stop when an item older than the lookback
+        cutoff is encountered (original behaviour).
+        """
         extract = self.config.get("extract", {})
         field_map = extract.get("fields", {})
         list_url = self.config.get("list_url", self.config.get("url", ""))
-        cutoff = self._cutoff_dt
-        items = []
+        items: list[Item] = []
+        should_stop = False
 
+        cursor_id = (cursor or {}).get("last_id", "")
+        cursor_time_str = (cursor or {}).get("last_time", "")
+        cursor_dt: Optional[datetime.datetime] = None
+        if cursor_time_str:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    cursor_dt = datetime.datetime.strptime(cursor_time_str[:19], fmt)
+                    break
+                except ValueError:
+                    pass
+
+        for row in data_list:
+            if not isinstance(row, dict):
+                continue
+            title = row.get(field_map.get("title", "title"), "").strip()
+            date_val = row.get(field_map.get("date", "date"), "")
+            item_id = row.get("id", "")
+            if not title:
+                continue
+            dt: Optional[datetime.datetime] = None
+            if isinstance(date_val, str) and date_val:
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d"):
+                    try:
+                        dt = datetime.datetime.strptime(date_val[:19], fmt)
+                        break
+                    except ValueError:
+                        pass
+
+            if cursor:
+                # Cursor mode: stop at the previously-seen item
+                if cursor_id and item_id == cursor_id:
+                    should_stop = True
+                    break
+                if cursor_dt and dt and dt < cursor_dt:
+                    # Fallback: timestamp strictly before cursor → already seen
+                    should_stop = True
+                    break
+            else:
+                # Lookback mode: skip items older than the time cutoff
+                if dt and dt < self._cutoff_dt:
+                    should_stop = True
+                    continue
+
+            items.append(
+                Item(
+                    title=title[:100],
+                    date=(dt.strftime("%Y-%m-%d") if dt else (date_val[:10] if date_val else "unknown")),
+                    url=list_url,
+                    extra={"item_id": item_id, "item_time": date_val},
+                )
+            )
+
+        return items, should_stop
+
+    def _parse_dlut_api(self, api_data) -> list[Item]:
+        max_items = self.config.get("max_items", 10)
         data_list: list = []
         if isinstance(api_data, dict):
             if "object" in api_data and isinstance(api_data["object"], dict):
@@ -685,37 +973,8 @@ class APIDataSource(DataSource):
         elif isinstance(api_data, list):
             data_list = api_data
 
-        for row in data_list:
-            if not isinstance(row, dict):
-                continue
-            title = row.get(field_map.get("title", "title"), "").strip()
-            date_val = row.get(field_map.get("date", "date"), "")
-            if not title:
-                continue
-            dt = None
-            if isinstance(date_val, str) and date_val:
-                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d"):
-                    try:
-                        dt = datetime.datetime.strptime(date_val[:19], fmt)
-                        break
-                    except ValueError:
-                        pass
-            if dt and dt < cutoff:
-                continue
-            items.append(
-                Item(
-                    title=title[:100],
-                    date=(
-                        dt.strftime("%Y-%m-%d")
-                        if dt
-                        else (date_val[:10] if date_val else "unknown")
-                    ),
-                    url=list_url,
-                )
-            )
-            if len(items) >= max_items:
-                break
-        return items
+        items, _ = self._parse_dlut_api_rows(data_list)
+        return items[:max_items] if max_items else items
 
     def format_items(self, items: list[Item]) -> str:
         if self.name == "huggingface_models":

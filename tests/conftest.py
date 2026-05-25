@@ -88,7 +88,8 @@ def rss_db():
     conn.execute(
         "CREATE TABLE entry ("
         " id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        " id_feed INTEGER, title TEXT, link TEXT, content TEXT, date INTEGER)"
+        " id_feed INTEGER, title TEXT, link TEXT, content TEXT, date INTEGER,"
+        " lastSeen INTEGER)"
     )
 
     feeds = [
@@ -104,49 +105,53 @@ def rss_db():
     # Feed 1: 5 fresh entries + 1 stale entry
     for i in range(5):
         conn.execute(
-            "INSERT INTO entry(id_feed, title, link, content, date)"
-            " VALUES (?,?,?,?,?)",
+            "INSERT INTO entry(id_feed, title, link, content, date, lastSeen)"
+            " VALUES (?,?,?,?,?,?)",
             (
                 1,
                 f"Fresh Title {i}",
                 f"https://example.com/a/{i}",
                 "",
                 now - i * 60,
+                now - i * 60,
             ),
         )
     conn.execute(
-        "INSERT INTO entry(id_feed, title, link, content, date) VALUES (?,?,?,?,?)",
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen) VALUES (?,?,?,?,?,?)",
         (
             1,
             "Stale Title",
             "https://example.com/a/old",
             "",
             now - 48 * 3600,
+            now - 48 * 3600,
         ),
     )
 
     # Feed 3: deep-content entries — one valid, one too-short, one huge.
     conn.execute(
-        "INSERT INTO entry(id_feed, title, link, content, date) VALUES (?,?,?,?,?)",
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen) VALUES (?,?,?,?,?,?)",
         (
             3,
             "Deep Normal",
             "https://deep.example.com/a/1",
             "<p>Hello world</p>" + ("abc " * 200),
             now - 30 * 60,
+            now - 30 * 60,
         ),
     )
     conn.execute(
-        "INSERT INTO entry(id_feed, title, link, content, date) VALUES (?,?,?,?,?)",
-        (3, "Deep Short", "https://deep.example.com/a/2", "<p>hi</p>", now - 15 * 60),
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen) VALUES (?,?,?,?,?,?)",
+        (3, "Deep Short", "https://deep.example.com/a/2", "<p>hi</p>", now - 15 * 60, now - 15 * 60),
     )
     conn.execute(
-        "INSERT INTO entry(id_feed, title, link, content, date) VALUES (?,?,?,?,?)",
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen) VALUES (?,?,?,?,?,?)",
         (
             3,
             "Deep Long",
             "https://deep.example.com/a/3",
             "A" * 20000,
+            now - 10 * 60,
             now - 10 * 60,
         ),
     )

@@ -259,8 +259,12 @@ def _generate_regular_briefings(
     model: str,
     *,
     max_tokens: int = 2500,
-) -> list[str]:
-    """Generate one or more complete briefings, splitting oversized batches."""
+) -> list[tuple[str, list]]:
+    """Generate one or more complete briefings, splitting oversized batches.
+
+    Returns list of (content, batch_items) tuples so callers can track which
+    items were successfully processed for commit_seen.
+    """
     prompt = _build_regular_prompt(prompt_template, ds, batch)
     try:
         content = call_ai(prompt, model=model, max_tokens=max_tokens)
@@ -269,7 +273,7 @@ def _generate_regular_briefings(
             f"    AI ok: source={ds.name}, articles={len(batch)}, "
             f"prompt_chars={len(prompt)}, response_chars={len(content)}"
         )
-        return [content]
+        return [(content, batch)]
     except BriefingGenerationError as exc:
         if len(batch) <= 1:
             raise
@@ -292,6 +296,122 @@ def save(directory: str, filename: str, content: str) -> str:
     with open(full, "w") as f:
         f.write(content)
     return str(full)
+
+
+def _make_placeholder_briefing(ds, items: list) -> str:
+    """Generate a placeholder briefing with titles and links for items that
+    failed AI generation. These items are still committed to seen to prevent
+    unbounded accumulation across retries."""
+    lines = [f"# {ds.display_name} - {DATE}\n"]
+    lines.append("⚠️ 以下文章 AI 摘要生成失败，仅保留标题和链接：\n")
+    for idx, item in enumerate(items, 1):
+        url_part = f"  [查看原文]({item.url})" if item.url else ""
+        lines.append(f"{idx}. **{item.title}**\n{url_part}")
+    return "\n".join(lines)
+
+
+def _retry_failed_items(
+    ds,
+    failed_items: list,
+    prompt_template: str,
+    model: str,
+) -> list[tuple[str, list]]:
+    """Phase 2: retry failed items with smaller batches and more tokens.
+
+    Returns list of (content, batch_items) tuples. Items that still fail
+    after Phase 2 are returned with an empty batch_items list and
+    placeholder content so the caller can commit them to seen.
+    """
+    if not failed_items:
+        return []
+    log(
+        f"    Phase 2: retrying {len(failed_items)} failed articles "
+        f"with conservative settings (batch=3, max_tokens=4000)"
+    )
+    results: list[tuple[str, list]] = []
+    batch_size = 3
+    for i in range(0, len(failed_items), batch_size):
+        batch = failed_items[i : i + batch_size]
+        try:
+            results.extend(
+                _generate_regular_briefings(
+                    ds, batch, prompt_template, model, max_tokens=4000
+                )
+            )
+        except Exception as e:
+            log(f"    Phase 2 retry failed for {len(batch)} articles: {e}")
+            placeholder = _make_placeholder_briefing(ds, batch)
+            results.append((placeholder, batch))  # batch kept for commit_seen
+    return results
+
+
+# Regex patterns for parsing AI-generated briefing parts
+_RE_HEADER = re.compile(r"^## 📚 .+$", re.MULTILINE)
+_RE_HIGHLIGHT = re.compile(r"\n🔭 \*\*Today's? Highlight\*\*", re.IGNORECASE)
+_RE_NUMBERED = re.compile(r"^(\d+)\.\s+\*\*", re.MULTILINE)
+
+
+def _merge_briefing_parts(
+    ds, parts: list[tuple[str, list]]
+) -> tuple[str, list]:
+    """Merge multiple briefing parts into one cohesive document.
+
+    Strips per-batch headers, renumbers articles sequentially, and
+    collects highlight sections at the end.
+
+    Returns (merged_content, all_items).
+    """
+    if not parts:
+        return "", []
+    if len(parts) == 1:
+        return parts[0]
+
+    all_items: list = []
+    article_blocks: list[str] = []
+    highlight_blocks: list[str] = []
+
+    for content, items in parts:
+        all_items.extend(items)
+
+        # Split content at the highlight section
+        hl_match = _RE_HIGHLIGHT.search(content)
+        if hl_match:
+            article_part = content[: hl_match.start()]
+            highlight_part = content[hl_match.start() :].strip()
+            highlight_blocks.append(highlight_part)
+        else:
+            article_part = content
+            # Also check for placeholder-style content (no highlight)
+
+        # Remove per-batch header line (## 📚 ...)
+        article_part = _RE_HEADER.sub("", article_part).strip()
+
+        # Renumber articles sequentially
+        current_num = len(all_items) - len(items)
+        def _renumber(m):
+            nonlocal current_num
+            current_num += 1
+            return f"{current_num}. **"
+        article_part = _RE_NUMBERED.sub(_renumber, article_part)
+
+        if article_part:
+            article_blocks.append(article_part)
+
+    # Build merged content
+    total = len(all_items)
+    header = f"## 📚 {ds.display_name} 今日简报 ({DATE}) - {total}篇文章"
+    merged = header + "\n\n"
+    merged += "\n\n".join(article_blocks)
+
+    if highlight_blocks:
+        merged += "\n\n"
+        if len(highlight_blocks) == 1:
+            merged += highlight_blocks[0]
+        else:
+            merged += "🔭 **今日研究亮点汇总**\n\n"
+            merged += "\n\n---\n\n".join(highlight_blocks)
+
+    return merged, all_items
 
 
 def _already_pushed_within(name: str, category: str, lookback_hours: int) -> bool:
@@ -378,9 +498,16 @@ def run_pipeline_1() -> int:
     full_map, base_map = build_feed_url_map(db)
     saved = 0
 
-    for feed_cfg in cfg["sources"]:
-        if feed_cfg.get("type") != "rss" or not feed_cfg.get("enabled", True):
-            continue
+    # Process RSS sources in category priority order so that ai_news (6:00 push)
+    # and arxiv (8:30 push) are generated before papers (7:30 push).
+    _CATEGORY_PRIORITY = {"ai_news": 0, "arxiv": 1, "papers": 2}
+    rss_sources = [
+        s for s in cfg["sources"]
+        if s.get("type") == "rss" and s.get("enabled", True)
+    ]
+    rss_sources.sort(key=lambda s: _CATEGORY_PRIORITY.get(s.get("category"), 9))
+
+    for feed_cfg in rss_sources:
 
         ds = DataSource.create(
             feed_cfg, defaults, db=db, full_map=full_map, base_map=base_map
@@ -397,7 +524,9 @@ def run_pipeline_1() -> int:
         model = feed_cfg.get("model") or model_default
 
         if not items:
-            log(f"  {name}: 0 articles — placeholder")
+            log(f"  {name}: 0 new articles — placeholder")
+            ds.commit_seen(items)  # no new items, but record any seen state
+            ds.cleanup_seen()
             placeholder = f"# {ds.display_name} - {DATE}\n\n📭 过去 {ds.lookback_hours} 小时无新内容\n"
             save(category, f"{name}_briefing_{DATE}.md", placeholder)
             saved += 1
@@ -416,6 +545,8 @@ def run_pipeline_1() -> int:
             log(f"  {name}: {len(items)} articles (deep content)")
             tmpl_key = feed_cfg.get("prompt_template", "smolai_categorized")
             tmpl = templates.get(tmpl_key, "")
+            committed_items: list = []
+            failed_items: list = []
             for idx, item in enumerate(items):
                 prompt = (
                     tmpl.replace("{content}", item.content).replace("{date}", DATE)
@@ -432,14 +563,46 @@ def run_pipeline_1() -> int:
                         f"# AI Daily Digest - {DATE}\n\n{content_text}",
                     )
                     saved += 1
+                    committed_items.append(item)
                     log(f"    -> saved {filename}")
                     time.sleep(1)
                 except Exception as e:
                     log(f"    ERR: {e}")
+                    failed_items.append(item)
+
+            # Retry failed deep-content items once, then placeholder fallback
+            if failed_items:
+                log(f"    Phase 2: retrying {len(failed_items)} failed deep-content articles")
+                for retry_idx, item in enumerate(failed_items, start=1):
+                    prompt = (
+                        tmpl.replace("{content}", item.content).replace("{date}", DATE)
+                        if tmpl
+                        else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
+                    )
+                    try:
+                        content_text = call_ai(prompt, model=model, max_tokens=3000)
+                        filename = f"{name}_briefing_{DATE}_retry{retry_idx}.md"
+                        save(category, filename, f"# AI Daily Digest - {DATE}\n\n{content_text}")
+                        saved += 1
+                        committed_items.append(item)
+                        log(f"    -> saved retry {filename}")
+                    except Exception as e:
+                        log(f"    Phase 2 retry failed: {e} → placeholder")
+                        placeholder = _make_placeholder_briefing(ds, [item])
+                        filename = f"{name}_briefing_{DATE}_failed{retry_idx}.md"
+                        save(category, filename, placeholder)
+                        saved += 1
+                        committed_items.append(item)  # commit even placeholder items
+
+            ds.commit_seen(committed_items)
+            ds.cleanup_seen()
             continue
 
         # Regular path — batch by max_articles_per_batch
-        log(f"  {name}: {len(items)} articles")
+        total = ds._total_before_filter
+        new = len(items)
+        dup = total - new
+        log(f"  {name}: {new} new articles" + (f" ({dup} duplicates skipped)" if dup else ""))
         tmpl_key = feed_cfg.get("prompt_template") or default_tmpl_key
         prompt_template = templates.get(tmpl_key) or templates.get(
             "one_line_summary", ""
@@ -448,7 +611,8 @@ def run_pipeline_1() -> int:
             log(f"  SKIP {name}: no prompt template")
             continue
 
-        generated_parts: list[str] = []
+        generated_parts: list[tuple[str, list]] = []
+        failed_items: list = []
         batches = ds.get_batches(items)
         for idx, batch in enumerate(batches):
             try:
@@ -457,20 +621,28 @@ def run_pipeline_1() -> int:
                 )
             except Exception as e:
                 log(f"    ERR batch {idx + 1}: {e}")
+                failed_items.extend(batch)
 
-        should_suffix = (
-            bool(feed_cfg.get("max_articles_per_batch")) or len(generated_parts) > 1
-        )
-        for part_idx, content_text in enumerate(generated_parts, start=1):
-            suffix = f"_batch{part_idx}" if should_suffix else ""
-            filename = f"{name}_briefing_{DATE}{suffix}.md"
+        # Phase 2: retry failed items with conservative settings
+        if failed_items:
+            phase2_parts = _retry_failed_items(
+                ds, failed_items, prompt_template, model
+            )
+            generated_parts.extend(phase2_parts)
+
+        # Merge all parts into one cohesive briefing
+        merged_content, all_items = _merge_briefing_parts(ds, generated_parts)
+        if merged_content:
+            filename = f"{name}_briefing_{DATE}.md"
             try:
-                save(category, filename, content_text)
+                save(category, filename, merged_content)
                 saved += 1
                 log(f"    -> saved {filename}")
-                time.sleep(0.5)
             except Exception as e:
                 log(f"    SAVE ERR: {e}")
+
+        ds.commit_seen(all_items)
+        ds.cleanup_seen()
 
     db.close()
 
@@ -478,7 +650,7 @@ def run_pipeline_1() -> int:
     for source_cfg in cfg["sources"]:
         if source_cfg.get("type") == "rss" or not source_cfg.get("enabled", True):
             continue
-        if source_cfg.get("category") not in ("papers", "ai_news"):
+        if source_cfg.get("category") not in ("papers", "ai_news", "arxiv"):
             continue
 
         ds = DataSource.create(source_cfg, defaults)
@@ -523,7 +695,8 @@ def run_pipeline_1() -> int:
             log(f"    SKIP {name}: no prompt template")
             continue
 
-        generated_parts: list[str] = []
+        generated_parts: list[tuple[str, list]] = []
+        failed_items: list = []
         for idx, batch in enumerate(ds.get_batches(items)):
             try:
                 generated_parts.extend(
@@ -531,16 +704,23 @@ def run_pipeline_1() -> int:
                 )
             except Exception as e:
                 log(f"    ERR batch {idx + 1}: {e}")
+                failed_items.extend(batch)
 
-        should_suffix = bool(source_cfg.get("max_articles_per_batch")) or len(generated_parts) > 1
-        for part_idx, content_text in enumerate(generated_parts, start=1):
-            suffix = f"_batch{part_idx}" if should_suffix else ""
-            filename = f"{name}_briefing_{DATE}{suffix}.md"
+        # Phase 2: retry failed items
+        if failed_items:
+            phase2_parts = _retry_failed_items(
+                ds, failed_items, prompt_template, model
+            )
+            generated_parts.extend(phase2_parts)
+
+        # Merge all parts into one cohesive briefing
+        merged_content, _all_items = _merge_briefing_parts(ds, generated_parts)
+        if merged_content:
+            filename = f"{name}_briefing_{DATE}.md"
             try:
-                save(category, filename, content_text)
+                save(category, filename, merged_content)
                 saved += 1
                 log(f"    -> saved {filename}")
-                time.sleep(0.5)
             except Exception as e:
                 log(f"    SAVE ERR: {e}")
 
@@ -626,16 +806,107 @@ def run_pipeline_2() -> int:
 # =====================================================================
 # PIPELINE 3: University News (DLUT HTML + API)
 # =====================================================================
+_DLUT_NEWS_GROUP = "dlut_news"
+_DLUT_NEWS_SECTION_ORDER = ["综合新闻", "人才培养", "学术科研", "合作交流", "一线风采", "学院动态"]
+
+
+def _generate_unified_news(
+    news_sources: list,
+    defaults: dict,
+    prompt_templates: dict,
+    model_default: str,
+) -> int:
+    """Batch-fetch all news-group sources, merge by section, URL-dedup, one AI call."""
+    sections: dict = {}   # section_name -> list[Item]
+    seen_urls: set = set()
+
+    for src in news_sources:
+        ds = DataSource.create(src, defaults)
+        section = src.get("section", ds.display_name)
+        log(f"  {ds.name} [{section}]...")
+        try:
+            raw = ds.fetch()
+        except Exception as e:
+            log(f"    FETCH ERR: {e}")
+            raw = []
+
+        deduped = []
+        for item in raw:
+            if item.url and item.url in seen_urls:
+                continue
+            if item.url:
+                seen_urls.add(item.url)
+            deduped.append(item)
+
+        sections.setdefault(section, []).extend(deduped)
+        log(f"    {len(deduped)} items")
+
+    total = sum(len(v) for v in sections.values())
+
+    if total == 0:
+        placeholder = (
+            f"# 大连理工大学校园动态 - {DATE}\n\n"
+            f"📭 过去 48 小时无新内容\n"
+        )
+        save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", placeholder)
+        log(f"    no updates -> placeholder")
+        return 1
+
+    section_parts = []
+    for section_name in _DLUT_NEWS_SECTION_ORDER:
+        items = sections.get(section_name, [])
+        if not items:
+            continue
+        lines = [f"{i+1}. [{item.date}] {item.title}" for i, item in enumerate(items)]
+        section_parts.append(f"### {section_name}\n" + "\n".join(lines))
+
+    items_text = "\n\n".join(section_parts)
+    tmpl = prompt_templates.get("university_news_unified", "")
+    prompt = tmpl.replace("{items}", items_text).replace("{date}", DATE)
+
+    try:
+        content_text = call_ai(prompt, model=model_default, max_tokens=3000)
+        full_content = (
+            f"# 大连理工大学校园动态 - {DATE}\n\n"
+            f"{content_text}\n\n"
+            f"---\n*共 {total} 条动态，来自 {len(news_sources)} 个信源汇总*\n"
+        )
+        save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", full_content)
+        log(f"    -> saved {_DLUT_NEWS_GROUP}_briefing_{DATE}.md")
+        return 1
+    except Exception as e:
+        log(f"    AI ERR: {e}")
+        return 0
+
+
 def run_pipeline_3() -> int:
     log("=== Pipeline 3: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
     model_default = defaults.get("model", "moonshotai/kimi-k2.5")
     saved = 0
 
+    # --- Part A: unified news briefing (8 news sources → 1 file) ---
+    news_sources = [
+        s for s in cfg["sources"]
+        if s.get("category") == "resource"
+        and s.get("news_group") == _DLUT_NEWS_GROUP
+        and s.get("enabled", True) is not False
+    ]
+    if news_sources:
+        if _has_real_briefing_today(_DLUT_NEWS_GROUP, "resource"):
+            log(
+                f"  unified news briefing already exists for {DATE}, skip "
+                f"(use --force {_DLUT_NEWS_GROUP} to regenerate)"
+            )
+        else:
+            saved += _generate_unified_news(news_sources, defaults, prompt_templates, model_default)
+
+    # --- Part B: recruitment sources (per-source, logic unchanged) ---
     for source_cfg in cfg["sources"]:
         if (
             source_cfg.get("category") != "resource"
             or source_cfg.get("enabled") is False
+            or source_cfg.get("news_group") == _DLUT_NEWS_GROUP
         ):
             continue
 
@@ -744,7 +1015,7 @@ def main() -> int:
             traceback.print_exc()
 
     log("=== Summary ===")
-    for d in ["papers", "ai_news", "code", "resource"]:
+    for d in ["papers", "ai_news", "code", "resource", "arxiv"]:
         path = BRIEFINGS_DIR / d
         if path.exists():
             files = [f.name for f in sorted(path.iterdir()) if DATE in f.name]

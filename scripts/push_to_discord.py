@@ -57,8 +57,11 @@ if not DISCORD_BOT_TOKEN:
 # Missing entries cause that category to be skipped at push time, not a fatal error.
 DISCORD_CHANNELS = {
     category: get_channel_id(category)
-    for category in ("papers", "ai_news", "code", "resource")
+    for category in ("papers", "ai_news", "code", "resource", "arxiv", "weekly")
 }
+# arxiv shares the ai_news Discord channel
+if not DISCORD_CHANNELS.get("arxiv"):
+    DISCORD_CHANNELS["arxiv"] = DISCORD_CHANNELS.get("ai_news")
 
 log(f"环境: {CURRENT_ENV}  频道映射: { {k: (v or '(未配置)') for k, v in DISCORD_CHANNELS.items()} }")
 
@@ -248,7 +251,7 @@ def build_push_summary(
         and name not in pending_set
     ]
 
-    title = "📊 论文频道推送总结" if category == "papers" else f"📊 {category} 推送总结"
+    title = "📊 论文频道推送总结" if category in ("papers", "arxiv") else f"📊 {category} 推送总结"
     lines = [
         f"{title} ({date})",
         "",
@@ -354,7 +357,7 @@ def push_category(category, channel_id, date=None):
         )
         summary = (
             build_push_summary(category, date, [], placeholder_names)
-            if category == "papers"
+            if category in ("papers", "arxiv")
             else ""
         )
         if summary and send_to_discord(channel_id, summary):
@@ -388,7 +391,7 @@ def push_category(category, channel_id, date=None):
         except Exception as e:
             log(f"  ❌ 处理 {filename} 出错: {e}")
 
-    if category == "papers":
+    if category in ("papers", "arxiv"):
         summary = build_push_summary(
             category, date, pushed_names, placeholder_names, pending_names
         )
@@ -410,15 +413,24 @@ def _parse_date(value):
         ) from exc
 
 
-def main(date=None):
+ALL_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv", "weekly"]
+DAILY_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
+
+
+def main(date=None, categories=None):
     date = date or _today()
+    active = categories if categories is not None else DAILY_CATEGORIES
 
     log("=== Discord 推送开始 ===")
     log(f"日期: {date}")
+    log(f"频道: {', '.join(active)}")
 
     total_pushed = 0
 
-    for category in ["papers", "ai_news", "code", "resource"]:
+    PUSH_ORDER = ["papers", "code", "resource", "ai_news", "arxiv", "weekly"]
+    for category in PUSH_ORDER:
+        if category not in active:
+            continue
         channel_id = DISCORD_CHANNELS.get(category, "")
         if not channel_id:
             log(f"⚠️  {category} 未配置 DISCORD_CHANNEL_{category.upper()}，跳过")
@@ -444,7 +456,21 @@ if __name__ == "__main__":
         default=None,
         help="Date to push in YYYY-MM-DD format. Defaults to today.",
     )
+    parser.add_argument(
+        "--categories",
+        default=None,
+        help=(
+            "Comma-separated list of categories to push "
+            "(e.g. 'papers,ai_news,code,resource' or 'weekly'). "
+            f"Defaults to all: {','.join(ALL_CATEGORIES)}."
+        ),
+    )
     args = parser.parse_args()
 
-    resolved = _parse_date(args.date) if args.date else None
-    sys.exit(main(resolved))
+    resolved_date = _parse_date(args.date) if args.date else None
+    resolved_cats = (
+        [c.strip() for c in args.categories.split(",") if c.strip()]
+        if args.categories
+        else None
+    )
+    sys.exit(main(resolved_date, resolved_cats))

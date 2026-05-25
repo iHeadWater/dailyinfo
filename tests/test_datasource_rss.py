@@ -165,3 +165,103 @@ def test_fetch_no_db_returns_empty():
         db=None,
     )
     assert ds.fetch() == []
+
+
+def test_seen_dedup_filters_already_processed(rss_db):
+    """Items whose URLs are already in seen should be filtered out."""
+    ds = _make_rss(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+        },
+        rss_db,
+    )
+    # First fetch returns all fresh items
+    items = ds.fetch()
+    assert len(items) == 5
+
+    # Mark all as seen
+    ds.commit_seen(items)
+    assert len(ds._seen) == 5
+
+    # Second fetch should filter all of them out
+    items2 = ds.fetch()
+    assert items2 == []
+
+
+def test_commit_seen_only_records_provided_items(rss_db):
+    """commit_seen should only mark the items passed to it, not all fetched items."""
+    from datasource import Item
+
+    ds = _make_rss(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+        },
+        rss_db,
+    )
+    items = ds.fetch()
+    assert len(items) == 5
+
+    # Only commit first 2 items (simulating partial success)
+    ds.commit_seen(items[:2])
+    assert len(ds._seen) == 2
+
+    # Re-fetch: 3 uncommitted items should come through
+    items2 = ds.fetch()
+    assert len(items2) == 3
+
+
+def test_commit_seen_empty_list_is_harmless(rss_db):
+    """commit_seen([]) should not fail and should not affect existing seen state."""
+    from datasource import Item
+
+    ds = _make_rss(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+        },
+        rss_db,
+    )
+    items = ds.fetch()
+    ds.commit_seen(items[:1])
+    assert len(ds._seen) == 1
+
+    ds.commit_seen([])  # no-op
+    assert len(ds._seen) == 1
+
+
+def test_cleanup_seen_removes_old_entries(rss_db):
+    """cleanup_seen should remove entries older than max_age_days."""
+    from datasource import Item
+
+    ds = _make_rss(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+        },
+        rss_db,
+    )
+    # Manually add old + new entries to seen
+    ds._seen = {
+        "https://old.com/1": "2026-04-01",
+        "https://old.com/2": "2026-04-10",
+        "https://new.com/1": "2026-05-12",
+    }
+    ds._save_seen()
+
+    ds.cleanup_seen(max_age_days=30)
+    # 2026-04-01 is 42 days before 2026-05-13 → removed
+    # 2026-04-10 is 33 days before → removed
+    # 2026-05-12 is 1 day before → kept
+    assert "https://old.com/1" not in ds._seen
+    assert "https://old.com/2" not in ds._seen
+    assert "https://new.com/1" in ds._seen

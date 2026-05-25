@@ -15,7 +15,7 @@ from pathlib import Path
 import discord
 import httpx
 
-from .config import DISCORD_BOT_TOKEN, DOWNLOAD_DIR, OPENROUTER_API_KEY
+from .config import DISCORD_BOT_TOKEN, DOWNLOAD_DIR, OPENROUTER_API_KEY, GITHUB_TOKEN, GITHUB_REPO
 from .message_parser import (
     extract_paper_titles,
     is_paper_message,
@@ -124,6 +124,118 @@ async def _call_ai_analysis(user_query: str, context: str) -> str:
     except Exception as e:
         log.error(f"AI analysis failed: {e}")
         return f"❌ AI 分析出错：{e}"
+
+# ---------------------------------------------------------------------------
+# GitHub issue creation
+# ---------------------------------------------------------------------------
+
+async def _classify_issue_intent(query: str) -> tuple[bool, str, str]:
+    """Use AI to detect if message is a bug report / feature request.
+    Returns (is_issue, title, body). title/body are empty if not an issue.
+    """
+    prompt = (
+        f"用户发送了这条消息：「{query}」\n\n"
+        "判断：这是在（A）反馈bug、提出功能需求、报告问题、希望改进某功能，"
+        "还是（B）提问、查询信息、寻求解释？\n\n"
+        "如果是 A，严格按以下格式输出，不要其他内容：\n"
+        "INTENT: issue\n"
+        "TITLE: <简洁标题，15字以内>\n"
+        "BODY: <详细描述，100字以内>\n\n"
+        "如果是 B，输出：\n"
+        "INTENT: query"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(
+                OPENROUTER_URL,
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": ANALYSIS_MODEL,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 200,
+                },
+            )
+            resp.raise_for_status()
+        text = resp.json()["choices"][0]["message"]["content"]
+        if "INTENT: issue" not in text:
+            return False, "", ""
+        title, body = "", query
+        for line in text.splitlines():
+            if line.startswith("TITLE:"):
+                title = line.removeprefix("TITLE:").strip()
+            elif line.startswith("BODY:"):
+                body = line.removeprefix("BODY:").strip()
+        return True, title or query[:50], body
+    except Exception as e:
+        log.warning(f"Intent classification failed: {e}")
+        return False, "", ""
+
+
+async def _generate_issue_fields(raw: str) -> tuple[str, str]:
+    """Use AI to turn a casual sentence into a (title, body) pair."""
+    prompt = (
+        f"用户用一句话描述了一个问题或需求：\n\n「{raw}」\n\n"
+        "请输出一个 GitHub Issue 的标题和正文（中文）。\n"
+        "格式严格如下，不要输出其他内容：\n"
+        "TITLE: <简洁标题，15字以内>\n"
+        "BODY: <详细描述，100字以内>"
+    )
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            OPENROUTER_URL,
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": ANALYSIS_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 300,
+            },
+        )
+        resp.raise_for_status()
+    text = resp.json()["choices"][0]["message"]["content"]
+    title, body = "", raw
+    for line in text.splitlines():
+        if line.startswith("TITLE:"):
+            title = line.removeprefix("TITLE:").strip()
+        elif line.startswith("BODY:"):
+            body = line.removeprefix("BODY:").strip()
+    return title or raw[:50], body
+
+
+async def _create_github_issue(title: str, body: str) -> str:
+    """POST to GitHub API and return the new issue URL."""
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/issues",
+            headers={
+                "Authorization": f"token {GITHUB_TOKEN}",
+                "Accept": "application/vnd.github+json",
+            },
+            json={"title": title, "body": body},
+        )
+        resp.raise_for_status()
+    return resp.json()["html_url"]
+
+
+async def _handle_create_issue(message: discord.Message, raw_text: str) -> None:
+    """Generate and submit a GitHub issue from a Discord message."""
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        await message.reply("❌ 未配置 GITHUB_TOKEN / GITHUB_REPO，无法提交 issue。")
+        return
+
+    author = str(message.author)
+    channel = message.channel.name if hasattr(message.channel, "name") else str(message.channel.id)
+
+    await message.channel.typing()
+    try:
+        title, body = await _generate_issue_fields(raw_text)
+        full_body = f"{body}\n\n---\n_由 Discord 用户 @{author} 在 #{channel} 频道提交_"
+        url = await _create_github_issue(title, full_body)
+        await message.reply(f"✅ Issue 已创建：**{title}**\n{url}")
+        log.info(f"Created issue: {url}")
+    except Exception as e:
+        log.error(f"Failed to create issue: {e}")
+        await message.reply(f"❌ 创建 issue 失败：{e}")
+
 
 # ---------------------------------------------------------------------------
 # Discord bot
@@ -287,6 +399,25 @@ async def _handle_briefing_query(message: discord.Message) -> None:
     query = re.sub(r"<@!?\d+>", "", message.content).strip()
     if not query:
         await message.reply("请告诉我你想深度解析哪篇论文或哪个内容 🔍")
+        return
+
+    # Issue creation intent — AI-based detection
+    is_issue, title, body = await _classify_issue_intent(query)
+    if is_issue:
+        if not GITHUB_TOKEN or not GITHUB_REPO:
+            await message.reply("❌ 未配置 GITHUB_TOKEN / GITHUB_REPO，无法提交 issue。")
+            return
+        author = str(message.author)
+        channel = message.channel.name if hasattr(message.channel, "name") else str(message.channel.id)
+        await message.channel.typing()
+        try:
+            full_body = f"{body}\n\n---\n_由 Discord 用户 @{author} 在 #{channel} 频道提交_"
+            url = await _create_github_issue(title, full_body)
+            await message.reply(f"✅ Issue 已创建：**{title}**\n{url}")
+            log.info(f"Created issue: {url}")
+        except Exception as e:
+            log.error(f"Failed to create issue: {e}")
+            await message.reply(f"❌ 创建 issue 失败：{e}")
         return
 
     # Download intent without an explicit reply

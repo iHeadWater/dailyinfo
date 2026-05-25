@@ -42,11 +42,12 @@ def _write_valid_env(path):
         "DISCORD_CHANNEL_AI_NEWS=2\n"
         "DISCORD_CHANNEL_CODE=3\n"
         "DISCORD_CHANNEL_RESOURCE=4\n"
-        # Also include dev channel keys so the test passes in any environment
         "DISCORD_CHANNEL_PAPERS_DEV=101\n"
         "DISCORD_CHANNEL_AI_NEWS_DEV=102\n"
         "DISCORD_CHANNEL_CODE_DEV=103\n"
-        "DISCORD_CHANNEL_RESOURCE_DEV=104\n",
+        "DISCORD_CHANNEL_RESOURCE_DEV=104\n"
+        "DISCORD_CHANNEL_ARXIV=5\n"
+        "DISCORD_CHANNEL_ARXIV_DEV=105\n",
         encoding="utf-8",
     )
 
@@ -108,7 +109,7 @@ def test_install_creates_workspace_dirs(cli_mod, tmp_path, monkeypatch):
     from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR
 
     assert FRESHRSS_DATA.exists()
-    for cat in ("papers", "ai_news", "code", "resource"):
+    for cat in ("papers", "ai_news", "code", "resource", "arxiv"):
         assert (BRIEFINGS_DIR / cat).is_dir()
         assert (PUSHED_DIR / cat).is_dir()
 
