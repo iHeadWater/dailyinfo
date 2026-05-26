@@ -35,3 +35,7 @@ docs/docs/
 # 本地数据卷
 workspace/
 data/
+
+# 本地工具运行时（CodeGraph 数据库 / oh-my-codex 状态）
+.codegraph/
+.omx/

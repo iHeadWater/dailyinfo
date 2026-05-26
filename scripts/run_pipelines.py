@@ -98,7 +98,7 @@ def load_api_key() -> str:
     sys.exit(1)
 
 
-DEFAULT_FALLBACK_MODEL = "deepseek/deepseek-chat-v3.1"
+DEFAULT_FALLBACK_MODEL = "deepseek/deepseek-v4-pro"
 
 _BACKOFF_SECONDS = (2, 5, 10)
 

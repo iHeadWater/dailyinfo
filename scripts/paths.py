@@ -13,7 +13,9 @@ prod       ``prod``         ``~/.myagentdata/dailyinfo`` (default)
 =========  ===============  =====================================
 
 Override the data root entirely via ``DAILYINFO_DATA_ROOT`` env var or
-``.env`` entry (takes precedence over ``DAILYINFO_ENV``).
+``.env`` entry (takes precedence over ``DAILYINFO_ENV``). The default lives
+under ``~/.myagentdata/`` so that any external backup solution watching
+that directory can pick it up without extra configuration.
 """
 
 import os
