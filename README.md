@@ -49,6 +49,7 @@ dailyinfo push      # 把今日 briefings 推到 Discord
 | `dailyinfo start` / `stop` / `restart` | 管理 FreshRSS 容器 |
 | `dailyinfo run` | 运行全部流水线（幂等：今日已有 briefing 的源自动跳过） |
 | `dailyinfo run -p {1\|2\|3}` | 只跑指定流水线 |
+| `dailyinfo run -p 1 -c papers,ai_news` | Pipeline 1 只处理指定分类（逗号分隔） |
 | `dailyinfo run -f all` / `-f <source>` | 强制重生（可重复 `-f`） |
 | `dailyinfo push` | 扫 `briefings/` → POST Discord → 归档到 `pushed/` |
 | `dailyinfo push -d 2026-05-20` | 补推指定日期 |

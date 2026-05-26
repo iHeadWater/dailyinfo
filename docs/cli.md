@@ -50,12 +50,14 @@ dailyinfo restart    # Restart FreshRSS
 ### Pipeline Execution
 
 ```bash
-dailyinfo run                      # Run all pipelines
-dailyinfo run -p 1                 # Pipeline 1 (RSS papers/news)
-dailyinfo run -p 2                 # Pipeline 2 (code trending)
-dailyinfo run -p 3                 # Pipeline 3 (university news)
-dailyinfo run -f all               # Force regenerate every source today
-dailyinfo run -p 1 -f arxiv_cs_ai  # Force regenerate one source only
+dailyinfo run                           # Run all pipelines
+dailyinfo run -p 1                      # Pipeline 1 (RSS papers/news)
+dailyinfo run -p 2                      # Pipeline 2 (code trending)
+dailyinfo run -p 3                      # Pipeline 3 (university news)
+dailyinfo run -p 1 -c papers,ai_news    # Pipeline 1, specific categories only
+dailyinfo run -p 1 -c arxiv             # Pipeline 1, arxiv sources only
+dailyinfo run -f all                    # Force regenerate every source today
+dailyinfo run -p 1 -f arxiv_cs_ai       # Force regenerate one source only
 ```
 
 `dailyinfo run` is **idempotent**: if a non-placeholder briefing already exists
@@ -63,6 +65,10 @@ for today (either in `briefings/` waiting to be pushed, or already archived in
 `pushed/`), the source is skipped and no AI call is made. Use `-f / --force`
 to override — pass `all` to refresh everything, or repeat the flag with
 specific source names (matches `config/sources.json`).
+
+Use `-c / --categories` to limit Pipeline 1 to specific categories
+(comma-separated, e.g. `papers,ai_news` or `arxiv`). Useful when only one
+category needs a regeneration without touching the rest.
 
 If the primary model (`moonshotai/kimi-k2.5`) returns empty responses after 3
 retries with exponential backoff (2s / 5s / 10s), `run` automatically falls
