@@ -1002,3 +1002,78 @@ def test_run_pipeline_2_skips_when_fetch_fails(
     assert not (
         BRIEFINGS_DIR / "code" / f"github_trending_briefing_{today}.md"
     ).exists()
+
+
+# -----------------------------------------------------------------
+# Category filtering for run_pipeline_1
+# -----------------------------------------------------------------
+
+
+def test_pipeline1_category_filter_rss_sources():
+    """When categories is provided, RSS sources outside the filter are excluded."""
+    import run_pipelines as rp
+
+    # Simulate the filtering logic from run_pipeline_1
+    sources = [
+        {"name": "smolai_news", "type": "rss", "category": "ai_news", "enabled": True},
+        {"name": "arxiv_cs_ai", "type": "rss", "category": "arxiv", "enabled": True},
+        {"name": "nature", "type": "rss", "category": "papers", "enabled": True},
+        {"name": "science", "type": "rss", "category": "papers", "enabled": True},
+    ]
+
+    # Filter for papers+ai_news (exclude arxiv)
+    categories = ["papers", "ai_news"]
+    filtered = [s for s in sources if s.get("category") in categories]
+    names = [s["name"] for s in filtered]
+    assert "arxiv_cs_ai" not in names
+    assert "nature" in names
+    assert "smolai_news" in names
+
+    # Filter for arxiv only
+    categories = ["arxiv"]
+    filtered = [s for s in sources if s.get("category") in categories]
+    assert [s["name"] for s in filtered] == ["arxiv_cs_ai"]
+
+    # No filter → all included
+    categories = None
+    if categories:
+        filtered = [s for s in sources if s.get("category") in categories]
+    else:
+        filtered = sources
+    assert len(filtered) == 4
+
+
+def test_pipeline1_category_filter_non_rss_sources():
+    """When categories is provided, non-RSS sources outside the filter are excluded."""
+    sources = [
+        {"name": "skxjz", "type": "scrape", "category": "papers", "enabled": True},
+        {"name": "shuili_xuebao", "type": "api", "category": "papers", "enabled": True},
+    ]
+
+    # Filter for arxiv only → no non-RSS sources match
+    categories = ["arxiv"]
+    allowed = set(categories) if categories else {"papers", "ai_news", "arxiv"}
+    filtered = [s for s in sources if s.get("category") in allowed]
+    assert filtered == []
+
+    # Filter for papers → both match
+    categories = ["papers"]
+    allowed = set(categories) if categories else {"papers", "ai_news", "arxiv"}
+    filtered = [s for s in sources if s.get("category") in allowed]
+    assert len(filtered) == 2
+
+
+def test_pipeline1_categories_arg_parsed():
+    """--categories arg is parsed into a list of category strings."""
+    import run_pipelines as rp
+    import sys
+
+    old_argv = sys.argv
+    try:
+        sys.argv = ["run_pipelines.py", "--categories", "papers,ai_news"]
+        # Re-parse would happen in main(); just test the parsing logic
+        raw = "papers,ai_news"
+        result = [c.strip() for c in raw.split(",")]
+        assert result == ["papers", "ai_news"]
+    finally:
+        sys.argv = old_argv

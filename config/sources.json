@@ -280,14 +280,6 @@
       "type": "rss"
     },
     {
-      "name": "water_resources_management",
-      "display_name": "Water Resources Management",
-      "category": "papers",
-      "enabled": true,
-      "url": "https://link.springer.com/search.rss?search-within=Journal&facet-journal-id=11269&query=&order=date",
-      "type": "rss"
-    },
-    {
       "name": "skxjz",
       "display_name": "水科学进展",
       "category": "papers",
