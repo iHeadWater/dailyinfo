@@ -17,7 +17,7 @@ x-env-common: &env-common
 services:
   freshrss:
     image: freshrss/freshrss:latest
-    container_name: dailyinfo_${DAILYINFO_ENV:-prod}_freshrss
+    container_name: dailyinfo_freshrss
     ports:
       # dev: 8082, staging: 8083, prod: 8081 (default)
       - "${FRESHRSS_PORT:-8081}:80"
