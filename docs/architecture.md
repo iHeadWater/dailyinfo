@@ -56,11 +56,11 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 │              #paper | #deeplearning | #code | #resource             │
 └─────────────────────────────────────────────────────────────────────┘
                           ▲
-                          │ triggers (6:00 run, 7:00 push, ...)
+                          │ triggers (e.g. 06:00 run, 07:00 push)
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    Scheduling Layer (myopenclaw)                    │
-│  • hermes cron invokes `dailyinfo run` and `dailyinfo push`         │
-│  • backup-cron snapshots ~/.myagentdata/ to cloud drive             │
+│                Scheduling Layer (external cron, optional)           │
+│  • any cron / systemd timer / agent invokes `dailyinfo run / push`  │
+│  • backup is handled by whatever tool watches the data root         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -72,7 +72,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 | `~/.myagentdata/dailyinfo/briefings/` | Generated briefings (pending push) | `dailyinfo run` |
 | `~/.myagentdata/dailyinfo/pushed/` | Archive after successful push | `dailyinfo push` |
 
-所有数据位于 `~/.myagentdata/` 下，由 myopenclaw 的 `backup-cron` 容器只读挂载并定期快照到云盘。
+数据根默认在 `~/.myagentdata/dailyinfo/`，可通过 `DAILYINFO_DATA_ROOT` 覆盖。dailyinfo 本身不做备份；若与 myopenclaw 等支持只读挂载 `~/.myagentdata/` 的备份方案一起使用，可直接被覆盖（详见 [Agent Config](agent-config.md)）。
 
 ## Responsibility Separation
 
@@ -80,7 +80,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 |-------|----------------|-------------|
 | **Processing** (`run_pipelines.py`) | RSS/API/Scrape → LLM → Markdown file | ❌ 推送、调度 |
 | **Push** (`push_to_discord.py`) | 扫 briefings → POST Discord → 归档 | ❌ 调用 AI、调度 |
-| **Scheduling** (myopenclaw hermes cron) | 定时触发 `dailyinfo run` / `dailyinfo push` | ❌ 业务逻辑 |
+| **Scheduling** (external cron) | 定时触发 `dailyinfo run` / `dailyinfo push` | ❌ 业务逻辑 |
 
 两层脚本都是幂等纯函数：`run` 重跑只会覆盖当天文件；`push` 重跑不会重复推送（因为成功后会 `mv`）。
 

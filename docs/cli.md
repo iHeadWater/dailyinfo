@@ -35,7 +35,7 @@ This command:
 2. Creates the workspace under `~/.myagentdata/dailyinfo/` (`freshrss/data`, `briefings/*`, `pushed/*`).
 3. Installs Python dependencies via `uv sync` (falls back to `pip install -e .`).
 
-**It does NOT write to the host crontab.** Scheduling is expected to be driven by an external cron, e.g. myopenclaw's hermes cron.
+**It does NOT write to the host crontab.** Scheduling is expected to be driven by any external cron-like trigger (system crontab, systemd timer, container scheduler, or an agent runtime such as myopenclaw's hermes cron — see [Agent Config](agent-config.md)).
 
 ## Commands
 
@@ -81,6 +81,14 @@ contains the target date, posts to the mapped Discord channel, and moves
 successfully pushed files to `pushed/{category}/`. `push` is idempotent: a day
 with no pending files just emits a "暂无新简报" notice and exits cleanly.
 
+### Weekly Recap
+
+```bash
+dailyinfo weekly                # 汇总过去 7 天的 AI 新闻
+dailyinfo weekly --days 14      # 自定义回溯窗口
+dailyinfo weekly --force        # 覆盖今天已生成的 recap
+```
+
 ### Status & Logs
 
 ```bash
@@ -110,27 +118,27 @@ FRESHRSS_PASSWORD=freshrss123
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`) |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `deepseek/deepseek-chat-v3.1`) |
 
-## Scheduling via myopenclaw hermes cron
+## Scheduling
 
-dailyinfo 提供两个幂等命令供调度器调用：
+dailyinfo 提供幂等的 CLI 命令，由任意外部 cron 触发即可。推荐时刻表：
 
-| Command | Purpose |
-|---------|---------|
-| `dailyinfo run -p 1` | 06:00 — RSS papers + AI news |
-| `dailyinfo run -p 2` | 06:15 — code trending |
-| `dailyinfo run -p 3` | 06:30 — university news |
-| `dailyinfo push` | 07:00 — push to Discord |
+| Command | Suggested time | Purpose |
+|---------|----------------|---------|
+| `dailyinfo run -p 1` | 06:00 | RSS papers + AI news |
+| `dailyinfo run -p 2` | 06:15 | code trending |
+| `dailyinfo run -p 3` | 06:30 | university news |
+| `dailyinfo push`     | 07:00 | push to Discord |
 
-在 myopenclaw 的 hermes cron 或其他外部调度器中注册这些命令即可。
-
-如果暂时没用 hermes，可手动配置 crontab：
+系统 crontab 示例：
 
 ```cron
-0 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 1 >> logs/pipeline1.log 2>&1
-15 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 2 >> logs/pipeline2.log 2>&1
-30 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 3 >> logs/pipeline3.log 2>&1
-0 7 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py >> logs/discord_push.log 2>&1
+0  6 * * * cd /path/to/dailyinfo && uv run dailyinfo run -p 1 >> logs/pipeline1.log 2>&1
+15 6 * * * cd /path/to/dailyinfo && uv run dailyinfo run -p 2 >> logs/pipeline2.log 2>&1
+30 6 * * * cd /path/to/dailyinfo && uv run dailyinfo run -p 3 >> logs/pipeline3.log 2>&1
+0  7 * * * cd /path/to/dailyinfo && uv run dailyinfo push     >> logs/discord_push.log 2>&1
 ```
+
+如果你也在用 myopenclaw 等 agent 生态来统一管理这些 cron，可以参考 [Agent Config](agent-config.md)。
 
 ## Docker Services
 

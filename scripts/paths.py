@@ -2,9 +2,11 @@
 
 All scripts import from here to get WORKSPACE_ROOT.
 
-Data root is fixed at ``~/.myagentdata/dailyinfo`` so the tree is naturally
-picked up by myopenclaw's ``backup-cron`` service. Override via the
+Data root defaults to ``~/.myagentdata/dailyinfo``. Override via the
 ``DAILYINFO_DATA_ROOT`` environment variable or ``.env`` entry when needed.
+The default lives under ``~/.myagentdata/`` so that any external backup
+solution watching that directory (e.g. myopenclaw's ``backup-cron``) can
+pick the data up without extra configuration.
 """
 
 import os

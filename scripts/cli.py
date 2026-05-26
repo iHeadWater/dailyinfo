@@ -86,7 +86,8 @@ def cli():
 def install():
     """Validate environment and create workspace directories.
 
-    Scheduling is delegated to an external cron (e.g. myopenclaw hermes cron).
+    Scheduling is delegated to any external cron (system crontab, systemd
+    timer, agent runtime such as myopenclaw's hermes cron, etc.).
     This command does NOT write to the host crontab.
     """
     click.echo("==> DailyInfo Environment Setup")
@@ -157,7 +158,7 @@ def install():
     click.echo("  3. dailyinfo push          # push today's briefings to Discord")
     click.echo("")
     click.echo("Scheduling is expected to be driven by an external cron")
-    click.echo("(e.g. myopenclaw hermes cron) calling these commands.")
+    click.echo("(system crontab, systemd timer, hermes cron, ...) calling these commands.")
 
 
 @cli.command()
@@ -316,22 +317,6 @@ def status():
                 click.echo(f"  {cat:15s}: {len(files):3d} files")
 
     click.echo(f"\nTotal pending: {total_pending} files")
-
-
-@cli.command()
-def bot():
-    """Start the Discord bot (deep-fetch, paper download, briefing Q&A)."""
-    import importlib
-    # aiohttp (used by discord.py) only reads uppercase proxy env vars
-    for _low, _up in (("https_proxy", "HTTPS_PROXY"), ("http_proxy", "HTTP_PROXY")):
-        if not os.environ.get(_up) and os.environ.get(_low):
-            os.environ[_up] = os.environ[_low]
-
-    _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-    if str(_PROJECT_ROOT) not in sys.path:
-        sys.path.insert(0, str(_PROJECT_ROOT))
-    mod = importlib.import_module("dailyinfo_fetcher.discord_handler")
-    mod.main()
 
 
 @cli.command()

@@ -8,7 +8,7 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 
 **Core pipeline**: FreshRSS collection -> AI summary generation (markdown to disk) -> Discord push + archive
 
-**Design principles**: Configuration-driven (`config/sources.json`) + idempotent CLI + external scheduling (myopenclaw hermes cron)
+**Design principles**: Configuration-driven (`config/sources.json`) + idempotent CLI + external scheduling (any cron / agent runtime). Optional integration with myopenclaw is documented in `docs/agent-config.md`; dailyinfo itself has no runtime dependency on it.
 
 ## Tech Stack
 
@@ -17,7 +17,6 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 - RSS: FreshRSS (Docker/SQLite)
 - AI: OpenRouter API (primary: `moonshotai/kimi-k2.5`, fallback: `deepseek/deepseek-chat-v3.1`)
 - Push: Discord Bot API via `requests`
-- Paper download: `dailyinfo_fetcher/` (async httpx + browser agents; `uv sync --extra paper`)
 - Docs: MkDocs Material (GitHub Pages)
 - Lint: Ruff, Format: Black, Test: pytest 8+
 
@@ -96,10 +95,6 @@ Pipeline 1 now processes both RSS sources (via FreshRSS DB) and non-RSS sources 
 - **Batch splitting**: `max_articles_per_batch=10` (default); incomplete AI responses trigger recursive halving
 - **Tolerant feed matching**: `resolve_feed_id` tries exact URL -> strip query params -> strip scheme+trailing slash
 
-### Paper Download (optional)
-
-`dailyinfo_fetcher/` provides Discord Bot-based paper download (`!paper <title/DOI>`). Requires `--extra paper` dependencies. Download chain: arXiv -> Unpaywall -> Semantic Scholar -> Crossref -> PMC -> campus IP -> library (playwright/browser-use).
-
 ## Source Configuration
 
 Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`.
@@ -124,7 +119,7 @@ Optional: `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWOR
 - `fake_requests` fixture replaces `requests.get`/`requests.post` with a URL-prefix router
 - `fake_call_ai` fixture stubs `run_pipelines.call_ai` with deterministic response, disables `time.sleep`
 - `rss_db` fixture provides in-memory SQLite with fresh/stale entry fixtures
-- Test files mirror source: `test_{module}.py` for `scripts/{module}.py`; `test_fetcher_*.py` for `dailyinfo_fetcher/`
+- Test files mirror source: `test_{module}.py` for `scripts/{module}.py`
 
 ## Language
 
