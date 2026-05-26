@@ -480,8 +480,9 @@ def _load_sources() -> tuple[dict, dict, dict]:
 # =====================================================================
 # PIPELINE 1: papers + AI news via FreshRSS
 # =====================================================================
-def run_pipeline_1() -> int:
-    log("=== Pipeline 1: Daily Briefing (papers + AI news) ===")
+def run_pipeline_1(categories: list[str] | None = None) -> int:
+    cats_desc = ",".join(categories) if categories else "papers+ai_news+arxiv"
+    log(f"=== Pipeline 1: Daily Briefing ({cats_desc}) ===")
     cfg, defaults, templates = _load_sources()
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
     model_default = defaults.get("model", "moonshotai/kimi-k2.5")
@@ -499,12 +500,14 @@ def run_pipeline_1() -> int:
     saved = 0
 
     # Process RSS sources in category priority order so that ai_news (6:00 push)
-    # and arxiv (8:30 push) are generated before papers (7:30 push).
-    _CATEGORY_PRIORITY = {"ai_news": 0, "arxiv": 1, "papers": 2}
+    # is generated before papers (7:00 push).
+    _CATEGORY_PRIORITY = {"ai_news": 0, "papers": 1}
     rss_sources = [
         s for s in cfg["sources"]
         if s.get("type") == "rss" and s.get("enabled", True)
     ]
+    if categories:
+        rss_sources = [s for s in rss_sources if s.get("category") in categories]
     rss_sources.sort(key=lambda s: _CATEGORY_PRIORITY.get(s.get("category"), 9))
 
     for feed_cfg in rss_sources:
@@ -650,7 +653,7 @@ def run_pipeline_1() -> int:
     for source_cfg in cfg["sources"]:
         if source_cfg.get("type") == "rss" or not source_cfg.get("enabled", True):
             continue
-        if source_cfg.get("category") not in ("papers", "ai_news", "arxiv"):
+        if source_cfg.get("category") not in (categories or {"papers", "ai_news", "arxiv"}):
             continue
 
         ds = DataSource.create(source_cfg, defaults)
@@ -984,12 +987,22 @@ def main() -> int:
         help="Force regenerate. Pass 'all' to refresh everything or a source "
         "name to target one source. Repeatable.",
     )
+    parser.add_argument(
+        "--categories",
+        type=str,
+        default=None,
+        help="Comma-separated categories for pipeline 1 "
+        "(e.g. 'papers,ai_news'). Default: all categories.",
+    )
     args = parser.parse_args()
 
     global API_KEY, FORCE_ALL, FORCE_SOURCES
     API_KEY = load_api_key()
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
+    category_filter = (
+        [c.strip() for c in args.categories.split(",")] if args.categories else None
+    )
     if FORCE_ALL or FORCE_SOURCES:
         log(
             "Force mode: "
@@ -1001,7 +1014,7 @@ def main() -> int:
     log(f"Project root: {PROJECT_ROOT}")
     log(f"Briefings dir: {BRIEFINGS_DIR}")
 
-    pipelines = {1: run_pipeline_1, 2: run_pipeline_2, 3: run_pipeline_3}
+    pipelines = {1: lambda: run_pipeline_1(categories=category_filter), 2: run_pipeline_2, 3: run_pipeline_3}
     to_run = [args.pipeline] if args.pipeline else [1, 2, 3]
     total_saved = 0
 

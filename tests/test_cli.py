@@ -228,3 +228,24 @@ def test_version_flag_prints_project_version(cli_mod):
     result = CliRunner().invoke(cli_mod.cli, ["--version"])
     assert result.exit_code == 0
     assert "0.3.0" in result.output
+
+
+def test_run_forwards_categories_arg(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["run", "-p", "1", "--categories", "papers,ai_news"])
+    assert result.exit_code == 0, result.output
+
+    calls = cli_mod.__test_calls__
+    pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
+    assert pipeline_calls
+    assert "--categories" in pipeline_calls[0]
+    assert pipeline_calls[0][pipeline_calls[0].index("--categories") + 1] == "papers,ai_news"
+
+
+def test_run_without_categories_omits_flag(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["run", "-p", "1"])
+    assert result.exit_code == 0
+
+    calls = cli_mod.__test_calls__
+    pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
+    assert pipeline_calls
+    assert "--categories" not in pipeline_calls[0]
