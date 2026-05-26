@@ -42,6 +42,7 @@ def _env_banner() -> str:
     """Return a short env tag for display (e.g. '[env:dev]')."""
     return f"[env:{CURRENT_ENV}]"
 
+
 CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
 
 
@@ -104,9 +105,9 @@ def install():
         sys.exit(1)
 
     # Determine which channel keys to validate based on current environment.
-    from dailyinfo_fetcher.config import _env_suffix
+    from paths import env_suffix
 
-    suffix = _env_suffix()
+    suffix = env_suffix()
     required = ["OPENROUTER_API_KEY", "DISCORD_BOT_TOKEN"]
     channel_keys = [
         f"DISCORD_CHANNEL_PAPERS{suffix}",
@@ -167,7 +168,9 @@ def install():
     click.echo("  3. dailyinfo push          # push today's briefings to Discord")
     click.echo("")
     click.echo("Scheduling is expected to be driven by an external cron")
-    click.echo("(system crontab, systemd timer, hermes cron, ...) calling these commands.")
+    click.echo(
+        "(system crontab, systemd timer, hermes cron, ...) calling these commands."
+    )
 
 
 @cli.command()

@@ -8,8 +8,7 @@ from datetime import datetime
 import time
 import shutil
 
-from paths import BRIEFINGS_DIR, CURRENT_ENV, PUSHED_DIR
-from dailyinfo_fetcher.config import get_channel_id
+from paths import BRIEFINGS_DIR, CURRENT_ENV, PUSHED_DIR, get_channel_id
 
 DISCORD_API = "https://discord.com/api/v10"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -63,7 +62,9 @@ DISCORD_CHANNELS = {
 if not DISCORD_CHANNELS.get("arxiv"):
     DISCORD_CHANNELS["arxiv"] = DISCORD_CHANNELS.get("ai_news")
 
-log(f"环境: {CURRENT_ENV}  频道映射: { {k: (v or '(未配置)') for k, v in DISCORD_CHANNELS.items()} }")
+log(
+    f"环境: {CURRENT_ENV}  频道映射: { {k: (v or '(未配置)') for k, v in DISCORD_CHANNELS.items()} }"
+)
 
 
 def _today() -> str:
@@ -251,7 +252,11 @@ def build_push_summary(
         and name not in pending_set
     ]
 
-    title = "📊 论文频道推送总结" if category in ("papers", "arxiv") else f"📊 {category} 推送总结"
+    title = (
+        "📊 论文频道推送总结"
+        if category in ("papers", "arxiv")
+        else f"📊 {category} 推送总结"
+    )
     lines = [
         f"{title} ({date})",
         "",

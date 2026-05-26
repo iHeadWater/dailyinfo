@@ -31,6 +31,7 @@ VALID_ENVS = ("dev", "staging", "prod")
 # Environment resolution
 # -----------------------------------------------------------------------
 
+
 def _read_env_value(key: str) -> str:
     """Read a key from .env without importing python-dotenv."""
     if not ENV_FILE.exists():
@@ -40,7 +41,7 @@ def _read_env_value(key: str) -> str:
         for line in f:
             line = line.strip()
             if line.startswith(prefix):
-                return line[len(prefix):].strip().strip('"').strip("'")
+                return line[len(prefix) :].strip().strip('"').strip("'")
     return ""
 
 
@@ -102,3 +103,52 @@ FRESHRSS_DATA = WORKSPACE_ROOT / "freshrss" / "data"
 
 # Convenience: current environment name (for logging / display)
 CURRENT_ENV = get_dailyinfo_env()
+
+
+# -----------------------------------------------------------------------
+# Discord channel resolution (env-aware)
+# -----------------------------------------------------------------------
+
+
+def env_suffix() -> str:
+    """Return the env-specific suffix for Discord channel env var names.
+
+    prod    → ""         (DISCORD_CHANNEL_PAPERS)
+    dev     → "_DEV"     (DISCORD_CHANNEL_PAPERS_DEV)
+    staging → "_STAGING" (DISCORD_CHANNEL_PAPERS_STAGING)
+    """
+    env = get_dailyinfo_env()
+    if env == "dev":
+        return "_DEV"
+    if env == "staging":
+        return "_STAGING"
+    return ""
+
+
+def get_channel_id(category: str) -> str:
+    """Resolve a Discord channel ID for the current environment.
+
+    Tries the env-specific key first (e.g. DISCORD_CHANNEL_PAPERS_DEV),
+    then falls back to the unsuffixed prod key with a warning.
+    """
+    import warnings
+
+    suffix = env_suffix()
+    env_key = f"DISCORD_CHANNEL_{category.upper()}{suffix}"
+    value = os.environ.get(env_key, "") or _read_env_value(env_key)
+    if value:
+        return value
+
+    # Non-prod: fall back to prod channel key with a warning
+    if suffix:
+        fallback_key = f"DISCORD_CHANNEL_{category.upper()}"
+        fallback = os.environ.get(fallback_key, "") or _read_env_value(fallback_key)
+        if fallback:
+            warnings.warn(
+                f"[env:{CURRENT_ENV}] {env_key} is empty — falling back to prod channel "
+                f"({fallback_key}). Set {env_key} to isolate environments.",
+                stacklevel=2,
+            )
+        return fallback
+
+    return ""
