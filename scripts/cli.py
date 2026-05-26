@@ -29,13 +29,19 @@ if _SCRIPTS_DIR not in sys.path:
 
 import click
 
-from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
+from paths import BRIEFINGS_DIR, CURRENT_ENV, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
 
 SCRIPTS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent
 DATE = datetime.now().strftime("%Y-%m-%d")
 ENV_FILE = PROJECT_ROOT / ".env"
 LOGS_DIR = PROJECT_ROOT / "logs"
+
+
+def _env_banner() -> str:
+    """Return a short env tag for display (e.g. '[env:dev]')."""
+    return f"[env:{CURRENT_ENV}]"
+
 
 CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
 
@@ -90,7 +96,7 @@ def install():
     timer, agent runtime such as myopenclaw's hermes cron, etc.).
     This command does NOT write to the host crontab.
     """
-    click.echo("==> DailyInfo Environment Setup")
+    click.echo(f"==> DailyInfo Environment Setup {_env_banner()}")
 
     click.echo("[1/3] Checking .env configuration...")
     if not ENV_FILE.exists():
@@ -98,13 +104,17 @@ def install():
         click.echo("  Run: cp .env.example .env and fill in your keys")
         sys.exit(1)
 
+    # Determine which channel keys to validate based on current environment.
+    from paths import env_suffix
+
+    suffix = env_suffix()
     required = ["OPENROUTER_API_KEY", "DISCORD_BOT_TOKEN"]
     channel_keys = [
-        "DISCORD_CHANNEL_PAPERS",
-        "DISCORD_CHANNEL_AI_NEWS",
-        "DISCORD_CHANNEL_CODE",
-        "DISCORD_CHANNEL_RESOURCE",
-        "DISCORD_CHANNEL_ARXIV",
+        f"DISCORD_CHANNEL_PAPERS{suffix}",
+        f"DISCORD_CHANNEL_AI_NEWS{suffix}",
+        f"DISCORD_CHANNEL_CODE{suffix}",
+        f"DISCORD_CHANNEL_RESOURCE{suffix}",
+        f"DISCORD_CHANNEL_ARXIV{suffix}",
     ]
     env = _read_env_keys(required + channel_keys)
 
@@ -158,7 +168,9 @@ def install():
     click.echo("  3. dailyinfo push          # push today's briefings to Discord")
     click.echo("")
     click.echo("Scheduling is expected to be driven by an external cron")
-    click.echo("(system crontab, systemd timer, hermes cron, ...) calling these commands.")
+    click.echo(
+        "(system crontab, systemd timer, hermes cron, ...) calling these commands."
+    )
 
 
 @cli.command()
@@ -297,7 +309,8 @@ def status():
     """Show today's briefing and pushed file counts."""
     total_pending = 0
 
-    click.echo(f"Briefings for {DATE}:")
+    click.echo(f"Briefings for {DATE} {_env_banner()}:")
+    click.echo(f"  Workspace: {WORKSPACE_ROOT}")
     for cat in CATEGORIES:
         path = BRIEFINGS_DIR / cat
         if path.is_dir():

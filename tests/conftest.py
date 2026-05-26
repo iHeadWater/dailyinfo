@@ -49,11 +49,15 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
     Also sets ``DISCORD_BOT_TOKEN`` so importing ``push_to_discord`` does not
     hit its ``sys.exit`` guard, and clears ``OPENROUTER_API_KEY`` so pipeline
     tests start from a known state.
+
+    Forces ``DAILYINFO_ENV=dev`` so tests never accidentally touch prod data
+    or prod Discord channels.
     """
     data_root = tmp_path / "data"
     data_root.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("DAILYINFO_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("DAILYINFO_ENV", "dev")
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "test-token")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 

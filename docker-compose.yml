@@ -1,14 +1,30 @@
+# DailyInfo Docker Compose
+#
+# Environment separation is controlled by DAILYINFO_ENV (dev / staging / prod).
+# Each environment uses a different data directory under ~/.myagentdata/.
+#
+# Usage:
+#   DAILYINFO_ENV=prod  docker compose up -d     # production (default)
+#   DAILYINFO_ENV=dev   docker compose up -d     # development
+#   DAILYINFO_ENV=staging docker compose up -d   # staging
+#
+# The container name and data path are derived from DAILYINFO_ENV automatically.
+
+x-env-common: &env-common
+  TZ: Asia/Shanghai
+  CRON_MIN: "*/15"
+
 services:
   freshrss:
     image: freshrss/freshrss:latest
-    container_name: dailyinfo_freshrss
+    container_name: dailyinfo_${DAILYINFO_ENV:-prod}_freshrss
     ports:
-      - "8081:80"
+      # dev: 8082, staging: 8083, prod: 8081 (default)
+      - "${FRESHRSS_PORT:-8081}:80"
     volumes:
-      - ~/.myagentdata/dailyinfo/freshrss/data:/var/www/FreshRSS/data
+      - ${DAILYINFO_DATA_ROOT:-~/.myagentdata/dailyinfo}/freshrss/data:/var/www/FreshRSS/data
     environment:
-      - TZ=Asia/Shanghai
-      - CRON_MIN=*/15
+      <<: *env-common
     restart: unless-stopped
     networks:
       - dailyinfo_net
