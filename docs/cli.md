@@ -67,7 +67,7 @@ specific source names (matches `config/sources.json`).
 If the primary model (`moonshotai/kimi-k2.5`) returns empty responses after 3
 retries with exponential backoff (2s / 5s / 10s), `run` automatically falls
 back to the model in `DAILYINFO_FALLBACK_MODEL` (default
-`deepseek/deepseek-chat-v3.1`) for 2 more attempts before giving up.
+`deepseek/deepseek-v4-pro`) for 2 more attempts before giving up.
 
 ### Push to Discord
 
@@ -116,7 +116,7 @@ FRESHRSS_PASSWORD=freshrss123
 | `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
 | `FRESHRSS_PASSWORD` | FreshRSS password |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`) |
-| `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `deepseek/deepseek-chat-v3.1`) |
+| `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `deepseek/deepseek-v4-pro`) |
 
 ## Scheduling
 

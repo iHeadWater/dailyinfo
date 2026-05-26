@@ -58,7 +58,7 @@ dailyinfo push      # 把今日 briefings 推到 Discord
 
 `dailyinfo install` 不写系统 crontab，定时调度交给任意外部 cron。
 
-`run` 在主模型（默认 `moonshotai/kimi-k2.5`）连续返回空响应时会自动切换到 `DAILYINFO_FALLBACK_MODEL`（默认 `deepseek/deepseek-chat-v3.1`）。
+`run` 在主模型（默认 `moonshotai/kimi-k2.5`）连续返回空响应时会自动切换到 `DAILYINFO_FALLBACK_MODEL`（默认 `deepseek/deepseek-v4-pro`）。
 
 ---
 
