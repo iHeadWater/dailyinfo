@@ -17,6 +17,13 @@ uv sync --python python3
 uv pip install -e .
 ```
 
+NotebookLM automation is optional. Install it only on machines where you want
+`dailyinfo zotero-brief` to talk to NotebookLM directly:
+
+```bash
+uv pip install -e ".[notebooklm]"
+```
+
 ### Using pip (fallback)
 
 ```bash
@@ -81,6 +88,72 @@ contains the target date, posts to the mapped Discord channel, and moves
 successfully pushed files to `pushed/{category}/`. `push` is idempotent: a day
 with no pending files just emits a "暂无新简报" notice and exits cleanly.
 
+### Zotero -> NotebookLM Briefing
+
+This CLI is the capability layer for Codex/openclaw orchestration. For daily
+interactive use, load `skills/zotero-notebooklm` and let Codex run these checks,
+handle NotebookLM auth handoff, trigger Zotero PDF hydration, inspect
+`notebooklm.json`, and continue through manual fallback steps when needed.
+For new-machine setup and agent handoff details, see
+[`docs/zotero-notebooklm.md`](zotero-notebooklm.md) or
+[`docs/zotero-notebooklm.zh.md`](zotero-notebooklm.zh.md).
+
+```bash
+dailyinfo zotero-brief                         # Process today's Zotero additions
+dailyinfo zotero-brief --date 2026-05-27       # Process one Zotero dateAdded day
+dailyinfo zotero-brief --collection water      # Restrict to a Zotero collection
+dailyinfo zotero-brief --force                 # Overwrite existing local output
+dailyinfo zotero-brief --artifact audio        # Also request Audio Overview
+dailyinfo zotero-brief --artifact video        # Also request Video Overview
+dailyinfo zotero-brief --artifact both         # Request both artifacts
+dailyinfo zotero-brief --open-missing-pdfs     # Open cloud-only Zotero attachments, wait, retry copy
+dailyinfo zotero-brief --manual-only           # Prepare local materials only
+```
+
+This command is separate from `dailyinfo run`: it does not call OpenRouter or
+the DailyInfo `call_ai` helper. It reads the local Zotero API at
+`http://127.0.0.1:23119`, filters top-level papers by `dateAdded`, copies local
+PDF attachments when available, writes `source_index.md`, and lets NotebookLM
+generate the Chinese markdown briefing from the uploaded sources. For cloud-only
+PDF paths such as Google Drive placeholders, `--open-missing-pdfs` opens the
+Zotero attachment URI first, then falls back to the local file path if needed,
+and waits before retrying the copy. This is intended to trigger Zotero and the
+user's sync client to hydrate the file.
+
+NotebookLM auth is intentionally allowed to be manual. First run:
+
+```bash
+uv run --extra notebooklm notebooklm login
+```
+
+Then run:
+
+```bash
+uv run --extra notebooklm dailyinfo zotero-brief --collection water --artifact audio --open-missing-pdfs
+```
+
+If the default NotebookLM profile directory is not writable, set
+`NOTEBOOKLM_HOME` or pass `--notebooklm-home <dir>` and use the same directory
+for both `notebooklm login` and `dailyinfo zotero-brief`.
+
+Output is written to `~/.myagentdata/dailyinfo/zotero/YYYY-MM-DD/`:
+
+| File | Purpose |
+|------|---------|
+| `source_index.md` | Lightweight paper metadata and Chinese reading instructions uploaded to NotebookLM |
+| `briefing_prompt.md` | Prompt to paste into NotebookLM chat when completing the run manually |
+| `pdfs/` | Copied Zotero PDF attachments |
+| `briefing.md` | NotebookLM-generated Chinese briefing, or a placeholder when manual action is required |
+| `notebooklm.json` | Notebook/source/artifact ids, copied PDF status, warnings, and failures |
+| `audio_overview.mp3` | Present only when Audio Overview downloads successfully |
+| `video_overview.mp4` | Present only when Video Overview downloads successfully |
+| `MANUAL_NOTEBOOKLM_STEPS.md` | Browser fallback steps for auth, upload, generation, and download |
+
+`notebooklm-py` is a non-official NotebookLM interface intended for personal
+automation. If Google changes the NotebookLM UI/API or auth is not ready, the
+command degrades to the local material package so the run can be completed
+manually in the NotebookLM web UI.
+
 ### Status & Logs
 
 ```bash
@@ -109,6 +182,8 @@ FRESHRSS_PASSWORD=freshrss123
 | `FRESHRSS_PASSWORD` | FreshRSS password |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`) |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `deepseek/deepseek-chat-v3.1`) |
+| `ZOTERO_LOCAL_BASE_URL` | Zotero local API base URL for `zotero-brief` (default `http://127.0.0.1:23119`) |
+| `NOTEBOOKLM_HOME` | NotebookLM profile/auth directory used by `notebooklm-py`; must match the login run |
 
 ## Scheduling via myopenclaw hermes cron
 

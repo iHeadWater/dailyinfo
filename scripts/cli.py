@@ -72,6 +72,13 @@ def _ensure_workspace() -> None:
         PUSHED_DIR.joinpath(category).mkdir(parents=True, exist_ok=True)
 
 
+def _run_zotero_brief(**kwargs) -> int:
+    """Lazy import so normal CLI use does not require NotebookLM extras."""
+    from zotero_notebooklm import run_zotero_brief
+
+    return run_zotero_brief(**kwargs)
+
+
 # ---------------------------------------------------------------------------
 # CLI Commands
 # ---------------------------------------------------------------------------
@@ -246,6 +253,106 @@ def run(pipeline, force, categories):
         cmd += ["--categories", categories]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
+
+
+@cli.command("zotero-brief")
+@click.option(
+    "-d",
+    "--date",
+    "date_str",
+    default=None,
+    help="Zotero dateAdded day to process in YYYY-MM-DD format. Defaults to today.",
+)
+@click.option("--force", is_flag=True, help="Overwrite an existing local Zotero briefing.")
+@click.option(
+    "--artifact",
+    type=click.Choice(["none", "audio", "video", "both"]),
+    default="none",
+    show_default=True,
+    help="Optional NotebookLM artifact to generate after the markdown briefing.",
+)
+@click.option(
+    "--manual-only",
+    is_flag=True,
+    help="Only prepare PDFs, source_index.md, and manual NotebookLM steps.",
+)
+@click.option(
+    "--limit",
+    default=50,
+    show_default=True,
+    type=int,
+    help="Maximum number of Zotero papers to include.",
+)
+@click.option(
+    "--collection",
+    default=None,
+    help="Zotero collection name or key to restrict the run, e.g. water.",
+)
+@click.option(
+    "--open-missing-pdfs",
+    is_flag=True,
+    help="Open inaccessible Zotero PDF attachments once, then retry copying.",
+)
+@click.option(
+    "--pdf-wait-seconds",
+    default=20,
+    show_default=True,
+    type=int,
+    help="Seconds to wait after opening a Zotero PDF attachment.",
+)
+@click.option(
+    "--notebooklm-home",
+    default=None,
+    help="NotebookLM profile directory. Also available as NOTEBOOKLM_HOME.",
+)
+@click.option(
+    "--notebook-title",
+    default=None,
+    help="NotebookLM notebook title. Defaults to the target date.",
+)
+def zotero_brief(
+    date_str,
+    force,
+    artifact,
+    manual_only,
+    limit,
+    collection,
+    open_missing_pdfs,
+    pdf_wait_seconds,
+    notebooklm_home,
+    notebook_title,
+):
+    """Build a Zotero -> NotebookLM paper briefing package.
+
+    This workflow does not call the OpenRouter summarizer used by
+    ``dailyinfo run``. NotebookLM reads the uploaded PDFs and index.
+    """
+    if date_str:
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            click.echo(f"Error: --date must be YYYY-MM-DD (got {date_str!r})", err=True)
+            sys.exit(2)
+    if limit < 1:
+        click.echo("Error: --limit must be a positive integer", err=True)
+        sys.exit(2)
+    if pdf_wait_seconds < 0:
+        click.echo("Error: --pdf-wait-seconds must be zero or positive", err=True)
+        sys.exit(2)
+
+    result = _run_zotero_brief(
+        date_str=date_str,
+        force=force,
+        artifact=artifact,
+        manual_only=manual_only,
+        limit=limit,
+        collection=collection,
+        open_missing_pdfs=open_missing_pdfs,
+        pdf_wait_seconds=pdf_wait_seconds,
+        notebooklm_home=notebooklm_home,
+        notebook_title=notebook_title,
+    )
+    sys.exit(result)
 
 
 @cli.command()

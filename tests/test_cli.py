@@ -216,6 +216,75 @@ def test_push_rejects_invalid_date(cli_mod):
     assert "YYYY-MM-DD" in result.output
 
 
+def test_zotero_brief_forwards_options(cli_mod, monkeypatch):
+    calls = {}
+
+    def fake_zotero_brief(**kwargs):
+        calls.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(cli_mod, "_run_zotero_brief", fake_zotero_brief)
+
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        [
+            "zotero-brief",
+            "--date",
+            "2026-05-27",
+            "--force",
+            "--artifact",
+            "both",
+            "--manual-only",
+            "--limit",
+            "3",
+            "--collection",
+            "water",
+            "--open-missing-pdfs",
+            "--pdf-wait-seconds",
+            "2",
+            "--notebooklm-home",
+            "D:/tmp/notebooklm",
+            "--notebook-title",
+            "Morning Papers",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == {
+        "date_str": "2026-05-27",
+        "force": True,
+        "artifact": "both",
+        "manual_only": True,
+        "limit": 3,
+        "collection": "water",
+        "open_missing_pdfs": True,
+        "pdf_wait_seconds": 2,
+        "notebooklm_home": "D:/tmp/notebooklm",
+        "notebook_title": "Morning Papers",
+    }
+
+
+def test_zotero_brief_rejects_invalid_date(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["zotero-brief", "--date", "today"])
+
+    assert result.exit_code == 2
+    assert "YYYY-MM-DD" in result.output
+
+
+def test_zotero_brief_rejects_non_positive_limit(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["zotero-brief", "--limit", "0"])
+
+    assert result.exit_code == 2
+    assert "--limit" in result.output
+
+
+def test_zotero_brief_rejects_negative_pdf_wait(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["zotero-brief", "--pdf-wait-seconds", "-1"])
+
+    assert result.exit_code == 2
+    assert "--pdf-wait-seconds" in result.output
+
+
 def test_start_fails_when_compose_missing(cli_mod, tmp_path, monkeypatch):
     monkeypatch.setattr(cli_mod, "PROJECT_ROOT", tmp_path)
 
