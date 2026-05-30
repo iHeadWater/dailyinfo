@@ -209,9 +209,9 @@ def restart():
 @click.option(
     "--pipeline",
     "-p",
-    type=click.Choice(["1", "2", "3", "all"]),
+    type=click.Choice(["1", "2", "3", "4", "5", "all"]),
     default="all",
-    help="Pipeline to run: 1=RSS papers/news, 2=code trending, 3=university news.",
+    help="Pipeline to run: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource.",
 )
 @click.option(
     "-f",
@@ -221,16 +221,7 @@ def restart():
     help="Force regenerate today's briefing. Pass 'all' to refresh everything "
     "or a source name (e.g. 'arxiv_cs_ai'). Repeatable.",
 )
-@click.option(
-    "-c",
-    "--categories",
-    default=None,
-    help=(
-        "Comma-separated categories for pipeline 1 "
-        "(e.g. 'papers,ai_news' or 'arxiv'). Defaults to all categories."
-    ),
-)
-def run(pipeline, force, categories):
+def run(pipeline, force):
     """Scrape sources, generate AI summaries, save briefing files.
 
     By default, sources whose today's briefing already exists are skipped;
@@ -242,8 +233,6 @@ def run(pipeline, force, categories):
         cmd += ["--pipeline", pipeline]
     for src in force:
         cmd += ["--force", src]
-    if categories:
-        cmd += ["--categories", categories]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
 

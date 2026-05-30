@@ -24,7 +24,7 @@ import time
 import requests
 
 from datasource import DataSource, RSSDataSource, build_feed_url_map
-from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR
+from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
@@ -74,6 +74,25 @@ FRESHRSS_DB = _get_freshrss_db()
 # ---------------------------------------------------------------------------
 def log(msg: str) -> None:
     print(f'[{datetime.datetime.now().strftime("%H:%M:%S")}] {msg}', flush=True)
+
+
+_ARXIV_MARKER_NAME = ".arxiv_generating"
+
+
+def _create_arxiv_marker() -> None:
+    """Signal that arXiv generation is in progress so push_to_discord waits."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    (STATE_DIR / _ARXIV_MARKER_NAME).write_text(DATE, encoding="utf-8")
+    log("  [arxiv] marker created - push will wait for generation to finish")
+
+
+def _remove_arxiv_marker() -> None:
+    """Remove the arXiv generation marker so push_to_discord can proceed."""
+    try:
+        (STATE_DIR / _ARXIV_MARKER_NAME).unlink(missing_ok=True)
+    except OSError:
+        pass
+    log("  [arxiv] marker removed - push may proceed")
 
 
 def load_api_key() -> str:
@@ -478,264 +497,256 @@ def _load_sources() -> tuple[dict, dict, dict]:
 
 
 # =====================================================================
-# PIPELINE 1: papers + AI news via FreshRSS
+# Shared pipeline helpers
 # =====================================================================
-def run_pipeline_1(categories: list[str] | None = None) -> int:
-    cats_desc = ",".join(categories) if categories else "papers+ai_news+arxiv"
-    log(f"=== Pipeline 1: Daily Briefing ({cats_desc}) ===")
-    cfg, defaults, templates = _load_sources()
-    default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
-    model_default = defaults.get("model", "moonshotai/kimi-k2.5")
 
+def _filter_sources(cfg: dict, category: str, *types: str) -> list[dict]:
+    """Return enabled sources matching the given category and types."""
+    return [
+        s for s in cfg["sources"]
+        if s.get("category") == category
+        and s.get("type") in types
+        and s.get("enabled", True)
+    ]
+
+
+def _process_regular_source(ds, feed_cfg: dict, model_default: str,
+                            templates: dict, default_tmpl_key: str) -> int:
+    """Process a single source: fetch -> batch -> AI -> merge -> save -> commit.
+
+    Returns number of files saved (0 or 1).
+    """
+    name, category = ds.name, ds.category
+
+    try:
+        items = ds.fetch()
+    except Exception as e:
+        log(f"    FETCH ERR: {e}")
+        placeholder = f"# {ds.display_name} - {DATE}\n\n" + "⚠️ 获取失败\n"
+        save(category, f"{name}_briefing_{DATE}.md", placeholder)
+        return 1
+
+    if not items:
+        log(f"  {name}: 0 new articles - placeholder")
+        ds.commit_seen(items)
+        ds.cleanup_seen()
+        placeholder = f"# {ds.display_name} - {DATE}\n\n" + "\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
+        save(category, f"{name}_briefing_{DATE}.md", placeholder)
+        return 1
+
+    if ds.lookback_hours > 24 and _already_pushed_within(name, category, ds.lookback_hours):
+        log(f"  {name}: {len(items)} articles - already pushed within {ds.lookback_hours}h, skip")
+        return 0
+
+    model = feed_cfg.get("model") or model_default
+    tmpl_key = feed_cfg.get("prompt_template") or default_tmpl_key
+    prompt_template = templates.get(tmpl_key) or templates.get("one_line_summary", "")
+    if not prompt_template:
+        log(f"  SKIP {name}: no prompt template")
+        return 0
+
+    # Log article count (with dup info for RSS sources)
+    total = getattr(ds, "_total_before_filter", len(items))
+    new = len(items)
+    dup = total - new
+    log(f"  {name}: {new} new articles" + (f" ({dup} duplicates skipped)" if dup else ""))
+
+    generated_parts: list[tuple[str, list]] = []
+    failed_items: list = []
+    for idx, batch in enumerate(ds.get_batches(items)):
+        try:
+            generated_parts.extend(
+                _generate_regular_briefings(ds, batch, prompt_template, model)
+            )
+        except Exception as e:
+            log(f"    ERR batch {idx + 1}: {e}")
+            failed_items.extend(batch)
+
+    if failed_items:
+        generated_parts.extend(
+            _retry_failed_items(ds, failed_items, prompt_template, model)
+        )
+
+    merged_content, all_items = _merge_briefing_parts(ds, generated_parts)
+    if merged_content:
+        filename = f"{name}_briefing_{DATE}.md"
+        try:
+            save(category, filename, merged_content)
+            log(f"    -> saved {filename}")
+        except Exception as e:
+            log(f"    SAVE ERR: {e}")
+
+    ds.commit_seen(all_items)
+    ds.cleanup_seen()
+    return 1 if merged_content else 0
+
+
+def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
+                                 templates: dict) -> int:
+    """Process a use_content source: one AI call per article, per-article files.
+
+    Returns number of files saved.
+    """
+    name, category = ds.name, ds.category
+    model = feed_cfg.get("model") or model_default
+    tmpl_key = feed_cfg.get("prompt_template", "smolai_categorized")
+    tmpl = templates.get(tmpl_key, "")
+    saved = 0
+
+    committed_items: list = []
+    failed_items: list = []
+    for idx, item in enumerate(items := ds.fetch()):
+        prompt = (
+            tmpl.replace("{content}", item.content).replace("{date}", DATE)
+            if tmpl
+            else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
+        )
+        suffix = f"_part{idx + 1}" if len(items) > 1 else ""
+        filename = f"{name}_briefing_{DATE}{suffix}.md"
+        try:
+            content_text = call_ai(prompt, model=model, max_tokens=2000)
+            save(category, filename,
+                 f"# AI Daily Digest - {DATE}\n\n{content_text}")
+            saved += 1
+            committed_items.append(item)
+            log(f"    -> saved {filename}")
+            time.sleep(1)
+        except Exception as e:
+            log(f"    ERR: {e}")
+            failed_items.append(item)
+
+    if failed_items:
+        log(f"    Phase 2: retrying {len(failed_items)} failed deep-content articles")
+        for retry_idx, item in enumerate(failed_items, start=1):
+            prompt = (
+                tmpl.replace("{content}", item.content).replace("{date}", DATE)
+                if tmpl
+                else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
+            )
+            try:
+                content_text = call_ai(prompt, model=model, max_tokens=3000)
+                filename = f"{name}_briefing_{DATE}_retry{retry_idx}.md"
+                save(category, filename,
+                     f"# AI Daily Digest - {DATE}\n\n{content_text}")
+                saved += 1
+                committed_items.append(item)
+                log(f"    -> saved retry {filename}")
+            except Exception as e:
+                log(f"    Phase 2 retry failed: {e} -> placeholder")
+                placeholder = _make_placeholder_briefing(ds, [item])
+                filename = f"{name}_briefing_{DATE}_failed{retry_idx}.md"
+                save(category, filename, placeholder)
+                saved += 1
+                committed_items.append(item)
+
+    ds.commit_seen(committed_items)
+    ds.cleanup_seen()
+    return saved
+
+
+def _run_category_pipeline(category: str, *,
+                           create_marker: bool = False,
+                           deep_content: bool = False) -> int:
+    """Generic pipeline for a single category.
+
+    Handles both RSS and non-RSS sources. If *create_marker* is True,
+    the arXiv generation marker is created before processing and removed
+    in a finally block. If *deep_content* is True, the smolai use_content
+    path is used instead of the regular batched path.
+    """
+    cfg, defaults, templates = _load_sources()
+    model_default = defaults.get("model", "moonshotai/kimi-k2.5")
+    default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
+
+    # --- RSS sources ---
     try:
         db = sqlite3.connect(FRESHRSS_DB)
     except Exception as e:
         user = _get_freshrss_user()
-        log(f"Pipeline 1 FAILED: cannot open FreshRSS DB ({e})")
+        log(f"Pipeline {category} FAILED: cannot open FreshRSS DB ({e})")
         log(f"  DB path: {FRESHRSS_DB}")
         log(f"  Fix: set FRESHRSS_USER={user} in .env, or correct the username.")
         return 0
     db.row_factory = sqlite3.Row
     full_map, base_map = build_feed_url_map(db)
-    saved = 0
 
-    # Process RSS sources in category priority order so that ai_news (6:00 push)
-    # is generated before papers (7:00 push).
-    _CATEGORY_PRIORITY = {"ai_news": 0, "papers": 1}
-    rss_sources = [
-        s for s in cfg["sources"]
-        if s.get("type") == "rss" and s.get("enabled", True)
-    ]
-    if categories:
-        rss_sources = [s for s in rss_sources if s.get("category") in categories]
-    rss_sources.sort(key=lambda s: _CATEGORY_PRIORITY.get(s.get("category"), 9))
+    if create_marker:
+        _create_arxiv_marker()
 
-    for feed_cfg in rss_sources:
-
-        ds = DataSource.create(
-            feed_cfg, defaults, db=db, full_map=full_map, base_map=base_map
-        )
-        assert isinstance(ds, RSSDataSource)
-        name, category = ds.name, ds.category
-        if _has_real_briefing_today(name, category):
-            log(
-                f"  {name}: briefing already exists for {DATE}, skip "
-                f"(use --force {name} to regenerate)"
+    try:
+        saved = 0
+        rss_sources = _filter_sources(cfg, category, "rss")
+        for feed_cfg in rss_sources:
+            ds = DataSource.create(
+                feed_cfg, defaults, db=db, full_map=full_map, base_map=base_map
             )
-            continue
-        items = ds.fetch()
-        model = feed_cfg.get("model") or model_default
-
-        if not items:
-            log(f"  {name}: 0 new articles — placeholder")
-            ds.commit_seen(items)  # no new items, but record any seen state
-            ds.cleanup_seen()
-            placeholder = f"# {ds.display_name} - {DATE}\n\n📭 过去 {ds.lookback_hours} 小时无新内容\n"
-            save(category, f"{name}_briefing_{DATE}.md", placeholder)
-            saved += 1
-            continue
-
-        if ds.lookback_hours > 24 and _already_pushed_within(
-            name, category, ds.lookback_hours
-        ):
-            log(
-                f"  {name}: {len(items)} articles — already pushed within {ds.lookback_hours}h, skip"
-            )
-            continue
-
-        # SmolAI deep-content path (one AI call per article)
-        if feed_cfg.get("use_content"):
-            log(f"  {name}: {len(items)} articles (deep content)")
-            tmpl_key = feed_cfg.get("prompt_template", "smolai_categorized")
-            tmpl = templates.get(tmpl_key, "")
-            committed_items: list = []
-            failed_items: list = []
-            for idx, item in enumerate(items):
-                prompt = (
-                    tmpl.replace("{content}", item.content).replace("{date}", DATE)
-                    if tmpl
-                    else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
+            assert isinstance(ds, RSSDataSource)
+            if _has_real_briefing_today(ds.name, ds.category):
+                log(
+                    f"  {ds.name}: briefing already exists for {DATE}, skip "
+                    f"(use --force {ds.name} to regenerate)"
                 )
-                suffix = f"_part{idx+1}" if len(items) > 1 else ""
-                filename = f"{name}_briefing_{DATE}{suffix}.md"
-                try:
-                    content_text = call_ai(prompt, model=model, max_tokens=2000)
-                    save(
-                        category,
-                        filename,
-                        f"# AI Daily Digest - {DATE}\n\n{content_text}",
-                    )
-                    saved += 1
-                    committed_items.append(item)
-                    log(f"    -> saved {filename}")
-                    time.sleep(1)
-                except Exception as e:
-                    log(f"    ERR: {e}")
-                    failed_items.append(item)
+                continue
 
-            # Retry failed deep-content items once, then placeholder fallback
-            if failed_items:
-                log(f"    Phase 2: retrying {len(failed_items)} failed deep-content articles")
-                for retry_idx, item in enumerate(failed_items, start=1):
-                    prompt = (
-                        tmpl.replace("{content}", item.content).replace("{date}", DATE)
-                        if tmpl
-                        else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
-                    )
-                    try:
-                        content_text = call_ai(prompt, model=model, max_tokens=3000)
-                        filename = f"{name}_briefing_{DATE}_retry{retry_idx}.md"
-                        save(category, filename, f"# AI Daily Digest - {DATE}\n\n{content_text}")
-                        saved += 1
-                        committed_items.append(item)
-                        log(f"    -> saved retry {filename}")
-                    except Exception as e:
-                        log(f"    Phase 2 retry failed: {e} → placeholder")
-                        placeholder = _make_placeholder_briefing(ds, [item])
-                        filename = f"{name}_briefing_{DATE}_failed{retry_idx}.md"
-                        save(category, filename, placeholder)
-                        saved += 1
-                        committed_items.append(item)  # commit even placeholder items
+            if deep_content:
+                saved += _process_deep_content_source(ds, feed_cfg, model_default,
+                                                      templates)
+            else:
+                saved += _process_regular_source(ds, feed_cfg, model_default,
+                                                 templates, default_tmpl_key)
+    finally:
+        db.close()
+        if create_marker:
+            _remove_arxiv_marker()
 
-            ds.commit_seen(committed_items)
-            ds.cleanup_seen()
-            continue
-
-        # Regular path — batch by max_articles_per_batch
-        total = ds._total_before_filter
-        new = len(items)
-        dup = total - new
-        log(f"  {name}: {new} new articles" + (f" ({dup} duplicates skipped)" if dup else ""))
-        tmpl_key = feed_cfg.get("prompt_template") or default_tmpl_key
-        prompt_template = templates.get(tmpl_key) or templates.get(
-            "one_line_summary", ""
-        )
-        if not prompt_template:
-            log(f"  SKIP {name}: no prompt template")
-            continue
-
-        generated_parts: list[tuple[str, list]] = []
-        failed_items: list = []
-        batches = ds.get_batches(items)
-        for idx, batch in enumerate(batches):
-            try:
-                generated_parts.extend(
-                    _generate_regular_briefings(ds, batch, prompt_template, model)
-                )
-            except Exception as e:
-                log(f"    ERR batch {idx + 1}: {e}")
-                failed_items.extend(batch)
-
-        # Phase 2: retry failed items with conservative settings
-        if failed_items:
-            phase2_parts = _retry_failed_items(
-                ds, failed_items, prompt_template, model
-            )
-            generated_parts.extend(phase2_parts)
-
-        # Merge all parts into one cohesive briefing
-        merged_content, all_items = _merge_briefing_parts(ds, generated_parts)
-        if merged_content:
-            filename = f"{name}_briefing_{DATE}.md"
-            try:
-                save(category, filename, merged_content)
-                saved += 1
-                log(f"    -> saved {filename}")
-            except Exception as e:
-                log(f"    SAVE ERR: {e}")
-
-        ds.commit_seen(all_items)
-        ds.cleanup_seen()
-
-    db.close()
-
-    # Non-RSS papers/ai_news sources (scrape + api)
-    for source_cfg in cfg["sources"]:
-        if source_cfg.get("type") == "rss" or not source_cfg.get("enabled", True):
-            continue
-        if source_cfg.get("category") not in (categories or {"papers", "ai_news", "arxiv"}):
-            continue
-
+    # --- Non-RSS sources ---
+    for source_cfg in _filter_sources(cfg, category, "scrape", "api"):
         ds = DataSource.create(source_cfg, defaults)
-        name, category = ds.name, ds.category
-        log(f"  {name}...")
-
-        if _has_real_briefing_today(name, category):
+        if _has_real_briefing_today(ds.name, ds.category):
             log(f"    briefing already exists for {DATE}, skip")
             continue
+        log(f"  {ds.name}...")
+        saved += _process_regular_source(ds, source_cfg, model_default,
+                                         templates, default_tmpl_key)
 
-        try:
-            items = ds.fetch()
-        except Exception as e:
-            log(f"    FETCH ERR: {e}")
-            save(
-                category,
-                f"{name}_briefing_{DATE}.md",
-                f"# {ds.display_name} - {DATE}\n\n⚠️ 获取失败\n",
-            )
-            saved += 1
-            continue
+    return saved
 
-        if not items:
-            log(f"    no items → placeholder")
-            save(
-                category,
-                f"{name}_briefing_{DATE}.md",
-                f"# {ds.display_name} - {DATE}\n\n📭 过去 {ds.lookback_hours} 小时无新内容\n",
-            )
-            saved += 1
-            continue
 
-        if ds.lookback_hours > 24 and _already_pushed_within(name, category, ds.lookback_hours):
-            log(f"    {len(items)} articles — already pushed within {ds.lookback_hours}h, skip")
-            continue
-
-        log(f"  {name}: {len(items)} articles")
-        model = source_cfg.get("model") or model_default
-        tmpl_key = source_cfg.get("prompt_template") or default_tmpl_key
-        prompt_template = templates.get(tmpl_key) or templates.get("one_line_summary", "")
-        if not prompt_template:
-            log(f"    SKIP {name}: no prompt template")
-            continue
-
-        generated_parts: list[tuple[str, list]] = []
-        failed_items: list = []
-        for idx, batch in enumerate(ds.get_batches(items)):
-            try:
-                generated_parts.extend(
-                    _generate_regular_briefings(ds, batch, prompt_template, model)
-                )
-            except Exception as e:
-                log(f"    ERR batch {idx + 1}: {e}")
-                failed_items.extend(batch)
-
-        # Phase 2: retry failed items
-        if failed_items:
-            phase2_parts = _retry_failed_items(
-                ds, failed_items, prompt_template, model
-            )
-            generated_parts.extend(phase2_parts)
-
-        # Merge all parts into one cohesive briefing
-        merged_content, _all_items = _merge_briefing_parts(ds, generated_parts)
-        if merged_content:
-            filename = f"{name}_briefing_{DATE}.md"
-            try:
-                save(category, filename, merged_content)
-                saved += 1
-                log(f"    -> saved {filename}")
-            except Exception as e:
-                log(f"    SAVE ERR: {e}")
-
+# =====================================================================
+# PIPELINE 1: Papers
+# =====================================================================
+def run_pipeline_papers() -> int:
+    log("=== Pipeline 1: Papers ===")
+    saved = _run_category_pipeline("papers")
     log(f"  Pipeline 1 done: {saved} files saved")
     return saved
 
 
 # =====================================================================
-# PIPELINE 2: Code Trending (GitHub + HuggingFace)
+# PIPELINE 2: AI News
 # =====================================================================
-def run_pipeline_2() -> int:
-    log("=== Pipeline 2: Code Trending ===")
+def run_pipeline_ai_news() -> int:
+    log("=== Pipeline 2: AI News ===")
+    saved = _run_category_pipeline("ai_news", deep_content=True)
+    log(f"  Pipeline 2 done: {saved} files saved")
+    return saved
+
+
+# =====================================================================
+# PIPELINE 3: arXiv
+# =====================================================================
+def run_pipeline_arxiv() -> int:
+    log("=== Pipeline 3: arXiv ===")
+    saved = _run_category_pipeline("arxiv", create_marker=True)
+    log(f"  Pipeline 3 done: {saved} files saved")
+    return saved
+
+
+# =====================================================================
+# PIPELINE 4: Code Trending (GitHub + HuggingFace)
+# =====================================================================
+def run_pipeline_code() -> int:
+    log("=== Pipeline 4: Code Trending ===")
     cfg, defaults, templates = _load_sources()
     model_default = defaults.get("model", "moonshotai/kimi-k2.5")
     code_tmpl = templates.get("code_trending", "")
@@ -802,12 +813,12 @@ def run_pipeline_2() -> int:
         except Exception as e:
             log(f"    AI ERR: {e}")
 
-    log(f"  Pipeline 2 done: {saved} files saved")
+    log(f"  Pipeline 4 done: {saved} files saved")
     return saved
 
 
 # =====================================================================
-# PIPELINE 3: University News (DLUT HTML + API)
+# PIPELINE 5: University News (DLUT HTML + API)
 # =====================================================================
 _DLUT_NEWS_GROUP = "dlut_news"
 _DLUT_NEWS_SECTION_ORDER = ["综合新闻", "人才培养", "学术科研", "合作交流", "一线风采", "学院动态"]
@@ -849,7 +860,7 @@ def _generate_unified_news(
     if total == 0:
         placeholder = (
             f"# 大连理工大学校园动态 - {DATE}\n\n"
-            f"📭 过去 48 小时无新内容\n"
+            f"\U0001f4ed 过去 48 小时无新内容\n"
         )
         save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", placeholder)
         log(f"    no updates -> placeholder")
@@ -882,13 +893,13 @@ def _generate_unified_news(
         return 0
 
 
-def run_pipeline_3() -> int:
-    log("=== Pipeline 3: University News & Recruitment ===")
+def run_pipeline_resource() -> int:
+    log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
     model_default = defaults.get("model", "moonshotai/kimi-k2.5")
     saved = 0
 
-    # --- Part A: unified news briefing (8 news sources → 1 file) ---
+    # --- Part A: unified news briefing (8 news sources -> 1 file) ---
     news_sources = [
         s for s in cfg["sources"]
         if s.get("category") == "resource"
@@ -932,7 +943,7 @@ def run_pipeline_3() -> int:
         if not items:
             no_update = (
                 f"# {ds.display_name} - {DATE}\n\n"
-                f"📭 过去 {ds.lookback_hours} 小时无新内容\n\n"
+                f"\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n\n"
                 f'---\n*来源: {source_cfg["url"]}*\n'
             )
             save("resource", f"{ds.name}_briefing_{DATE}.md", no_update)
@@ -955,7 +966,7 @@ def run_pipeline_3() -> int:
                 f"# {ds.display_name} - {DATE}\n\n"
                 f"{content_text}\n\n"
                 f"---\n*{len(items)} items (past {ds.lookback_hours}h)*\n\n"
-                f"📍 查看全部：{display_url}\n"
+                f"\U0001f4cd 查看全部：{display_url}\n"
             )
             save("resource", f"{ds.name}_briefing_{DATE}.md", full_content)
             saved += 1
@@ -964,7 +975,7 @@ def run_pipeline_3() -> int:
         except Exception as e:
             log(f"    AI ERR: {e}")
 
-    log(f"  Pipeline 3 done: {saved} files saved")
+    log(f"  Pipeline 5 done: {saved} files saved")
     return saved
 
 
@@ -976,8 +987,8 @@ def main() -> int:
     parser.add_argument(
         "--pipeline",
         type=int,
-        choices=[1, 2, 3],
-        help="Run specific pipeline (1=RSS, 2=Code, 3=University). Default: all",
+        choices=[1, 2, 3, 4, 5],
+        help="Run specific pipeline: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource. Default: all",
     )
     parser.add_argument(
         "--force",
@@ -987,22 +998,12 @@ def main() -> int:
         help="Force regenerate. Pass 'all' to refresh everything or a source "
         "name to target one source. Repeatable.",
     )
-    parser.add_argument(
-        "--categories",
-        type=str,
-        default=None,
-        help="Comma-separated categories for pipeline 1 "
-        "(e.g. 'papers,ai_news'). Default: all categories.",
-    )
     args = parser.parse_args()
 
     global API_KEY, FORCE_ALL, FORCE_SOURCES
     API_KEY = load_api_key()
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
-    category_filter = (
-        [c.strip() for c in args.categories.split(",")] if args.categories else None
-    )
     if FORCE_ALL or FORCE_SOURCES:
         log(
             "Force mode: "
@@ -1010,12 +1011,18 @@ def main() -> int:
             + (f" sources={sorted(FORCE_SOURCES)}" if FORCE_SOURCES else "")
         )
 
-    log(f"DailyInfo Pipeline Runner — {DATE}")
+    log(f"DailyInfo Pipeline Runner - {DATE}")
     log(f"Project root: {PROJECT_ROOT}")
     log(f"Briefings dir: {BRIEFINGS_DIR}")
 
-    pipelines = {1: lambda: run_pipeline_1(categories=category_filter), 2: run_pipeline_2, 3: run_pipeline_3}
-    to_run = [args.pipeline] if args.pipeline else [1, 2, 3]
+    pipelines = {
+        1: run_pipeline_papers,
+        2: run_pipeline_ai_news,
+        3: run_pipeline_arxiv,
+        4: run_pipeline_code,
+        5: run_pipeline_resource,
+    }
+    to_run = [args.pipeline] if args.pipeline else [1, 2, 3, 4, 5]
     total_saved = 0
 
     for p in to_run:
@@ -1024,7 +1031,6 @@ def main() -> int:
         except Exception as e:
             log(f"Pipeline {p} FAILED: {e}")
             import traceback
-
             traceback.print_exc()
 
     log("=== Summary ===")
@@ -1032,7 +1038,7 @@ def main() -> int:
         path = BRIEFINGS_DIR / d
         if path.exists():
             files = [f.name for f in sorted(path.iterdir()) if DATE in f.name]
-            log(f'  {d}/: {len(files)} today — {", ".join(files)}')
+            log(f'  {d}/: {len(files)} today - {", ".join(files)}')
 
     log(f"Total: {total_saved} files saved")
     return 0 if total_saved > 0 else 1
