@@ -34,9 +34,11 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 │                    Processing Layer (dailyinfo run)                 │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │  scripts/run_pipelines.py                                    │   │
-│  │  • Pipeline 1: RSS → AI summary → briefings/papers, ai_news  │   │
-│  │  • Pipeline 2: Code trending → AI summary → briefings/code   │   │
-│  │  • Pipeline 3: University news → AI summary → briefings/res. │   │
+│  │  • Pipeline 1: Papers → AI summary → briefings/papers        │   │
+│  │  • Pipeline 2: AI News → AI summary → briefings/ai_news      │   │
+│  │  • Pipeline 3: arXiv CS.AI → AI summary → briefings/arxiv    │   │
+│  │  • Pipeline 4: Code trending → AI summary → briefings/code   │   │
+│  │  • Pipeline 5: University news → AI summary → briefings/res. │   │
 │  │                                                              │   │
 │  │  OpenRouter API (LLM aggregation, default kimi-k2.5)         │   │
 │  └──────────────────────────────────────────────────────────────┘   │
@@ -86,17 +88,25 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 
 ## Pipeline Details
 
-### Pipeline 1: RSS Papers + AI News
-- **Input**: FreshRSS SQLite DB (`~/.myagentdata/dailyinfo/freshrss/data/users/<user>/db.sqlite`)
-- **Output**: `briefings/papers/`, `briefings/ai_news/`
-- **去重**：`lookback_hours > 24` 的低频源检查 `pushed/<category>/` 里 mtime 在 lookback 内的同名文件，避免重复调用 AI
+### Pipeline 1: Papers
+- **Input**: FreshRSS SQLite DB + scrape/API sources (30+ journals, Chinese water journals)
+- **Output**: `briefings/papers/`
+- **去重**：`lookback_hours > 24` 的低频源检查 `pushed/<category>/` 里的同名文件
 
-### Pipeline 2: Code Trending
+### Pipeline 2: AI News
+- **Input**: FreshRSS SQLite DB (smolai via deep-content processing)
+- **Output**: `briefings/ai_news/`
+
+### Pipeline 3: arXiv CS.AI
+- **Input**: FreshRSS SQLite DB (arXiv RSS, up to 500 articles)
+- **Output**: `briefings/arxiv/`
+- **特殊处理**：运行时创建 `.arxiv_generating` marker 文件，`push` 在推送前轮询等待（最长 30 分钟）
+
+### Pipeline 4: Code Trending
 - **Input**: GitHub Trending HTML + HuggingFace API
 - **Output**: `briefings/code/`
-- **Prompt**: 复用 `sources.json` 的 `prompt_templates.code_trending`
 
-### Pipeline 3: University News
+### Pipeline 5: University News
 - **Input**: DLUT 网站（HTML + API）
 - **Output**: `briefings/resource/`
 
@@ -108,6 +118,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 |----------|----------|
 | papers   | `DISCORD_CHANNEL_PAPERS` |
 | ai_news  | `DISCORD_CHANNEL_AI_NEWS` |
+| arxiv    | `DISCORD_CHANNEL_ARXIV` (falls back to `DISCORD_CHANNEL_AI_NEWS`) |
 | code     | `DISCORD_CHANNEL_CODE` |
 | resource | `DISCORD_CHANNEL_RESOURCE` |
 

@@ -50,10 +50,12 @@ dailyinfo restart    # Restart FreshRSS
 ### Pipeline Execution
 
 ```bash
-dailyinfo run                      # Run all pipelines
-dailyinfo run -p 1                 # Pipeline 1 (RSS papers/news)
-dailyinfo run -p 2                 # Pipeline 2 (code trending)
-dailyinfo run -p 3                 # Pipeline 3 (university news)
+dailyinfo run                      # Run all 5 pipelines
+dailyinfo run -p 1                 # Pipeline 1 (papers)
+dailyinfo run -p 2                 # Pipeline 2 (AI news)
+dailyinfo run -p 3                 # Pipeline 3 (arXiv CS.AI)
+dailyinfo run -p 4                 # Pipeline 4 (code trending)
+dailyinfo run -p 5                 # Pipeline 5 (university news)
 dailyinfo run -f all               # Force regenerate every source today
 dailyinfo run -p 1 -f arxiv_cs_ai  # Force regenerate one source only
 ```
@@ -116,20 +118,26 @@ dailyinfo 提供两个幂等命令供调度器调用：
 
 | Command | Purpose |
 |---------|---------|
-| `dailyinfo run -p 1` | 06:00 — RSS papers + AI news |
-| `dailyinfo run -p 2` | 06:15 — code trending |
-| `dailyinfo run -p 3` | 06:30 — university news |
-| `dailyinfo push` | 07:00 — push to Discord |
+| `dailyinfo run -p 3` | 03:00 — arXiv CS.AI |
+| `dailyinfo run -p 5` | 03:30 — university news |
+| `dailyinfo run -p 4` | 03:45 — code trending |
+| `dailyinfo run -p 1` | 04:00 — papers |
+| `dailyinfo run -p 2` | 04:30 — AI news |
+| `dailyinfo push` | 05:30-07:00 — push to Discord |
 
 在 myopenclaw 的 hermes cron 或其他外部调度器中注册这些命令即可。
 
 如果暂时没用 hermes，可手动配置 crontab：
 
 ```cron
-0 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 1 >> logs/pipeline1.log 2>&1
-15 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 2 >> logs/pipeline2.log 2>&1
-30 6 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 3 >> logs/pipeline3.log 2>&1
-0 7 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py >> logs/discord_push.log 2>&1
+0 3 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 3 >> logs/pipeline3.log 2>&1
+30 3 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 5 >> logs/pipeline5.log 2>&1
+45 3 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 4 >> logs/pipeline4.log 2>&1
+0 4 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 1 >> logs/pipeline1.log 2>&1
+30 4 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 2 >> logs/pipeline2.log 2>&1
+30 5 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories ai_news,code,resource >> logs/discord_push.log 2>&1
+0 6 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories papers >> logs/discord_push.log 2>&1
+0 7 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories arxiv >> logs/discord_push.log 2>&1
 ```
 
 ## Docker Services

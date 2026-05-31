@@ -8,13 +8,44 @@ from datetime import datetime
 import time
 import shutil
 
-from paths import BRIEFINGS_DIR, PUSHED_DIR
+from paths import BRIEFINGS_DIR, PUSHED_DIR, STATE_DIR
 
 DISCORD_API = "https://discord.com/api/v10"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES_JSON = os.path.join(PROJECT_ROOT, "config", "sources.json")
 DISCORD_CONTENT_LIMIT = 2000
 DISCORD_CHUNK_LIMIT = 1950
+
+_ARXIV_MARKER = STATE_DIR / ".arxiv_generating"
+_ARXIV_POLL_INTERVAL = 30   # seconds between checks
+_ARXIV_MAX_WAIT = 1800      # 30 minutes total timeout
+
+
+def _wait_for_arxiv_generation(date: str) -> None:
+    """If arXiv generation is in progress, poll until completion or timeout."""
+    if not _ARXIV_MARKER.exists():
+        return
+
+    try:
+        marker_date = _ARXIV_MARKER.read_text(encoding="utf-8").strip()
+    except Exception:
+        marker_date = ""
+
+    if marker_date and marker_date != date:
+        log(f"  [arxiv] stale marker for {marker_date}, ignoring (today is {date})")
+        return
+
+    log(f"  [arxiv] generation in progress, waiting (up to {_ARXIV_MAX_WAIT}s)...")
+    waited = 0
+    while _ARXIV_MARKER.exists() and waited < _ARXIV_MAX_WAIT:
+        time.sleep(_ARXIV_POLL_INTERVAL)
+        waited += _ARXIV_POLL_INTERVAL
+        log(f"  [arxiv] still waiting... ({waited}s)")
+
+    if _ARXIV_MARKER.exists():
+        log(f"  [arxiv] timeout after {_ARXIV_MAX_WAIT}s, proceeding anyway")
+    else:
+        log(f"  [arxiv] generation finished after ~{waited}s")
 
 
 def log(msg):
@@ -299,6 +330,9 @@ def push_category(category, channel_id, date=None):
     if not os.path.exists(category_dir):
         log(f"  ⚠️  {category} 目录不存在")
         return 0
+
+    if category == "arxiv":
+        _wait_for_arxiv_generation(date)
 
     files = [f for f in sorted(os.listdir(category_dir)) if date in f]
 

@@ -29,10 +29,12 @@ uv sync --python python3 && uv pip install -e .
 dailyinfo install                # Validate .env + create workspace dirs + install deps
 
 # Run pipelines (idempotent - skips sources with today's briefing)
-dailyinfo run                    # All 3 pipelines
-dailyinfo run -p 1               # Pipeline 1: papers + AI news
-dailyinfo run -p 2               # Pipeline 2: code trending
-dailyinfo run -p 3               # Pipeline 3: university news
+dailyinfo run                    # All 5 pipelines
+dailyinfo run -p 1               # Pipeline 1: papers
+dailyinfo run -p 2               # Pipeline 2: AI news
+dailyinfo run -p 3               # Pipeline 3: arXiv
+dailyinfo run -p 4               # Pipeline 4: code trending
+dailyinfo run -p 5               # Pipeline 5: university news
 dailyinfo run -f all             # Force regenerate all sources
 dailyinfo run -f arxiv_cs_ai    # Force regenerate one source
 
@@ -64,15 +66,17 @@ uv run mkdocs serve              # Local preview
 
 ## Architecture
 
-### Three Pipelines
+### Five Pipelines
 
 | Pipeline | Sources | Output |
 |----------|---------|--------|
-| 1 | FreshRSS + scrape/API papers (30+ journals, Chinese water journals, AI news) | `papers/`, `ai_news/` |
-| 2 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
-| 3 | DLUT university sites (scrape + API) | `resource/` |
+| 1 | Papers (30+ journals, Chinese water journals via RSS + scrape/API) | `papers/` |
+| 2 | AI News (smolai via RSS with deep-content) | `ai_news/` |
+| 3 | arXiv CS.AI (RSS, up to 500 articles) | `arxiv/` |
+| 4 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
+| 5 | DLUT university sites (scrape + API) | `resource/` |
 
-Pipeline 1 now processes both RSS sources (via FreshRSS DB) and non-RSS sources (scrape/API) in the same pass.
+Each pipeline is independent — a failure in one does not affect the others. Common processing logic (fetch → batch → AI → merge → save) is shared via `_process_regular_source()`.
 
 ### Data Flow
 
