@@ -9,7 +9,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - CRON_MIN=*/15
-    restart: unless-stopped
+    restart: always
     networks:
       - dailyinfo_net
 

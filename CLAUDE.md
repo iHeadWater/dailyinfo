@@ -14,7 +14,7 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 
 - Python 3.10+, package manager: uv (primary) / pip (fallback)
 - CLI: Click 8+
-- RSS: FreshRSS (Docker/SQLite)
+- RSS: FreshRSS (Docker/SQLite, `restart: always`, auto-start via myopenclaw launchd)
 - AI: OpenRouter API (primary: `moonshotai/kimi-k2.5`, fallback: `deepseek/deepseek-chat-v3.1`)
 - Push: Discord Bot API via `requests`
 - Paper download: `dailyinfo_fetcher/` (async httpx + browser agents; `uv sync --extra paper`)
