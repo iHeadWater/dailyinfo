@@ -36,7 +36,7 @@ def cli_mod(monkeypatch):
 
 def _write_valid_env(path):
     path.write_text(
-        "OPENROUTER_API_KEY=sk-real-test\n"
+        "DEEPSEEK_API_KEY=sk-real-test\n"
         "DISCORD_BOT_TOKEN=test-bot-token\n"
         "DISCORD_CHANNEL_PAPERS=1\n"
         "DISCORD_CHANNEL_AI_NEWS=2\n"
@@ -58,14 +58,14 @@ def test_install_fails_when_env_missing(cli_mod, tmp_path, monkeypatch):
 def test_install_fails_on_placeholder_key(cli_mod, tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text(
-        "OPENROUTER_API_KEY=your_api_key_here\nDISCORD_BOT_TOKEN=real\n",
+        "DEEPSEEK_API_KEY=your_api_key_here\nDISCORD_BOT_TOKEN=real\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(cli_mod, "ENV_FILE", env)
 
     result = CliRunner().invoke(cli_mod.cli, ["install"])
     assert result.exit_code == 1
-    assert "OPENROUTER_API_KEY" in result.output
+    assert "DEEPSEEK_API_KEY" in result.output
 
 
 def test_install_succeeds_with_full_env(cli_mod, tmp_path, monkeypatch):
@@ -82,7 +82,7 @@ def test_install_succeeds_with_full_env(cli_mod, tmp_path, monkeypatch):
 def test_install_warns_about_unset_channels(cli_mod, tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text(
-        "OPENROUTER_API_KEY=sk-real-test\nDISCORD_BOT_TOKEN=tok\n",
+        "DEEPSEEK_API_KEY=sk-real-test\nDISCORD_BOT_TOKEN=tok\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(cli_mod, "ENV_FILE", env)

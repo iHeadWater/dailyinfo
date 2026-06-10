@@ -66,7 +66,7 @@ cd dailyinfo
 
 # 2. 创建配置文件
 cp .env.example .env
-# 编辑 .env，填入 OPENROUTER_API_KEY 和 DISCORD_BOT_TOKEN
+# 编辑 .env，填入 DEEPSEEK_API_KEY 和 DISCORD_BOT_TOKEN（OPENROUTER_API_KEY 可选，用于回退模型）
 
 # 3. 环境初始化（创建 ~/.myagentdata/dailyinfo 目录，安装依赖）
 uv sync --python python3
@@ -98,7 +98,7 @@ dailyinfo push
 | `dailyinfo status` | 查看今日 briefings / pushed 文件数量 |
 
 > `dailyinfo install` 不再写系统 crontab；调度请交给 myopenclaw 的 hermes cron 或外部调度器。
-> `run` 的 AI 调用会在主模型（`moonshotai/kimi-k2.5`）连续返回空响应时自动切到 `DAILYINFO_FALLBACK_MODEL`（默认 `deepseek/deepseek-chat-v3.1`）。
+> `run` 的 AI 调用会在主模型 DeepSeek V4 Pro 连续返回空响应时自动回退到 OpenRouter 的 `DAILYINFO_FALLBACK_MODEL`（默认 `moonshotai/kimi-k2.5`）。
 
 ## 配置
 
@@ -108,13 +108,14 @@ dailyinfo push
 
 | 变量 | 说明 |
 |------|------|
-| `OPENROUTER_API_KEY` | OpenRouter LLM API key（必填） |
+| `DEEPSEEK_API_KEY` | DeepSeek 官方 API key（必填） |
+| `OPENROUTER_API_KEY` | OpenRouter API key（可选，仅回退模型使用） |
 | `DISCORD_BOT_TOKEN` | Discord Bot Token（`dailyinfo push` 需要） |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` | 各分类频道 ID，缺失则跳过；arxiv 未配则复用 `DISCORD_CHANNEL_AI_NEWS` |
 | `FRESHRSS_USER` | FreshRSS 用户名，默认 `$USER` |
 | `FRESHRSS_PASSWORD` | FreshRSS 初始密码 |
 | `DAILYINFO_DATA_ROOT` | 覆盖默认数据根（默认 `~/.myagentdata/dailyinfo`） |
-| `DAILYINFO_FALLBACK_MODEL` | AI 备用模型（主模型空响应后切换，默认 `deepseek/deepseek-chat-v3.1`） |
+| `DAILYINFO_FALLBACK_MODEL` | AI 备用模型（主模型空响应后切换，默认 `moonshotai/kimi-k2.5`） |
 
 ## 从旧版本迁移
 
@@ -161,7 +162,7 @@ python3 scripts/discord_bot.py
 ## 技术栈
 
 - **RSS 聚合**: FreshRSS (Docker)
-- **AI 处理**: OpenRouter (moonshotai/kimi-k2.5)
+- **AI 处理**: DeepSeek V4 Pro 官方 API（回退：OpenRouter Kimi K2.5）
 - **推送**: Discord Bot API（Python `requests`）
 
 ## License
