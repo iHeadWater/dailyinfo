@@ -18,8 +18,8 @@ from paths import BRIEFINGS_DIR, PUSHED_DIR
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DISCORD_API = "https://discord.com/api/v10"
-OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
-ANALYSIS_MODEL = "anthropic/claude-sonnet-4-5"
+DEEPSEEK_API = "https://api.deepseek.com/v1/chat/completions"
+ANALYSIS_MODEL = "deepseek-v4-pro"
 LOOKBACK_DAYS = 3  # search briefings from this many days back
 
 
@@ -43,7 +43,7 @@ def _load_env() -> dict:
                         k, v = line.split("=", 1)
                         env[k.strip()] = v.strip().strip('"').strip("'")
     # environment variables override .env
-    for k in ("DISCORD_BOT_TOKEN", "OPENROUTER_API_KEY"):
+    for k in ("DISCORD_BOT_TOKEN", "DEEPSEEK_API_KEY"):
         if os.environ.get(k):
             env[k] = os.environ[k]
     return env
@@ -51,13 +51,13 @@ def _load_env() -> dict:
 
 ENV = _load_env()
 DISCORD_BOT_TOKEN = ENV.get("DISCORD_BOT_TOKEN", "")
-OPENROUTER_API_KEY = ENV.get("OPENROUTER_API_KEY", "")
+DEEPSEEK_API_KEY = ENV.get("DEEPSEEK_API_KEY", "")
 
 if not DISCORD_BOT_TOKEN:
     log("ERROR: DISCORD_BOT_TOKEN not set")
     sys.exit(1)
-if not OPENROUTER_API_KEY:
-    log("ERROR: OPENROUTER_API_KEY not set")
+if not DEEPSEEK_API_KEY:
+    log("ERROR: DEEPSEEK_API_KEY not set")
     sys.exit(1)
 
 HEADERS_DISCORD = {
@@ -149,8 +149,8 @@ def call_ai(user_query: str, context: str) -> str:
         "max_tokens": 2000,
     }
     resp = requests.post(
-        OPENROUTER_API,
-        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+        DEEPSEEK_API,
+        headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
         json=payload,
         timeout=120,
     )

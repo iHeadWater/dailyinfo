@@ -303,6 +303,7 @@ def _install_call_ai_stubs(monkeypatch, responses, logs):
     import run_pipelines as rp
 
     monkeypatch.setattr(rp, "API_KEY", "sk-test")
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-test-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
 
@@ -1042,3 +1043,82 @@ def test_filter_sources_by_category_and_type():
     # Filter empty category
     result = rp._filter_sources(cfg, "code", "rss")
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# DeepSeek API key loading
+# ---------------------------------------------------------------------------
+
+
+def test_load_deepseek_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # empty dir → no .env
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    assert rp.load_deepseek_key() == "sk-deepseek-test"
+
+
+def test_load_deepseek_key_exits_when_missing(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit):
+        rp.load_deepseek_key()
+
+
+def test_load_deepseek_key_prefers_dotenv_over_env(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DEEPSEEK_API_KEY=sk-from-dotenv\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-from-env")
+
+    assert rp.load_deepseek_key() == "sk-from-dotenv"
+
+
+def test_load_deepseek_key_skips_placeholder_values(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DEEPSEEK_API_KEY=your_api_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-real")
+
+    assert rp.load_deepseek_key() == "sk-real"
+
+
+# ---------------------------------------------------------------------------
+# Dual-provider call_ai — DeepSeek primary, OpenRouter fallback
+# ---------------------------------------------------------------------------
+
+
+def test_call_ai_uses_deepseek_primary_openrouter_fallback(monkeypatch):
+    """Primary calls api.deepseek.com (3 tries), fallback calls openrouter.ai."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    call_urls: list[str] = []
+
+    def fake_post(url, *args, **kwargs):
+        call_urls.append(url)
+        if "deepseek" in url:
+            raise rp.requests.RequestException("deepseek transient error")
+        return _StubAIResponse(content="kimi fallback reply", finish_reason="stop")
+
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    result = rp.call_ai("summarise")
+
+    assert result == "kimi fallback reply"
+    deepseek_calls = [u for u in call_urls if "deepseek" in u]
+    openrouter_calls = [u for u in call_urls if "openrouter" in u]
+    assert len(deepseek_calls) == 3, f"expected 3 deepseek attempts, got {call_urls}"
+    assert len(openrouter_calls) == 1, f"expected 1 openrouter attempt, got {call_urls}"
+    assert "switching to fallback" in "\n".join(logs)

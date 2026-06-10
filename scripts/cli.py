@@ -97,7 +97,7 @@ def install():
         click.echo("  Run: cp .env.example .env and fill in your keys")
         sys.exit(1)
 
-    required = ["OPENROUTER_API_KEY", "DISCORD_BOT_TOKEN"]
+    required = ["DEEPSEEK_API_KEY", "DISCORD_BOT_TOKEN"]
     channel_keys = [
         "DISCORD_CHANNEL_PAPERS",
         "DISCORD_CHANNEL_AI_NEWS",

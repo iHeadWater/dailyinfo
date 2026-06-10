@@ -26,7 +26,7 @@
 
 - **RSS 聚合**：FreshRSS（Docker + SQLite）
 - **处理引擎**：`scripts/run_pipelines.py`（Python, 宿主机直接运行）
-- **AI 模型**：OpenRouter（moonshotai/kimi-k2.5）
+- **AI 模型**：DeepSeek V4 Pro 官方 API（回退：OpenRouter moonshotai/kimi-k2.5）
 - **推送脚本**：`scripts/push_to_discord.py`（纯 Python requests，无 AI 调用）
 - **容器编排**：Docker Compose（仅 FreshRSS）
 
@@ -77,7 +77,7 @@ python3 -c "import json; json.load(open('config/sources.json'))"
 {
   "version": 2,
   "defaults": {
-    "model": "moonshotai/kimi-k2.5",
+    "model": "deepseek-v4-pro",
     "lookback_hours": 24
   },
   "sources": [
