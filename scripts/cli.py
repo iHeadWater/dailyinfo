@@ -78,6 +78,13 @@ def _ensure_workspace() -> None:
         PUSHED_DIR.joinpath(category).mkdir(parents=True, exist_ok=True)
 
 
+def _run_zotero_brief(**kwargs) -> int:
+    """Lazy import so normal CLI use does not require NotebookLM extras."""
+    from zotero_notebooklm import run_zotero_brief
+
+    return run_zotero_brief(**kwargs)
+
+
 # ---------------------------------------------------------------------------
 # CLI Commands
 # ---------------------------------------------------------------------------
@@ -108,7 +115,7 @@ def install():
     from paths import env_suffix
 
     suffix = env_suffix()
-    required = ["OPENROUTER_API_KEY", "DISCORD_BOT_TOKEN"]
+    required = ["DEEPSEEK_API_KEY", "DISCORD_BOT_TOKEN"]
     channel_keys = [
         f"DISCORD_CHANNEL_PAPERS{suffix}",
         f"DISCORD_CHANNEL_AI_NEWS{suffix}",
@@ -222,9 +229,9 @@ def restart():
 @click.option(
     "--pipeline",
     "-p",
-    type=click.Choice(["1", "2", "3", "all"]),
+    type=click.Choice(["1", "2", "3", "4", "5", "all"]),
     default="all",
-    help="Pipeline to run: 1=RSS papers/news, 2=code trending, 3=university news.",
+    help="Pipeline to run: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource.",
 )
 @click.option(
     "-f",
@@ -234,16 +241,7 @@ def restart():
     help="Force regenerate today's briefing. Pass 'all' to refresh everything "
     "or a source name (e.g. 'arxiv_cs_ai'). Repeatable.",
 )
-@click.option(
-    "-c",
-    "--categories",
-    default=None,
-    help=(
-        "Comma-separated categories for pipeline 1 "
-        "(e.g. 'papers,ai_news' or 'arxiv'). Defaults to all categories."
-    ),
-)
-def run(pipeline, force, categories):
+def run(pipeline, force):
     """Scrape sources, generate AI summaries, save briefing files.
 
     By default, sources whose today's briefing already exists are skipped;
@@ -255,10 +253,108 @@ def run(pipeline, force, categories):
         cmd += ["--pipeline", pipeline]
     for src in force:
         cmd += ["--force", src]
-    if categories:
-        cmd += ["--categories", categories]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
+
+
+@cli.command("zotero-brief")
+@click.option(
+    "-d",
+    "--date",
+    "date_str",
+    default=None,
+    help="Zotero dateAdded day to process in YYYY-MM-DD format. Defaults to today.",
+)
+@click.option("--force", is_flag=True, help="Overwrite an existing local Zotero briefing.")
+@click.option(
+    "--artifact",
+    type=click.Choice(["none", "audio", "video", "both"]),
+    default="none",
+    show_default=True,
+    help="Optional NotebookLM artifact to generate after the markdown briefing.",
+)
+@click.option(
+    "--manual-only",
+    is_flag=True,
+    help="Only prepare PDFs, source_index.md, and manual NotebookLM steps.",
+)
+@click.option(
+    "--limit",
+    default=50,
+    show_default=True,
+    type=int,
+    help="Maximum number of Zotero papers to include.",
+)
+@click.option(
+    "--collection",
+    default=None,
+    help="Zotero collection name or key to restrict the run, e.g. water.",
+)
+@click.option(
+    "--open-missing-pdfs",
+    is_flag=True,
+    help="Open inaccessible Zotero PDF attachments once, then retry copying.",
+)
+@click.option(
+    "--pdf-wait-seconds",
+    default=20,
+    show_default=True,
+    type=int,
+    help="Seconds to wait after opening a Zotero PDF attachment.",
+)
+@click.option(
+    "--notebooklm-home",
+    default=None,
+    help="NotebookLM profile directory. Also available as NOTEBOOKLM_HOME.",
+)
+@click.option(
+    "--notebook-title",
+    default=None,
+    help="NotebookLM notebook title. Defaults to the target date.",
+)
+def zotero_brief(
+    date_str,
+    force,
+    artifact,
+    manual_only,
+    limit,
+    collection,
+    open_missing_pdfs,
+    pdf_wait_seconds,
+    notebooklm_home,
+    notebook_title,
+):
+    """Build a Zotero -> NotebookLM paper briefing package.
+
+    This workflow does not call the OpenRouter summarizer used by
+    ``dailyinfo run``. NotebookLM reads the uploaded PDFs and index.
+    """
+    if date_str:
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            click.echo(f"Error: --date must be YYYY-MM-DD (got {date_str!r})", err=True)
+            sys.exit(2)
+    if limit < 1:
+        click.echo("Error: --limit must be a positive integer", err=True)
+        sys.exit(2)
+    if pdf_wait_seconds < 0:
+        click.echo("Error: --pdf-wait-seconds must be zero or positive", err=True)
+        sys.exit(2)
+
+    result = _run_zotero_brief(
+        date_str=date_str,
+        force=force,
+        artifact=artifact,
+        manual_only=manual_only,
+        limit=limit,
+        collection=collection,
+        open_missing_pdfs=open_missing_pdfs,
+        pdf_wait_seconds=pdf_wait_seconds,
+        notebooklm_home=notebooklm_home,
+        notebook_title=notebook_title,
+    )
+    sys.exit(result)
 
 
 @cli.command()

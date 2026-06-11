@@ -25,7 +25,7 @@ services:
       - ${DAILYINFO_DATA_ROOT:-~/.myagentdata/dailyinfo}/freshrss/data:/var/www/FreshRSS/data
     environment:
       <<: *env-common
-    restart: unless-stopped
+    restart: always
     networks:
       - dailyinfo_net
 

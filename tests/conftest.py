@@ -31,7 +31,14 @@ if str(SCRIPTS_DIR) not in sys.path:
 # Modules that cache path values at import time and therefore must be reloaded
 # whenever we relocate the data root. Order matters: ``paths`` must come first
 # because the others do ``from paths import ...``.
-_RELOAD_ORDER = ("paths", "datasource", "run_pipelines", "push_to_discord", "cli")
+_RELOAD_ORDER = (
+    "paths",
+    "zotero_notebooklm",
+    "datasource",
+    "run_pipelines",
+    "push_to_discord",
+    "cli",
+)
 
 
 def _reload_scripts_modules() -> None:
@@ -71,7 +78,7 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
     yield data_root
 
     # Drop cached modules so the next test imports cleanly under its own env.
-    for name in ("cli", "push_to_discord", "run_pipelines"):
+    for name in ("cli", "push_to_discord", "run_pipelines", "zotero_notebooklm"):
         sys.modules.pop(name, None)
 
 
