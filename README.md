@@ -120,9 +120,11 @@ dailyinfo push
 | `dailyinfo install` | Validate environment and create data directories |
 | `dailyinfo start` / `stop` / `restart` | Manage the FreshRSS container |
 | `dailyinfo run` | Run all briefing pipelines |
-| `dailyinfo run -p 1` | Run the RSS papers/news pipeline |
-| `dailyinfo run -p 2` | Run the code trends pipeline |
-| `dailyinfo run -p 3` | Run the university/resource pipeline |
+| `dailyinfo run -p 1` | Pipeline 1: journal papers |
+| `dailyinfo run -p 2` | Pipeline 2: AI news |
+| `dailyinfo run -p 3` | Pipeline 3: arXiv CS.AI |
+| `dailyinfo run -p 4` | Pipeline 4: code trending |
+| `dailyinfo run -p 5` | Pipeline 5: university/resource |
 | `dailyinfo run -f all` | Force regeneration for all sources |
 | `dailyinfo push` | Push pending briefings to Discord and archive them |
 | `dailyinfo push -d 2026-04-22` | Push briefings for a specific date |
@@ -163,13 +165,15 @@ See:
 
 | Variable | Purpose |
 |----------|---------|
-| `OPENROUTER_API_KEY` | OpenRouter API key for `dailyinfo run` |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (primary model for `dailyinfo run`) |
 | `DISCORD_BOT_TOKEN` | Discord bot token for `dailyinfo push` |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` | Optional category channel IDs |
 | `FRESHRSS_USER` | FreshRSS username |
 | `FRESHRSS_PASSWORD` | FreshRSS initial password |
 | `DAILYINFO_DATA_ROOT` | Override default data root |
-| `DAILYINFO_FALLBACK_MODEL` | Fallback model when the primary OpenRouter model returns empty responses |
+| `OPENROUTER_API_KEY` | OpenRouter API key (optional, used for fallback model) |
+| `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) |
+| `DAILYINFO_FALLBACK_MODEL` | Fallback model when DeepSeek returns empty (default `moonshotai/kimi-k2.5`) |
 | `ZOTERO_LOCAL_BASE_URL` | Zotero local API base URL, default `http://127.0.0.1:23119` |
 | `NOTEBOOKLM_HOME` | NotebookLM profile/auth directory used by `notebooklm-py` |
 

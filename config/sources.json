@@ -1,7 +1,7 @@
 {
   "version": 2,
   "defaults": {
-    "model": "moonshotai/kimi-k2.5",
+    "model": "deepseek-v4-pro",
     "lookback_hours": 24,
     "max_articles_per_batch": 10,
     "freshrss_user": ""

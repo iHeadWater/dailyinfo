@@ -29,13 +29,19 @@ if _SCRIPTS_DIR not in sys.path:
 
 import click
 
-from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
+from paths import BRIEFINGS_DIR, CURRENT_ENV, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
 
 SCRIPTS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent
 DATE = datetime.now().strftime("%Y-%m-%d")
 ENV_FILE = PROJECT_ROOT / ".env"
 LOGS_DIR = PROJECT_ROOT / "logs"
+
+
+def _env_banner() -> str:
+    """Return a short env tag for display (e.g. '[env:dev]')."""
+    return f"[env:{CURRENT_ENV}]"
+
 
 CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
 
@@ -93,10 +99,11 @@ def cli():
 def install():
     """Validate environment and create workspace directories.
 
-    Scheduling is delegated to an external cron (e.g. myopenclaw hermes cron).
+    Scheduling is delegated to any external cron (system crontab, systemd
+    timer, agent runtime such as myopenclaw's hermes cron, etc.).
     This command does NOT write to the host crontab.
     """
-    click.echo("==> DailyInfo Environment Setup")
+    click.echo(f"==> DailyInfo Environment Setup {_env_banner()}")
 
     click.echo("[1/3] Checking .env configuration...")
     if not ENV_FILE.exists():
@@ -104,13 +111,17 @@ def install():
         click.echo("  Run: cp .env.example .env and fill in your keys")
         sys.exit(1)
 
-    required = ["OPENROUTER_API_KEY", "DISCORD_BOT_TOKEN"]
+    # Determine which channel keys to validate based on current environment.
+    from paths import env_suffix
+
+    suffix = env_suffix()
+    required = ["DEEPSEEK_API_KEY", "DISCORD_BOT_TOKEN"]
     channel_keys = [
-        "DISCORD_CHANNEL_PAPERS",
-        "DISCORD_CHANNEL_AI_NEWS",
-        "DISCORD_CHANNEL_CODE",
-        "DISCORD_CHANNEL_RESOURCE",
-        "DISCORD_CHANNEL_ARXIV",
+        f"DISCORD_CHANNEL_PAPERS{suffix}",
+        f"DISCORD_CHANNEL_AI_NEWS{suffix}",
+        f"DISCORD_CHANNEL_CODE{suffix}",
+        f"DISCORD_CHANNEL_RESOURCE{suffix}",
+        f"DISCORD_CHANNEL_ARXIV{suffix}",
     ]
     env = _read_env_keys(required + channel_keys)
 
@@ -164,7 +175,9 @@ def install():
     click.echo("  3. dailyinfo push          # push today's briefings to Discord")
     click.echo("")
     click.echo("Scheduling is expected to be driven by an external cron")
-    click.echo("(e.g. myopenclaw hermes cron) calling these commands.")
+    click.echo(
+        "(system crontab, systemd timer, hermes cron, ...) calling these commands."
+    )
 
 
 @cli.command()
@@ -216,9 +229,9 @@ def restart():
 @click.option(
     "--pipeline",
     "-p",
-    type=click.Choice(["1", "2", "3", "all"]),
+    type=click.Choice(["1", "2", "3", "4", "5", "all"]),
     default="all",
-    help="Pipeline to run: 1=RSS papers/news, 2=code trending, 3=university news.",
+    help="Pipeline to run: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource.",
 )
 @click.option(
     "-f",
@@ -228,16 +241,7 @@ def restart():
     help="Force regenerate today's briefing. Pass 'all' to refresh everything "
     "or a source name (e.g. 'arxiv_cs_ai'). Repeatable.",
 )
-@click.option(
-    "-c",
-    "--categories",
-    default=None,
-    help=(
-        "Comma-separated categories for pipeline 1 "
-        "(e.g. 'papers,ai_news' or 'arxiv'). Defaults to all categories."
-    ),
-)
-def run(pipeline, force, categories):
+def run(pipeline, force):
     """Scrape sources, generate AI summaries, save briefing files.
 
     By default, sources whose today's briefing already exists are skipped;
@@ -249,8 +253,6 @@ def run(pipeline, force, categories):
         cmd += ["--pipeline", pipeline]
     for src in force:
         cmd += ["--force", src]
-    if categories:
-        cmd += ["--categories", categories]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
 
@@ -414,7 +416,8 @@ def status():
     """Show today's briefing and pushed file counts."""
     total_pending = 0
 
-    click.echo(f"Briefings for {DATE}:")
+    click.echo(f"Briefings for {DATE} {_env_banner()}:")
+    click.echo(f"  Workspace: {WORKSPACE_ROOT}")
     for cat in CATEGORIES:
         path = BRIEFINGS_DIR / cat
         if path.is_dir():
@@ -434,22 +437,6 @@ def status():
                 click.echo(f"  {cat:15s}: {len(files):3d} files")
 
     click.echo(f"\nTotal pending: {total_pending} files")
-
-
-@cli.command()
-def bot():
-    """Start the Discord bot (deep-fetch, paper download, briefing Q&A)."""
-    import importlib
-    # aiohttp (used by discord.py) only reads uppercase proxy env vars
-    for _low, _up in (("https_proxy", "HTTPS_PROXY"), ("http_proxy", "HTTP_PROXY")):
-        if not os.environ.get(_up) and os.environ.get(_low):
-            os.environ[_up] = os.environ[_low]
-
-    _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-    if str(_PROJECT_ROOT) not in sys.path:
-        sys.path.insert(0, str(_PROJECT_ROOT))
-    mod = importlib.import_module("dailyinfo_fetcher.discord_handler")
-    mod.main()
 
 
 @cli.command()

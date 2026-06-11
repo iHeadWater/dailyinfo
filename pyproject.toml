@@ -14,11 +14,6 @@ dependencies = [
     "requests>=2.31",
     "python-dotenv>=1.0",
     "click>=8.1",
-    "websocket-client>=1.9.0",
-    "discord-py>=2.3",
-    "httpx[socks]>=0.27",
-    "ddgs>=9.14.1",
-    "browser-use==0.12.6",
 ]
 
 [project.optional-dependencies]
@@ -29,10 +24,6 @@ dev = [
 ]
 notebooklm = [
     "notebooklm-py[browser]>=0.5.0",
-]
-paper = [
-    "browser-use",
-    "langchain-anthropic",
 ]
 
 [dependency-groups]
@@ -46,10 +37,11 @@ dailyinfo = "scripts.cli:cli"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["scripts*", "dailyinfo_fetcher*"]
+include = ["scripts*"]
 
 [tool.uv]
 dev-dependencies = [
+    "black>=26.3.1",
     "pytest>=9.0.3",
 ]
 

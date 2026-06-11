@@ -8,7 +8,7 @@ from datetime import datetime
 import time
 import shutil
 
-from paths import BRIEFINGS_DIR, PUSHED_DIR
+from paths import BRIEFINGS_DIR, CURRENT_ENV, PUSHED_DIR, STATE_DIR, get_channel_id
 
 DISCORD_API = "https://discord.com/api/v10"
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,11 +16,42 @@ SOURCES_JSON = os.path.join(PROJECT_ROOT, "config", "sources.json")
 DISCORD_CONTENT_LIMIT = 2000
 DISCORD_CHUNK_LIMIT = 1950
 
+_ARXIV_MARKER = STATE_DIR / ".arxiv_generating"
+_ARXIV_POLL_INTERVAL = 30   # seconds between checks
+_ARXIV_MAX_WAIT = 1800      # 30 minutes total timeout
+
+
+def _wait_for_arxiv_generation(date: str) -> None:
+    """If arXiv generation is in progress, poll until completion or timeout."""
+    if not _ARXIV_MARKER.exists():
+        return
+
+    try:
+        marker_date = _ARXIV_MARKER.read_text(encoding="utf-8").strip()
+    except Exception:
+        marker_date = ""
+
+    if marker_date and marker_date != date:
+        log(f"  [arxiv] stale marker for {marker_date}, ignoring (today is {date})")
+        return
+
+    log(f"  [arxiv] generation in progress, waiting (up to {_ARXIV_MAX_WAIT}s)...")
+    waited = 0
+    while _ARXIV_MARKER.exists() and waited < _ARXIV_MAX_WAIT:
+        time.sleep(_ARXIV_POLL_INTERVAL)
+        waited += _ARXIV_POLL_INTERVAL
+        log(f"  [arxiv] still waiting... ({waited}s)")
+
+    if _ARXIV_MARKER.exists():
+        log(f"  [arxiv] timeout after {_ARXIV_MAX_WAIT}s, proceeding anyway")
+    else:
+        log(f"  [arxiv] generation finished after ~{waited}s")
+
 
 def log(msg):
-    """输出日志"""
+    """输出日志（附带当前环境标记）"""
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+    print(f"[{ts}] [env:{CURRENT_ENV}] {msg}", flush=True)
 
 
 def _load_env_value(key):
@@ -51,15 +82,20 @@ if not DISCORD_BOT_TOKEN:
     log("❌ 错误：DISCORD_BOT_TOKEN 未设置")
     exit(1)
 
-# Channel IDs are loaded per-category from env (DISCORD_CHANNEL_<CATEGORY>).
+# Channel IDs are resolved per-category using the env-aware config module.
+# In dev/staging environments, the keys are suffixed (e.g. DISCORD_CHANNEL_PAPERS_DEV).
 # Missing entries cause that category to be skipped at push time, not a fatal error.
 DISCORD_CHANNELS = {
-    category: _load_env_value(f"DISCORD_CHANNEL_{category.upper()}")
+    category: get_channel_id(category)
     for category in ("papers", "ai_news", "code", "resource", "arxiv", "weekly")
 }
 # arxiv shares the ai_news Discord channel
 if not DISCORD_CHANNELS.get("arxiv"):
     DISCORD_CHANNELS["arxiv"] = DISCORD_CHANNELS.get("ai_news")
+
+log(
+    f"环境: {CURRENT_ENV}  频道映射: { {k: (v or '(未配置)') for k, v in DISCORD_CHANNELS.items()} }"
+)
 
 
 def _today() -> str:
@@ -247,7 +283,11 @@ def build_push_summary(
         and name not in pending_set
     ]
 
-    title = "📊 论文频道推送总结" if category in ("papers", "arxiv") else f"📊 {category} 推送总结"
+    title = (
+        "📊 论文频道推送总结"
+        if category in ("papers", "arxiv")
+        else f"📊 {category} 推送总结"
+    )
     lines = [
         f"{title} ({date})",
         "",
@@ -299,6 +339,9 @@ def push_category(category, channel_id, date=None):
     if not os.path.exists(category_dir):
         log(f"  ⚠️  {category} 目录不存在")
         return 0
+
+    if category == "arxiv":
+        _wait_for_arxiv_generation(date)
 
     files = [f for f in sorted(os.listdir(category_dir)) if date in f]
 
