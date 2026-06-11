@@ -100,9 +100,10 @@ WORKSPACE_ROOT = _resolve_data_root()
 BRIEFINGS_DIR = WORKSPACE_ROOT / "briefings"
 PUSHED_DIR = WORKSPACE_ROOT / "pushed"
 FRESHRSS_DATA = WORKSPACE_ROOT / "freshrss" / "data"
-
 # Convenience: current environment name (for logging / display)
 CURRENT_ENV = get_dailyinfo_env()
+
+STATE_DIR = WORKSPACE_ROOT / "state"
 
 
 # -----------------------------------------------------------------------

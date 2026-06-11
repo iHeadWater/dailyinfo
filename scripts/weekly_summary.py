@@ -24,7 +24,7 @@ import run_pipelines
 from run_pipelines import log
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL = "deepseek-v4-pro"
 
 
 def _load_deepseek_key() -> str:

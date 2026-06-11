@@ -303,6 +303,7 @@ def _install_call_ai_stubs(monkeypatch, responses, logs):
     import run_pipelines as rp
 
     monkeypatch.setattr(rp, "API_KEY", "sk-test")
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-test-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
 
@@ -794,7 +795,7 @@ def _make_dlut_news_sources_json(path, templates_extra=None):
     return html
 
 
-def test_run_pipeline_3_unified_news_saves_single_file(
+def test_pipeline_resource_unified_news_saves_single_file(
     monkeypatch, tmp_path, fake_requests, fake_call_ai
 ):
     """8 news sources → 1 dlut_news_briefing file, recruitment untouched."""
@@ -811,7 +812,7 @@ def test_run_pipeline_3_unified_news_saves_single_file(
     fake_requests.register("https://news.dlut.test/zhxw.htm", FakeResponse(200, html))
     fake_requests.register("https://news.dlut.test/xsky.htm", FakeResponse(200, html))
 
-    saved = rp.run_pipeline_3()
+    saved = rp.run_pipeline_resource()
 
     today = datetime.now().strftime("%Y-%m-%d")
     unified = BRIEFINGS_DIR / "resource" / f"dlut_news_briefing_{today}.md"
@@ -827,7 +828,7 @@ def test_run_pipeline_3_unified_news_saves_single_file(
         ).exists(), f"{name} individual file should not exist"
 
 
-def test_run_pipeline_3_unified_news_idempotent(
+def test_pipeline_resource_unified_news_idempotent(
     monkeypatch, fake_requests, fake_call_ai
 ):
     """Second run on same day skips unified news generation."""
@@ -850,13 +851,13 @@ def test_run_pipeline_3_unified_news_idempotent(
     import requests
     monkeypatch.setattr(requests, "get", boom)
 
-    saved = rp.run_pipeline_3()
+    saved = rp.run_pipeline_resource()
 
     assert saved == 0
     assert existing.read_text(encoding="utf-8").startswith("# 大连理工大学校园动态")
 
 
-def test_run_pipeline_3_url_dedup_across_sections(
+def test_pipeline_resource_url_dedup_across_sections(
     monkeypatch, tmp_path, fake_requests, fake_call_ai
 ):
     """Same URL appearing in two sections should only appear once in prompt."""
@@ -918,7 +919,7 @@ def test_run_pipeline_3_url_dedup_across_sections(
 
     monkeypatch.setattr(rp, "call_ai", capture_ai)
 
-    rp.run_pipeline_3()
+    rp.run_pipeline_resource()
 
     assert prompts_seen, "AI should have been called"
     # The same URL should not appear twice in the prompt
@@ -926,7 +927,7 @@ def test_run_pipeline_3_url_dedup_across_sections(
     assert url_occurrences <= 1, f"duplicate URL in prompt: appeared {url_occurrences} times"
 
 
-def test_run_pipeline_2_smoke(monkeypatch, fake_requests, fake_call_ai):
+def test_pipeline_code_smoke(monkeypatch, fake_requests, fake_call_ai):
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
@@ -937,7 +938,7 @@ def test_run_pipeline_2_smoke(monkeypatch, fake_requests, fake_call_ai):
         FakeResponse(status=200, text=read_fixture("github_trending.html")),
     )
 
-    saved = rp.run_pipeline_2()
+    saved = rp.run_pipeline_code()
 
     assert saved == 1
     today = datetime.now().strftime("%Y-%m-%d")
@@ -948,7 +949,7 @@ def test_run_pipeline_2_smoke(monkeypatch, fake_requests, fake_call_ai):
     assert "[AI-SUMMARY]" in body
 
 
-def test_run_pipeline_2_skips_when_briefing_already_exists(
+def test_pipeline_code_skips_when_briefing_already_exists(
     monkeypatch, fake_requests, fake_call_ai
 ):
     """If today's briefing is already saved, pipeline 2 should not re-fetch or re-call AI."""
@@ -973,14 +974,14 @@ def test_run_pipeline_2_skips_when_briefing_already_exists(
 
     rp.FORCE_ALL = False
     rp.FORCE_SOURCES = set()
-    saved = rp.run_pipeline_2()
+    saved = rp.run_pipeline_code()
 
     assert saved == 0
     # File stays intact (not overwritten).
     assert existing.read_text(encoding="utf-8").startswith("# GitHub Trending")
 
 
-def test_run_pipeline_2_skips_when_fetch_fails(
+def test_pipeline_code_skips_when_fetch_fails(
     monkeypatch, fake_requests, fake_call_ai
 ):
     """When the scraper raises, pipeline logs and continues without saving."""
@@ -996,7 +997,7 @@ def test_run_pipeline_2_skips_when_fetch_fails(
 
     monkeypatch.setattr(requests, "get", boom)
 
-    saved = rp.run_pipeline_2()
+    saved = rp.run_pipeline_code()
     assert saved == 0
     today = datetime.now().strftime("%Y-%m-%d")
     assert not (
@@ -1005,75 +1006,119 @@ def test_run_pipeline_2_skips_when_fetch_fails(
 
 
 # -----------------------------------------------------------------
-# Category filtering for run_pipeline_1
+# _filter_sources helper
 # -----------------------------------------------------------------
 
 
-def test_pipeline1_category_filter_rss_sources():
-    """When categories is provided, RSS sources outside the filter are excluded."""
+def test_filter_sources_by_category_and_type():
+    """_filter_sources returns enabled sources matching category and types."""
     import run_pipelines as rp
 
-    # Simulate the filtering logic from run_pipeline_1
-    sources = [
-        {"name": "smolai_news", "type": "rss", "category": "ai_news", "enabled": True},
-        {"name": "arxiv_cs_ai", "type": "rss", "category": "arxiv", "enabled": True},
+    cfg = {"sources": [
         {"name": "nature", "type": "rss", "category": "papers", "enabled": True},
         {"name": "science", "type": "rss", "category": "papers", "enabled": True},
-    ]
-
-    # Filter for papers+ai_news (exclude arxiv)
-    categories = ["papers", "ai_news"]
-    filtered = [s for s in sources if s.get("category") in categories]
-    names = [s["name"] for s in filtered]
-    assert "arxiv_cs_ai" not in names
-    assert "nature" in names
-    assert "smolai_news" in names
-
-    # Filter for arxiv only
-    categories = ["arxiv"]
-    filtered = [s for s in sources if s.get("category") in categories]
-    assert [s["name"] for s in filtered] == ["arxiv_cs_ai"]
-
-    # No filter → all included
-    categories = None
-    if categories:
-        filtered = [s for s in sources if s.get("category") in categories]
-    else:
-        filtered = sources
-    assert len(filtered) == 4
-
-
-def test_pipeline1_category_filter_non_rss_sources():
-    """When categories is provided, non-RSS sources outside the filter are excluded."""
-    sources = [
+        {"name": "arxiv_cs_ai", "type": "rss", "category": "arxiv", "enabled": True},
+        {"name": "smolai_news", "type": "rss", "category": "ai_news", "enabled": True},
         {"name": "skxjz", "type": "scrape", "category": "papers", "enabled": True},
-        {"name": "shuili_xuebao", "type": "api", "category": "papers", "enabled": True},
-    ]
+        {"name": "disabled_source", "type": "rss", "category": "papers", "enabled": False},
+    ]}
 
-    # Filter for arxiv only → no non-RSS sources match
-    categories = ["arxiv"]
-    allowed = set(categories) if categories else {"papers", "ai_news", "arxiv"}
-    filtered = [s for s in sources if s.get("category") in allowed]
-    assert filtered == []
+    # Filter papers RSS
+    result = rp._filter_sources(cfg, "papers", "rss")
+    names = [s["name"] for s in result]
+    assert "nature" in names
+    assert "science" in names
+    assert "arxiv_cs_ai" not in names
+    assert "skxjz" not in names  # scrape, not rss
+    assert "disabled_source" not in names
 
-    # Filter for papers → both match
-    categories = ["papers"]
-    allowed = set(categories) if categories else {"papers", "ai_news", "arxiv"}
-    filtered = [s for s in sources if s.get("category") in allowed]
-    assert len(filtered) == 2
+    # Filter papers scrape+api
+    result = rp._filter_sources(cfg, "papers", "scrape", "api")
+    assert [s["name"] for s in result] == ["skxjz"]
+
+    # Filter arxiv RSS
+    result = rp._filter_sources(cfg, "arxiv", "rss")
+    assert [s["name"] for s in result] == ["arxiv_cs_ai"]
+
+    # Filter empty category
+    result = rp._filter_sources(cfg, "code", "rss")
+    assert result == []
 
 
-def test_pipeline1_categories_arg_parsed():
-    """--categories arg is parsed into a list of category strings."""
+# ---------------------------------------------------------------------------
+# DeepSeek API key loading
+# ---------------------------------------------------------------------------
+
+
+def test_load_deepseek_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
     import run_pipelines as rp
-    import sys
 
-    old_argv = sys.argv
-    try:
-        sys.argv = ["run_pipelines.py", "--categories", "papers,ai_news"]
-        # Re-parse would happen in main(); just test the parsing logic
-        raw = "papers,ai_news"
-        result = [c.strip() for c in raw.split(",")]
-        assert result == ["papers", "ai_news"]
-    finally:
-        sys.argv = old_argv
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # empty dir → no .env
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    assert rp.load_deepseek_key() == "sk-deepseek-test"
+
+
+def test_load_deepseek_key_exits_when_missing(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit):
+        rp.load_deepseek_key()
+
+
+def test_load_deepseek_key_prefers_dotenv_over_env(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DEEPSEEK_API_KEY=sk-from-dotenv\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-from-env")
+
+    assert rp.load_deepseek_key() == "sk-from-dotenv"
+
+
+def test_load_deepseek_key_skips_placeholder_values(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DEEPSEEK_API_KEY=your_api_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-real")
+
+    assert rp.load_deepseek_key() == "sk-real"
+
+
+# ---------------------------------------------------------------------------
+# Dual-provider call_ai — DeepSeek primary, OpenRouter fallback
+# ---------------------------------------------------------------------------
+
+
+def test_call_ai_uses_deepseek_primary_openrouter_fallback(monkeypatch):
+    """Primary calls api.deepseek.com (3 tries), fallback calls openrouter.ai."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    call_urls: list[str] = []
+
+    def fake_post(url, *args, **kwargs):
+        call_urls.append(url)
+        if "deepseek" in url:
+            raise rp.requests.RequestException("deepseek transient error")
+        return _StubAIResponse(content="kimi fallback reply", finish_reason="stop")
+
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    result = rp.call_ai("summarise")
+
+    assert result == "kimi fallback reply"
+    deepseek_calls = [u for u in call_urls if "deepseek" in u]
+    openrouter_calls = [u for u in call_urls if "openrouter" in u]
+    assert len(deepseek_calls) == 3, f"expected 3 deepseek attempts, got {call_urls}"
+    assert len(openrouter_calls) == 1, f"expected 1 openrouter attempt, got {call_urls}"
+    assert "switching to fallback" in "\n".join(logs)

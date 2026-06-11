@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DailyInfo is an automated research intelligence aggregation and push system for AI for Science researchers. It collects RSS feeds, scrapes websites, and queries APIs, then uses OpenRouter LLMs to generate Chinese-language summaries pushed to Discord channels.
+DailyInfo is an automated research intelligence aggregation and push system for AI for Science researchers. It collects RSS feeds, scrapes websites, and queries APIs, then uses DeepSeek V4 Pro (OpenRouter Kimi K2.5 as fallback) to generate Chinese-language summaries pushed to Discord channels.
 
 **Core pipeline**: FreshRSS collection -> AI summary generation (markdown to disk) -> Discord push + archive
 
@@ -14,8 +14,8 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 
 - Python 3.10+, package manager: uv (primary) / pip (fallback)
 - CLI: Click 8+
-- RSS: FreshRSS (Docker/SQLite)
-- AI: OpenRouter API (primary: `moonshotai/kimi-k2.5`, fallback: `deepseek/deepseek-v4-pro`)
+- RSS: FreshRSS (Docker/SQLite, `restart: always`, auto-start via myopenclaw launchd)
+- AI: DeepSeek V4 Pro official API (fallback: OpenRouter `moonshotai/kimi-k2.5`)
 - Push: Discord Bot API via `requests`
 - Docs: MkDocs Material (GitHub Pages)
 - Lint: Ruff, Format: Black, Test: pytest 8+
@@ -28,10 +28,12 @@ uv sync --python python3 && uv pip install -e .
 dailyinfo install                # Validate .env + create workspace dirs + install deps
 
 # Run pipelines (idempotent - skips sources with today's briefing)
-dailyinfo run                    # All 3 pipelines
-dailyinfo run -p 1               # Pipeline 1: papers + AI news
-dailyinfo run -p 2               # Pipeline 2: code trending
-dailyinfo run -p 3               # Pipeline 3: university news
+dailyinfo run                    # All 5 pipelines
+dailyinfo run -p 1               # Pipeline 1: papers
+dailyinfo run -p 2               # Pipeline 2: AI news
+dailyinfo run -p 3               # Pipeline 3: arXiv
+dailyinfo run -p 4               # Pipeline 4: code trending
+dailyinfo run -p 5               # Pipeline 5: university news
 dailyinfo run -f all             # Force regenerate all sources
 dailyinfo run -f arxiv_cs_ai    # Force regenerate one source
 
@@ -63,20 +65,22 @@ uv run mkdocs serve              # Local preview
 
 ## Architecture
 
-### Three Pipelines
+### Five Pipelines
 
 | Pipeline | Sources | Output |
 |----------|---------|--------|
-| 1 | FreshRSS + scrape/API papers (30+ journals, Chinese water journals, AI news) | `papers/`, `ai_news/` |
-| 2 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
-| 3 | DLUT university sites (scrape + API) | `resource/` |
+| 1 | Papers (30+ journals, Chinese water journals via RSS + scrape/API) | `papers/` |
+| 2 | AI News (smolai via RSS with deep-content) | `ai_news/` |
+| 3 | arXiv CS.AI (RSS, up to 500 articles) | `arxiv/` |
+| 4 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
+| 5 | DLUT university sites (scrape + API) | `resource/` |
 
-Pipeline 1 now processes both RSS sources (via FreshRSS DB) and non-RSS sources (scrape/API) in the same pass.
+Each pipeline is independent — a failure in one does not affect the others. Common processing logic (fetch → batch → AI → merge → save) is shared via `_process_regular_source()`.
 
 ### Data Flow
 
 1. **Collection**: FreshRSS for RSS; `datasource.py` handles scraping/API
-2. **Processing** (`run_pipelines.py`): Fetch -> format -> call OpenRouter AI with prompt templates -> save markdown to `~/.myagentdata/dailyinfo/briefings/{category}/`
+2. **Processing** (`run_pipelines.py`): Fetch -> format -> call DeepSeek AI with prompt templates -> save markdown to `~/.myagentdata/dailyinfo/briefings/{category}/`
 3. **Push** (`push_to_discord.py`): Scan briefings -> POST to Discord channels -> move to `pushed/{category}/`
 
 ### DataSource Class Hierarchy
@@ -99,7 +103,7 @@ Pipeline 1 now processes both RSS sources (via FreshRSS DB) and non-RSS sources 
 
 Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`.
 
-Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: moonshotai/kimi-k2.5`.
+Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-v4-pro`.
 
 Prompt templates under `prompt_templates` key use placeholders: `{count}`, `{display_name}`, `{article_list}`, `{items}`, `{date}`, `{content}`.
 
@@ -109,8 +113,8 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 
 ## Environment Variables
 
-Required: `OPENROUTER_API_KEY`, `DISCORD_BOT_TOKEN`
-Optional: `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`
+Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`
+Optional: `OPENROUTER_API_KEY` (fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`
 
 ## Testing Conventions
 
@@ -120,6 +124,20 @@ Optional: `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWOR
 - `fake_call_ai` fixture stubs `run_pipelines.call_ai` with deterministic response, disables `time.sleep`
 - `rss_db` fixture provides in-memory SQLite with fresh/stale entry fixtures
 - Test files mirror source: `test_{module}.py` for `scripts/{module}.py`
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as GitHub issues on `iHeadWater/dailyinfo`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
 ## Language
 

@@ -36,8 +36,8 @@ def cli_mod(monkeypatch):
 
 def _write_valid_env(path):
     path.write_text(
-        "OPENROUTER_API_KEY=***\n"
-        "DISCORD_BOT_TOKEN=***\n"
+        "DEEPSEEK_API_KEY=sk-real-test\n"
+        "DISCORD_BOT_TOKEN=test-bot-token\n"
         "DISCORD_CHANNEL_PAPERS=1\n"
         "DISCORD_CHANNEL_AI_NEWS=2\n"
         "DISCORD_CHANNEL_CODE=3\n"
@@ -63,14 +63,14 @@ def test_install_fails_when_env_missing(cli_mod, tmp_path, monkeypatch):
 def test_install_fails_on_placeholder_key(cli_mod, tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text(
-        "OPENROUTER_API_KEY=your_api_key_here\nDISCORD_BOT_TOKEN=real\n",
+        "DEEPSEEK_API_KEY=your_api_key_here\nDISCORD_BOT_TOKEN=real\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(cli_mod, "ENV_FILE", env)
 
     result = CliRunner().invoke(cli_mod.cli, ["install"])
     assert result.exit_code == 1
-    assert "OPENROUTER_API_KEY" in result.output
+    assert "DEEPSEEK_API_KEY" in result.output
 
 
 def test_install_succeeds_with_full_env(cli_mod, tmp_path, monkeypatch):
@@ -87,7 +87,7 @@ def test_install_succeeds_with_full_env(cli_mod, tmp_path, monkeypatch):
 def test_install_warns_about_unset_channels(cli_mod, tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text(
-        "OPENROUTER_API_KEY=sk-real-test\nDISCORD_BOT_TOKEN=tok\n",
+        "DEEPSEEK_API_KEY=sk-real-test\nDISCORD_BOT_TOKEN=tok\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(cli_mod, "ENV_FILE", env)
@@ -235,22 +235,22 @@ def test_version_flag_prints_project_version(cli_mod):
     assert "0.3.0" in result.output
 
 
-def test_run_forwards_categories_arg(cli_mod):
-    result = CliRunner().invoke(cli_mod.cli, ["run", "-p", "1", "--categories", "papers,ai_news"])
+def test_run_forwards_pipeline_flag(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["run", "-p", "3"])
     assert result.exit_code == 0, result.output
 
     calls = cli_mod.__test_calls__
     pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
     assert pipeline_calls
-    assert "--categories" in pipeline_calls[0]
-    assert pipeline_calls[0][pipeline_calls[0].index("--categories") + 1] == "papers,ai_news"
+    assert "--pipeline" in pipeline_calls[0]
+    assert pipeline_calls[0][pipeline_calls[0].index("--pipeline") + 1] == "3"
 
 
-def test_run_without_categories_omits_flag(cli_mod):
-    result = CliRunner().invoke(cli_mod.cli, ["run", "-p", "1"])
+def test_run_default_runs_all_pipelines(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["run"])
     assert result.exit_code == 0
 
     calls = cli_mod.__test_calls__
     pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
     assert pipeline_calls
-    assert "--categories" not in pipeline_calls[0]
+    assert "--pipeline" not in pipeline_calls[0]
