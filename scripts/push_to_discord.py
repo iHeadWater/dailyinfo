@@ -166,7 +166,7 @@ def split_discord_messages(content):
 
 
 def send_to_discord(channel_id, content):
-    """发送消息到 Discord 频道"""
+    """发送消息到 Discord 频道，网络失败时最多重试 3 次（指数退避）"""
     messages = split_discord_messages(content)
 
     headers = {
@@ -176,28 +176,42 @@ def send_to_discord(channel_id, content):
     }
 
     for i, msg in enumerate(messages):
-        try:
-            # Add a human-readable chunk marker when a briefing spans messages.
-            if len(messages) > 1:
-                msg = f"{_chunk_prefix(i + 1, len(messages))}{msg}"
+        if len(messages) > 1:
+            msg = f"{_chunk_prefix(i + 1, len(messages))}{msg}"
+        data = {"content": msg}
 
-            data = {"content": msg}
-
-            resp = requests.post(
-                f"{DISCORD_API}/channels/{channel_id}/messages",
-                headers=headers,
-                json=data,
-                timeout=10,
-            )
-
-            if resp.status_code in (200, 201):
-                log(f"  ✅ 第 {i+1} 部分发送成功")
-                time.sleep(0.5)
-            else:
+        delays = [2, 5, 10]
+        last_err = None
+        for attempt, delay in enumerate(delays + [None], start=1):
+            try:
+                resp = requests.post(
+                    f"{DISCORD_API}/channels/{channel_id}/messages",
+                    headers=headers,
+                    json=data,
+                    timeout=10,
+                )
+                if resp.status_code in (200, 201):
+                    log(f"  ✅ 第 {i+1} 部分发送成功")
+                    time.sleep(0.5)
+                    break
+                # 429 Rate limit — honour Retry-After
+                if resp.status_code == 429:
+                    wait = float(resp.json().get("retry_after", delay))
+                    log(f"  ⏳ 触发限速，等待 {wait:.1f}s 后重试 (第 {attempt} 次)")
+                    time.sleep(wait)
+                    last_err = f"429 rate limit"
+                    continue
                 log(f"  ❌ 第 {i+1} 部分发送失败: {resp.status_code} - {resp.text}")
                 return False
-        except Exception as e:
-            log(f"  ❌ 发送错误: {e}")
+            except Exception as e:
+                last_err = str(e)
+                if delay is None:
+                    log(f"  ❌ 发送错误（已重试 {len(delays)} 次）: {last_err}")
+                    return False
+                log(f"  ⚠️  网络错误，{delay}s 后重试 (第 {attempt} 次): {last_err}")
+                time.sleep(delay)
+        else:
+            log(f"  ❌ 第 {i+1} 部分重试耗尽: {last_err}")
             return False
 
     return True
