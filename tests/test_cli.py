@@ -301,7 +301,7 @@ def test_start_fails_when_compose_missing(cli_mod, tmp_path, monkeypatch):
 def test_version_flag_prints_project_version(cli_mod):
     result = CliRunner().invoke(cli_mod.cli, ["--version"])
     assert result.exit_code == 0
-    assert "0.3.0" in result.output
+    assert "0.1.0" in result.output
 
 
 def test_run_forwards_pipeline_flag(cli_mod):

@@ -88,8 +88,16 @@ def _run_zotero_brief(**kwargs) -> int:
 # ---------------------------------------------------------------------------
 # CLI Commands
 # ---------------------------------------------------------------------------
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("dailyinfo")
+except Exception:
+    __version__ = "0.0.0"
+
+
 @click.group()
-@click.version_option(version="0.3.0")
+@click.version_option(version=__version__)
 def cli():
     """dailyinfo — daily briefing pipeline manager."""
     pass
