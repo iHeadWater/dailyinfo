@@ -46,6 +46,12 @@ dailyinfo status                 # Show today's briefing/pushed counts
 dailyinfo start/stop/restart     # FreshRSS Docker container
 dailyinfo logs                   # Tail execution log
 
+# Zotero -> NotebookLM (agent-operated)
+# Prefer the Claude Code slash command:
+# /zotero-notebooklm water 2026-05-28 audio
+# New-machine setup: docs/zotero-notebooklm.md
+uv run --extra notebooklm dailyinfo zotero-brief --collection water --artifact audio --open-missing-pdfs
+
 # Direct script execution (no install needed)
 python3 scripts/run_pipelines.py [--pipeline N] [--force SOURCE|all]
 python3 scripts/push_to_discord.py [--date YYYY-MM-DD]

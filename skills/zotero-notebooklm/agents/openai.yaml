@@ -1,0 +1,3 @@
+display_name: Zotero NotebookLM
+short_description: Orchestrate Zotero papers into NotebookLM briefings and audio/video overviews.
+default_prompt: Use DailyInfo's zotero-brief capability to process Zotero papers with NotebookLM, handling manual auth and fallback steps clearly.

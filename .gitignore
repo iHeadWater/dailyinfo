@@ -25,6 +25,12 @@ docs/docs/
 # Ruff
 .ruff_cache/
 
+# 本地工具状态（不提交）
+.omx/
+.codegraph/
+.claude/settings.local.json
+.mypy_cache/
+
 # 临时文件
 *.tmp
 *.log
