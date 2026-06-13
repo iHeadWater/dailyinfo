@@ -1,7 +1,7 @@
 {
   "version": 2,
   "defaults": {
-    "model": "moonshotai/kimi-k2.5",
+    "model": "deepseek-v4-pro",
     "lookback_hours": 24,
     "max_articles_per_batch": 10,
     "freshrss_user": ""
@@ -277,14 +277,6 @@
       "category": "papers",
       "enabled": true,
       "url": "https://rss.sciencedirect.com/publication/science/00221694",
-      "type": "rss"
-    },
-    {
-      "name": "water_resources_management",
-      "display_name": "Water Resources Management",
-      "category": "papers",
-      "enabled": true,
-      "url": "https://link.springer.com/search.rss?search-within=Journal&facet-journal-id=11269&query=&order=date",
       "type": "rss"
     },
     {

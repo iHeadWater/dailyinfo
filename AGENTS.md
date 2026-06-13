@@ -10,15 +10,16 @@
 
 核心流程：**FreshRSS 采集 → `dailyinfo run`（AI 摘要 + 写 markdown）→ `dailyinfo push`（推送 Discord + 归档）**
 
-设计原则：**配置驱动**（`config/sources.json`）+ **幂等 CLI**（所有操作可重跑，无副作用）+ **外部调度**（cron 由 myopenclaw hermes 统一管理）
+设计原则：**配置驱动**（`config/sources.json`）+ **幂等 CLI**（所有操作可重跑，无副作用）+ **外部调度**（任意 cron / agent runtime 触发即可）
 
 ---
 
-## 与 myopenclaw 的协作
+## 调度与备份
 
-- dailyinfo 不再管 crontab。`dailyinfo install` 只做"验证 .env + 建目录 + 装依赖"。
-- 所有定时触发交给 myopenclaw 的 hermes cron 去调用 `dailyinfo run` 与 `dailyinfo push`。
-- 数据全部落在 `~/.myagentdata/dailyinfo/`，由 myopenclaw 的 `backup-cron` 自动备份到云盘。
+- dailyinfo 不写系统 crontab。`dailyinfo install` 只做"校验 .env + 建目录 + 装依赖"。
+- 定时触发由外部任何 cron-like 机制完成（系统 crontab、systemd timer、容器调度器、agent runtime 等）。
+- 数据默认落在 `~/.myagentdata/dailyinfo/`，可通过 `DAILYINFO_DATA_ROOT` 覆盖。dailyinfo 本身不做备份。
+- 若同时使用 myopenclaw 等把整个 `~/.myagentdata/` 作为统一备份卷的生态，保持默认路径即可零配置接管备份；详见 `docs/agent-config.md`。
 
 ---
 
@@ -26,7 +27,7 @@
 
 - **RSS 聚合**：FreshRSS（Docker + SQLite）
 - **处理引擎**：`scripts/run_pipelines.py`（Python, 宿主机直接运行）
-- **AI 模型**：OpenRouter（moonshotai/kimi-k2.5）
+- **AI 模型**：DeepSeek V4 Pro 官方 API（回退：OpenRouter moonshotai/kimi-k2.5）
 - **推送脚本**：`scripts/push_to_discord.py`（纯 Python requests，无 AI 调用）
 - **容器编排**：Docker Compose（仅 FreshRSS）
 
@@ -77,7 +78,7 @@ python3 -c "import json; json.load(open('config/sources.json'))"
 {
   "version": 2,
   "defaults": {
-    "model": "moonshotai/kimi-k2.5",
+    "model": "deepseek-v4-pro",
     "lookback_hours": 24
   },
   "sources": [

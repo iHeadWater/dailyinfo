@@ -15,6 +15,7 @@ def _reload_paths():
 def test_default_root_when_no_override(monkeypatch, tmp_path):
     """Without any env override, the root points at ``~/.myagentdata/dailyinfo``."""
     monkeypatch.delenv("DAILYINFO_DATA_ROOT", raising=False)
+    monkeypatch.delenv("DAILYINFO_ENV", raising=False)
 
     empty_env = tmp_path / ".env"
     empty_env.write_text("# nothing here\n", encoding="utf-8")
@@ -81,3 +82,92 @@ def test_autouse_fixture_points_root_at_tmp(tmp_data_root):
 
     assert paths.WORKSPACE_ROOT == tmp_data_root.resolve()
     assert paths.BRIEFINGS_DIR.parent == tmp_data_root.resolve()
+
+
+# -----------------------------------------------------------------------
+# Environment separation tests
+# -----------------------------------------------------------------------
+
+
+def test_env_dev_redirects_to_dailyinfo_dev(monkeypatch, tmp_path):
+    """DAILYINFO_ENV=dev routes data to ~/.myagentdata/dailyinfo-dev."""
+    monkeypatch.delenv("DAILYINFO_DATA_ROOT", raising=False)
+    monkeypatch.setenv("DAILYINFO_ENV", "dev")
+
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("# nothing\n", encoding="utf-8")
+
+    import paths
+
+    monkeypatch.setattr(paths, "ENV_FILE", empty_env)
+    paths = _reload_paths()
+    monkeypatch.setattr(paths, "ENV_FILE", empty_env)
+
+    assert paths._resolve_data_root() == Path.home() / ".myagentdata" / "dailyinfo-dev"
+    assert paths.CURRENT_ENV == "dev"
+
+
+def test_env_staging_redirects_to_dailyinfo_staging(monkeypatch, tmp_path):
+    """DAILYINFO_ENV=staging routes data to ~/.myagentdata/dailyinfo-staging."""
+    monkeypatch.delenv("DAILYINFO_DATA_ROOT", raising=False)
+    monkeypatch.setenv("DAILYINFO_ENV", "staging")
+
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("# nothing\n", encoding="utf-8")
+
+    import paths
+
+    monkeypatch.setattr(paths, "ENV_FILE", empty_env)
+    paths = _reload_paths()
+    monkeypatch.setattr(paths, "ENV_FILE", empty_env)
+
+    assert paths._resolve_data_root() == Path.home() / ".myagentdata" / "dailyinfo-staging"
+    assert paths.CURRENT_ENV == "staging"
+
+
+def test_env_prod_is_default(monkeypatch, tmp_path):
+    """Without DAILYINFO_ENV set, the default is prod."""
+    monkeypatch.delenv("DAILYINFO_DATA_ROOT", raising=False)
+    monkeypatch.delenv("DAILYINFO_ENV", raising=False)
+
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("# nothing\n", encoding="utf-8")
+
+    import paths
+
+    monkeypatch.setattr(paths, "ENV_FILE", empty_env)
+    paths = _reload_paths()
+    monkeypatch.setattr(paths, "ENV_FILE", empty_env)
+
+    assert paths._resolve_data_root() == Path.home() / ".myagentdata" / "dailyinfo"
+    assert paths.CURRENT_ENV == "prod"
+
+
+def test_data_root_overrides_env_selection(monkeypatch, tmp_path):
+    """DAILYINFO_DATA_ROOT takes priority over DAILYINFO_ENV."""
+    target = tmp_path / "custom-root"
+    monkeypatch.setenv("DAILYINFO_DATA_ROOT", str(target))
+    monkeypatch.setenv("DAILYINFO_ENV", "dev")
+
+    paths = _reload_paths()
+    # DATA_ROOT wins, so env is forced to prod
+    assert paths.WORKSPACE_ROOT == target.resolve()
+    assert paths.CURRENT_ENV == "prod"
+
+
+def test_invalid_env_falls_back_to_prod(monkeypatch, tmp_path):
+    """An invalid DAILYINFO_ENV value falls back to prod."""
+    monkeypatch.delenv("DAILYINFO_DATA_ROOT", raising=False)
+    monkeypatch.setenv("DAILYINFO_ENV", "invalid")
+
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("# nothing\n", encoding="utf-8")
+
+    import paths
+
+    monkeypatch.setattr(paths, "ENV_FILE", empty_env)
+    paths = _reload_paths()
+    monkeypatch.setattr(paths, "ENV_FILE", empty_env)
+
+    assert paths.CURRENT_ENV == "prod"
+    assert paths._resolve_data_root() == Path.home() / ".myagentdata" / "dailyinfo"

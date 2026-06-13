@@ -51,11 +51,11 @@ def load_env(key):
     return os.environ.get(key, "")
 
 
-def call_ai(prompt, api_key, model="anthropic/claude-haiku-4-5", max_tokens=1500):
+def call_ai(prompt, api_key, model="deepseek-v4-pro", max_tokens=1500):
     import requests
 
     resp = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
+        "https://api.deepseek.com/v1/chat/completions",
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -136,9 +136,9 @@ def main():
     )
     args = parser.parse_args()
 
-    api_key = load_env("OPENROUTER_API_KEY")
+    api_key = load_env("DEEPSEEK_API_KEY")
     if not api_key or api_key.startswith("your_"):
-        log("ERROR: OPENROUTER_API_KEY not set in .env")
+        log("ERROR: DEEPSEEK_API_KEY not set in .env")
         sys.exit(1)
 
     discord_token = load_env("DISCORD_BOT_TOKEN")

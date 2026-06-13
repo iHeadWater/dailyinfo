@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 DOCS_DIR = PROJECT_ROOT / "docs"
 README = PROJECT_ROOT / "README.md"
 SOURCES_JSON = PROJECT_ROOT / "config" / "sources.json"
-SOURCES_URL = "https://github.com/OuyangWenyu/dailyinfo/blob/main/config/sources.json"
+SOURCES_URL = "https://github.com/iHeadWater/dailyinfo/blob/main/config/sources.json"
 
 
 def _markdown_cell(value) -> str:

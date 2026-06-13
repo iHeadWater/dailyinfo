@@ -29,13 +29,19 @@ if _SCRIPTS_DIR not in sys.path:
 
 import click
 
-from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
+from paths import BRIEFINGS_DIR, CURRENT_ENV, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
 
 SCRIPTS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent
 DATE = datetime.now().strftime("%Y-%m-%d")
 ENV_FILE = PROJECT_ROOT / ".env"
 LOGS_DIR = PROJECT_ROOT / "logs"
+
+
+def _env_banner() -> str:
+    """Return a short env tag for display (e.g. '[env:dev]')."""
+    return f"[env:{CURRENT_ENV}]"
+
 
 CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
 
@@ -72,11 +78,26 @@ def _ensure_workspace() -> None:
         PUSHED_DIR.joinpath(category).mkdir(parents=True, exist_ok=True)
 
 
+def _run_zotero_brief(**kwargs) -> int:
+    """Lazy import so normal CLI use does not require NotebookLM extras."""
+    from zotero_notebooklm import run_zotero_brief
+
+    return run_zotero_brief(**kwargs)
+
+
 # ---------------------------------------------------------------------------
 # CLI Commands
 # ---------------------------------------------------------------------------
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("dailyinfo")
+except Exception:
+    __version__ = "0.0.0"
+
+
 @click.group()
-@click.version_option(version="0.3.0")
+@click.version_option(version=__version__)
 def cli():
     """dailyinfo — daily briefing pipeline manager."""
     pass
@@ -86,10 +107,11 @@ def cli():
 def install():
     """Validate environment and create workspace directories.
 
-    Scheduling is delegated to an external cron (e.g. myopenclaw hermes cron).
+    Scheduling is delegated to any external cron (system crontab, systemd
+    timer, agent runtime such as myopenclaw's hermes cron, etc.).
     This command does NOT write to the host crontab.
     """
-    click.echo("==> DailyInfo Environment Setup")
+    click.echo(f"==> DailyInfo Environment Setup {_env_banner()}")
 
     click.echo("[1/3] Checking .env configuration...")
     if not ENV_FILE.exists():
@@ -97,13 +119,17 @@ def install():
         click.echo("  Run: cp .env.example .env and fill in your keys")
         sys.exit(1)
 
-    required = ["OPENROUTER_API_KEY", "DISCORD_BOT_TOKEN"]
+    # Determine which channel keys to validate based on current environment.
+    from paths import env_suffix
+
+    suffix = env_suffix()
+    required = ["DEEPSEEK_API_KEY", "DISCORD_BOT_TOKEN"]
     channel_keys = [
-        "DISCORD_CHANNEL_PAPERS",
-        "DISCORD_CHANNEL_AI_NEWS",
-        "DISCORD_CHANNEL_CODE",
-        "DISCORD_CHANNEL_RESOURCE",
-        "DISCORD_CHANNEL_ARXIV",
+        f"DISCORD_CHANNEL_PAPERS{suffix}",
+        f"DISCORD_CHANNEL_AI_NEWS{suffix}",
+        f"DISCORD_CHANNEL_CODE{suffix}",
+        f"DISCORD_CHANNEL_RESOURCE{suffix}",
+        f"DISCORD_CHANNEL_ARXIV{suffix}",
     ]
     env = _read_env_keys(required + channel_keys)
 
@@ -157,7 +183,9 @@ def install():
     click.echo("  3. dailyinfo push          # push today's briefings to Discord")
     click.echo("")
     click.echo("Scheduling is expected to be driven by an external cron")
-    click.echo("(e.g. myopenclaw hermes cron) calling these commands.")
+    click.echo(
+        "(system crontab, systemd timer, hermes cron, ...) calling these commands."
+    )
 
 
 @cli.command()
@@ -209,9 +237,9 @@ def restart():
 @click.option(
     "--pipeline",
     "-p",
-    type=click.Choice(["1", "2", "3", "all"]),
+    type=click.Choice(["1", "2", "3", "4", "5", "all"]),
     default="all",
-    help="Pipeline to run: 1=RSS papers/news, 2=code trending, 3=university news.",
+    help="Pipeline to run: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource.",
 )
 @click.option(
     "-f",
@@ -235,6 +263,106 @@ def run(pipeline, force):
         cmd += ["--force", src]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
+
+
+@cli.command("zotero-brief")
+@click.option(
+    "-d",
+    "--date",
+    "date_str",
+    default=None,
+    help="Zotero dateAdded day to process in YYYY-MM-DD format. Defaults to today.",
+)
+@click.option("--force", is_flag=True, help="Overwrite an existing local Zotero briefing.")
+@click.option(
+    "--artifact",
+    type=click.Choice(["none", "audio", "video", "both"]),
+    default="none",
+    show_default=True,
+    help="Optional NotebookLM artifact to generate after the markdown briefing.",
+)
+@click.option(
+    "--manual-only",
+    is_flag=True,
+    help="Only prepare PDFs, source_index.md, and manual NotebookLM steps.",
+)
+@click.option(
+    "--limit",
+    default=50,
+    show_default=True,
+    type=int,
+    help="Maximum number of Zotero papers to include.",
+)
+@click.option(
+    "--collection",
+    default=None,
+    help="Zotero collection name or key to restrict the run, e.g. water.",
+)
+@click.option(
+    "--open-missing-pdfs",
+    is_flag=True,
+    help="Open inaccessible Zotero PDF attachments once, then retry copying.",
+)
+@click.option(
+    "--pdf-wait-seconds",
+    default=20,
+    show_default=True,
+    type=int,
+    help="Seconds to wait after opening a Zotero PDF attachment.",
+)
+@click.option(
+    "--notebooklm-home",
+    default=None,
+    help="NotebookLM profile directory. Also available as NOTEBOOKLM_HOME.",
+)
+@click.option(
+    "--notebook-title",
+    default=None,
+    help="NotebookLM notebook title. Defaults to the target date.",
+)
+def zotero_brief(
+    date_str,
+    force,
+    artifact,
+    manual_only,
+    limit,
+    collection,
+    open_missing_pdfs,
+    pdf_wait_seconds,
+    notebooklm_home,
+    notebook_title,
+):
+    """Build a Zotero -> NotebookLM paper briefing package.
+
+    This workflow does not call the OpenRouter summarizer used by
+    ``dailyinfo run``. NotebookLM reads the uploaded PDFs and index.
+    """
+    if date_str:
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            click.echo(f"Error: --date must be YYYY-MM-DD (got {date_str!r})", err=True)
+            sys.exit(2)
+    if limit < 1:
+        click.echo("Error: --limit must be a positive integer", err=True)
+        sys.exit(2)
+    if pdf_wait_seconds < 0:
+        click.echo("Error: --pdf-wait-seconds must be zero or positive", err=True)
+        sys.exit(2)
+
+    result = _run_zotero_brief(
+        date_str=date_str,
+        force=force,
+        artifact=artifact,
+        manual_only=manual_only,
+        limit=limit,
+        collection=collection,
+        open_missing_pdfs=open_missing_pdfs,
+        pdf_wait_seconds=pdf_wait_seconds,
+        notebooklm_home=notebooklm_home,
+        notebook_title=notebook_title,
+    )
+    sys.exit(result)
 
 
 @cli.command()
@@ -296,7 +424,8 @@ def status():
     """Show today's briefing and pushed file counts."""
     total_pending = 0
 
-    click.echo(f"Briefings for {DATE}:")
+    click.echo(f"Briefings for {DATE} {_env_banner()}:")
+    click.echo(f"  Workspace: {WORKSPACE_ROOT}")
     for cat in CATEGORIES:
         path = BRIEFINGS_DIR / cat
         if path.is_dir():
@@ -316,22 +445,6 @@ def status():
                 click.echo(f"  {cat:15s}: {len(files):3d} files")
 
     click.echo(f"\nTotal pending: {total_pending} files")
-
-
-@cli.command()
-def bot():
-    """Start the Discord bot (deep-fetch, paper download, briefing Q&A)."""
-    import importlib
-    # aiohttp (used by discord.py) only reads uppercase proxy env vars
-    for _low, _up in (("https_proxy", "HTTPS_PROXY"), ("http_proxy", "HTTP_PROXY")):
-        if not os.environ.get(_up) and os.environ.get(_low):
-            os.environ[_up] = os.environ[_low]
-
-    _PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-    if str(_PROJECT_ROOT) not in sys.path:
-        sys.path.insert(0, str(_PROJECT_ROOT))
-    mod = importlib.import_module("dailyinfo_fetcher.discord_handler")
-    mod.main()
 
 
 @cli.command()
