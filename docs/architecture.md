@@ -40,7 +40,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 │  │  • Pipeline 4: Code trending → AI summary → briefings/code   │   │
 │  │  • Pipeline 5: University news → AI summary → briefings/res. │   │
 │  │                                                              │   │
-│  │  OpenRouter API (LLM aggregation, default kimi-k2.5)         │   │
+│  │  DeepSeek V4 Pro API (primary); OpenRouter fallback (kimi-k2.5)    │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                         ▼ Markdown files                            │
 │                   ~/.myagentdata/dailyinfo/briefings/{category}/    │
@@ -73,6 +73,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 | `~/.myagentdata/dailyinfo/freshrss/data/` | FreshRSS DB + config | dailyinfo (freshrss container) |
 | `~/.myagentdata/dailyinfo/briefings/` | Generated briefings (pending push) | `dailyinfo run` |
 | `~/.myagentdata/dailyinfo/pushed/` | Archive after successful push | `dailyinfo push` |
+| `~/.myagentdata/dailyinfo/state/` | Runtime state (marker files) | `dailyinfo run` |
 
 数据根默认在 `~/.myagentdata/dailyinfo/`，可通过 `DAILYINFO_DATA_ROOT` 覆盖。dailyinfo 本身不做备份；若与 myopenclaw 等支持只读挂载 `~/.myagentdata/` 的备份方案一起使用，可直接被覆盖（详见 [Agent Config](agent-config.md)）。
 
@@ -114,12 +115,15 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 
 频道 ID 由 `.env` 配置（不在代码里硬编码）：
 
-| Category | 环境变量 |
-|----------|----------|
-| papers   | `DISCORD_CHANNEL_PAPERS` |
-| ai_news  | `DISCORD_CHANNEL_AI_NEWS` |
-| arxiv    | `DISCORD_CHANNEL_ARXIV` (falls back to `DISCORD_CHANNEL_AI_NEWS`) |
-| code     | `DISCORD_CHANNEL_CODE` |
-| resource | `DISCORD_CHANNEL_RESOURCE` |
+| Category | Prod | Dev | Staging |
+|----------|------|-----|---------|
+| papers   | `DISCORD_CHANNEL_PAPERS` | `_PAPERS_DEV` | `_PAPERS_STAGING` |
+| ai_news  | `DISCORD_CHANNEL_AI_NEWS` | `_AI_NEWS_DEV` | `_AI_NEWS_STAGING` |
+| arxiv    | `DISCORD_CHANNEL_ARXIV` (falls back to `DISCORD_CHANNEL_AI_NEWS`) | `_ARXIV_DEV` | `_ARXIV_STAGING` |
+| code     | `DISCORD_CHANNEL_CODE` | `_CODE_DEV` | `_CODE_STAGING` |
+| resource | `DISCORD_CHANNEL_RESOURCE` | `_RESOURCE_DEV` | `_RESOURCE_STAGING` |
+
+Set `DAILYINFO_ENV=dev` or `staging` to use the suffixed keys. If the suffixed
+key is empty, dev/staging falls back to the prod channel with a warning.
 
 缺失某个分类的频道 ID 时，`dailyinfo push` 会打 WARN 并跳过该分类，不会中断其他分类的推送。
