@@ -1,6 +1,6 @@
 # Information Sources
 
-This page is generated from [`config/sources.json`](https://github.com/OuyangWenyu/dailyinfo/blob/main/config/sources.json).
+This page is generated from [`config/sources.json`](https://github.com/iHeadWater/dailyinfo/blob/main/config/sources.json).
 
 | Name | Display Name | Category | Type | Enabled | Lookback Hours | URL |
 |------|--------------|----------|------|---------|----------------|-----|

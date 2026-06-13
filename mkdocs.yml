@@ -1,7 +1,7 @@
 site_name: DailyInfo
 site_description: AI for Science automated research briefing system
-repo_url: https://github.com/OuyangWenyu/dailyinfo
-repo_name: OuyangWenyu/dailyinfo
+repo_url: https://github.com/iHeadWater/dailyinfo
+repo_name: iHeadWater/dailyinfo
 
 theme:
   name: material

@@ -1,6 +1,6 @@
 # DailyInfo
 
-[中文](README.zh-CN.md) | English
+[中文](https://github.com/iHeadWater/dailyinfo/blob/main/README.zh-CN.md) | English
 
 DailyInfo is an automated research intelligence system for AI for Science researchers. It collects papers, AI news, code trends, and institutional updates, writes local Markdown briefings, pushes them to Discord, and now provides an agent-operated Zotero -> NotebookLM workflow for paper briefings and audio/video overviews.
 
