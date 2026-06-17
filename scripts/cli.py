@@ -458,5 +458,109 @@ def logs():
     sys.exit(result.returncode)
 
 
+@cli.command("weekly-report")
+@click.option("--collection", default="water", show_default=True, help="Zotero collection name.")
+@click.option("-d", "--date", "date_str", default=None, help="Date YYYY-MM-DD (default: today).")
+@click.option(
+    "--artifact",
+    type=click.Choice(["none", "audio", "video", "both"]),
+    default="audio",
+    show_default=True,
+    help="NotebookLM artifact to generate.",
+)
+@click.option("--open-missing-pdfs", is_flag=True, help="Open missing Zotero PDFs for cloud sync.")
+@click.option("--title", default=None, help="Override WeChat article title.")
+@click.option("--thumb", default=None, help="WeChat cover image media_id.")
+@click.option("--dry-run", is_flag=True, help="Save HTML locally, do not push to WeChat.")
+@click.option("--skip-zotero", is_flag=True, help="Skip zotero-brief step, reuse existing briefing.md.")
+@click.option("--skip-polish", is_flag=True, help="Skip DeepSeek polish step, reuse existing polished MD.")
+@click.option("--skip-figures", is_flag=True, help="Skip figure extraction/generation step.")
+def weekly_report(collection, date_str, artifact, open_missing_pdfs, title, thumb, dry_run, skip_zotero, skip_polish, skip_figures):
+    """One-shot: Zotero -> NotebookLM -> DeepSeek polish -> WeChat draft.
+
+    Chains three steps automatically:
+    1. zotero-brief  (Zotero + NotebookLM -> briefing.md)
+    2. polish_wechat (DeepSeek + SKILL.md -> wechat_article_polished.md)
+    3. push_wechat   (MD -> HTML -> WeChat draft box)
+    """
+    import datetime as _dt
+
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    from zotero_notebooklm import make_paths, parse_date, resolve_zotero_collection
+
+    target_date = parse_date(date_str)
+    collection_info = resolve_zotero_collection(collection) if collection else None
+    collection_name = collection_info["name"] if collection_info else None
+    paths = make_paths(target_date, collection_name=collection_name)
+
+    # ── Step 1: Zotero -> NotebookLM ────────────────────────────────────────
+    if not skip_zotero:
+        click.echo(f"\n[Step 1/3] Running zotero-brief for {target_date} / collection={collection} ...")
+        rc = _run_zotero_brief(
+            date_str=date_str,
+            force=False,
+            artifact=artifact,
+            manual_only=False,
+            limit=50,
+            collection=collection,
+            open_missing_pdfs=open_missing_pdfs,
+            pdf_wait_seconds=20,
+            notebooklm_home=None,
+            notebook_title=None,
+        )
+        if rc != 0:
+            click.echo("zotero-brief failed; aborting.", err=True)
+            sys.exit(rc)
+    else:
+        click.echo("[Step 1/3] Skipped (--skip-zotero).")
+
+    briefing_path = paths.briefing
+    if not briefing_path.exists():
+        click.echo(f"briefing.md not found: {briefing_path}", err=True)
+        sys.exit(1)
+
+    # ── Step 2: DeepSeek polish ──────────────────────────────────────────────
+    polished_path = paths.output_dir / "wechat_article_polished.md"
+    if not skip_polish:
+        click.echo(f"\n[Step 2/3] Polishing {briefing_path.name} with DeepSeek ...")
+        from wechat.polish import load_skill_prompt, polish
+
+        skill_prompt = load_skill_prompt()
+        polished_text = polish(briefing_path.read_text(encoding="utf-8"), skill_prompt)
+        polished_path.write_text(polished_text, encoding="utf-8")
+        click.echo(f"  Saved: {polished_path}")
+    else:
+        click.echo("[Step 2/3] Skipped (--skip-polish).")
+        if not polished_path.exists():
+            click.echo(f"Polished MD not found: {polished_path}", err=True)
+            sys.exit(1)
+
+    # ── Step 2.5: Extract / generate figures ────────────────────────────────
+    figures_json = paths.output_dir / "figures" / "figures.json"
+    if not skip_figures:
+        click.echo(f"\n[Step 2.5/3] Extracting figures ...")
+        fig_cmd = [_python(), str(SCRIPTS_DIR / "wechat" / "figure.py"), str(polished_path),
+                   "--output-dir", str(paths.output_dir)]
+        result = subprocess.run(fig_cmd, cwd=PROJECT_ROOT)
+        if result.returncode != 0:
+            click.echo("Warning: figure extraction failed, continuing without figures.", err=True)
+    else:
+        click.echo("[Step 2.5/3] Skipped (--skip-figures).")
+
+    # ── Step 3: Push to WeChat ───────────────────────────────────────────────
+    click.echo(f"\n[Step 3/3] Pushing to WeChat draft box ...")
+    push_cmd = [_python(), str(SCRIPTS_DIR / "wechat" / "push.py"), str(polished_path)]
+    if title:
+        push_cmd += ["--title", title]
+    if thumb:
+        push_cmd += ["--thumb", thumb]
+    if dry_run:
+        push_cmd.append("--dry-run")
+    if not skip_figures and figures_json.exists():
+        push_cmd += ["--figures", str(figures_json)]
+    result = subprocess.run(push_cmd, cwd=PROJECT_ROOT)
+    sys.exit(result.returncode)
+
+
 if __name__ == "__main__":
     cli()
