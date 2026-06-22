@@ -113,8 +113,7 @@ def load_api_key() -> str:
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if key:
         return key
-    log("ERROR: No OPENROUTER_API_KEY found in .env or environment")
-    sys.exit(1)
+    return ""
 
 
 def load_deepseek_key() -> str:
