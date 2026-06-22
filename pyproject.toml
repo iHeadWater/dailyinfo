@@ -25,6 +25,9 @@ dev = [
 notebooklm = [
     "notebooklm-py[browser]>=0.5.0",
 ]
+zotero = [
+    "zotero-mcp-server[all]>=0.5.0",
+]
 
 [dependency-groups]
 docs = [
