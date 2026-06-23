@@ -47,3 +47,9 @@ output/
 .codegraph/
 .omx/
 .claude/
+
+# Playwright MCP 浏览器工作目录
+.playwright-mcp/
+
+# Firecrawl 输出
+.firecrawl/

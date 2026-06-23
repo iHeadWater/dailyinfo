@@ -562,5 +562,69 @@ def weekly_report(collection, date_str, artifact, open_missing_pdfs, title, thum
     sys.exit(result.returncode)
 
 
+@cli.command("download-pdf")
+@click.argument("input_ref")
+@click.option(
+    "-o",
+    "--output",
+    default=None,
+    help="Output PDF path. Default: ~/.myagentdata/dailyinfo/papers/<slug>.pdf",
+)
+@click.option(
+    "--publisher",
+    "publisher_filter",
+    default=None,
+    type=click.Choice(["elsevier", "springer", "wiley", "taylor-francis", "agu"]),
+    help="Force a specific publisher workflow (skips auto-detection).",
+)
+def download_pdf(input_ref, output, publisher_filter):
+    """Resolve a DOI/PII/URL and download the PDF via institutional access.
+
+    INPUT_REF: a DOI (10.xxx/...), PII (S00221694...), or article URL.
+
+    The actual browser download is performed by the ``download-pdf``
+    Claude Code skill, which uses Playwright MCP tools. This CLI command
+    resolves the input, detects the publisher, and prints the download
+    instructions. When run inside Claude Code, invoke ``/download-pdf``
+    instead.
+
+    \b
+    Examples:
+        dailyinfo download-pdf 10.1016/j.jhydrol.2024.132471
+        dailyinfo download-pdf S0022169424018675
+        dailyinfo download-pdf "https://www.sciencedirect.com/..."
+    """
+    from download_pdf import Publisher, classify_input, detect_publisher, output_path_for
+
+    result = classify_input(input_ref)
+    pub_enum = detect_publisher(result["url"]) if result["url"] else Publisher.UNKNOWN
+    publisher_name = pub_enum.name.lower() if pub_enum != Publisher.UNKNOWN else None
+
+    # Compute default output path
+    default_path = output if output else str(output_path_for(input_ref))
+
+    if result["type"] == "unknown":
+        click.echo(f"Error: Cannot classify input: {input_ref!r}", err=True)
+        click.echo("Expected: DOI (10.xxx/...), PII, or article URL.")
+        sys.exit(2)
+
+    click.echo(f"Input Type:  {result['type']}")
+    click.echo(f"Normalized:  {result['normalized']}")
+    click.echo(f"Article URL: {result['url']}")
+    if publisher_filter:
+        click.echo(f"Publisher:   {publisher_filter} (forced)")
+    elif publisher_name:
+        click.echo(f"Publisher:   {publisher_name}")
+    elif result["type"] == "doi":
+        click.echo("Publisher:   (resolves after DOI redirect)")
+
+    click.echo(f"Output:      {default_path}")
+    click.echo("")
+    click.echo("To download this PDF, use the Claude Code skill:")
+    click.echo(f"  /download-pdf {input_ref}")
+    if output:
+        click.echo(f"  (custom output: {output})")
+
+
 if __name__ == "__main__":
     cli()
