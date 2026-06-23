@@ -984,7 +984,7 @@ def test_pipeline_code_skips_when_briefing_already_exists(
 def test_pipeline_code_skips_when_fetch_fails(
     monkeypatch, fake_requests, fake_call_ai
 ):
-    """When the scraper raises, pipeline logs and continues without saving."""
+    """When the scraper raises after retries, pipeline writes a placeholder file."""
     import requests
 
     import run_pipelines as rp
@@ -998,11 +998,11 @@ def test_pipeline_code_skips_when_fetch_fails(
     monkeypatch.setattr(requests, "get", boom)
 
     saved = rp.run_pipeline_code()
-    assert saved == 0
+    assert saved == 1
     today = datetime.now().strftime("%Y-%m-%d")
-    assert not (
-        BRIEFINGS_DIR / "code" / f"github_trending_briefing_{today}.md"
-    ).exists()
+    placeholder = BRIEFINGS_DIR / "code" / f"github_trending_briefing_{today}.md"
+    assert placeholder.exists()
+    assert "⚠️ 获取失败" in placeholder.read_text()
 
 
 # -----------------------------------------------------------------
