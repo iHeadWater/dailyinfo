@@ -284,7 +284,9 @@ def test_zotero_brief_rejects_non_positive_limit(cli_mod):
 
 
 def test_zotero_brief_rejects_negative_pdf_wait(cli_mod):
-    result = CliRunner().invoke(cli_mod.cli, ["zotero-brief", "--pdf-wait-seconds", "-1"])
+    result = CliRunner().invoke(
+        cli_mod.cli, ["zotero-brief", "--pdf-wait-seconds", "-1"]
+    )
 
     assert result.exit_code == 2
     assert "--pdf-wait-seconds" in result.output
@@ -323,3 +325,81 @@ def test_run_default_runs_all_pipelines(cli_mod):
     pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
     assert pipeline_calls
     assert "--pipeline" not in pipeline_calls[0]
+
+
+class TestCleanCacheCommand:
+    """Tests for the ``dailyinfo clean-cache`` CLI command."""
+
+    def test_clean_cache_defaults(self, cli_mod, monkeypatch):
+        """Default invocation uses 24h threshold and deletes for real."""
+        cache_dir = cli_mod.FRESHRSS_DATA / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        results = {}
+
+        def fake_clean(cache_dir, max_age_hours=24, dry_run=False):
+            results.update(
+                cache_dir=str(cache_dir),
+                max_age_hours=max_age_hours,
+                dry_run=dry_run,
+            )
+            return (3, 0)
+
+        monkeypatch.setattr(cli_mod, "clean_stale_cache", fake_clean)
+
+        result = CliRunner().invoke(cli_mod.cli, ["clean-cache"])
+        assert result.exit_code == 0, result.output
+        assert results["max_age_hours"] == 24
+        assert results["dry_run"] is False
+        assert "Cleaned 3 stale cache file(s)" in result.output
+
+    def test_clean_cache_dry_run(self, cli_mod, monkeypatch):
+        """--dry-run reports what would be deleted without deleting."""
+        cache_dir = cli_mod.FRESHRSS_DATA / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        results = {}
+
+        def fake_clean(cache_dir, max_age_hours=24, dry_run=False):
+            results.update(dry_run=dry_run)
+            return (5, 0)
+
+        monkeypatch.setattr(cli_mod, "clean_stale_cache", fake_clean)
+
+        result = CliRunner().invoke(cli_mod.cli, ["clean-cache", "--dry-run"])
+        assert result.exit_code == 0, result.output
+        assert results["dry_run"] is True
+        assert "Would delete 5 stale cache file(s)" in result.output
+
+    def test_clean_cache_custom_max_age(self, cli_mod, monkeypatch):
+        """--max-age overrides the default threshold."""
+        cache_dir = cli_mod.FRESHRSS_DATA / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        results = {}
+
+        def fake_clean(cache_dir, max_age_hours=24, dry_run=False):
+            results.update(max_age_hours=max_age_hours)
+            return (0, 0)
+
+        monkeypatch.setattr(cli_mod, "clean_stale_cache", fake_clean)
+
+        result = CliRunner().invoke(cli_mod.cli, ["clean-cache", "--max-age", "12"])
+        assert result.exit_code == 0, result.output
+        assert results["max_age_hours"] == 12
+        assert "No stale cache files found" in result.output
+
+    def test_clean_cache_handles_errors(self, cli_mod, monkeypatch):
+        """Errors during deletion are reported."""
+        cache_dir = cli_mod.FRESHRSS_DATA / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        def fake_clean(cache_dir, max_age_hours=24, dry_run=False):
+            return (2, 1)
+
+        monkeypatch.setattr(cli_mod, "clean_stale_cache", fake_clean)
+
+        result = CliRunner().invoke(cli_mod.cli, ["clean-cache"])
+        assert result.exit_code == 1, result.output
+        assert "Cleaned 2 stale cache file(s)" in result.output
+        assert "1 error(s)" in result.output

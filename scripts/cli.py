@@ -31,6 +31,8 @@ import click
 
 from paths import BRIEFINGS_DIR, CURRENT_ENV, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
 
+from clean_cache import clean_stale_cache
+
 SCRIPTS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent
 DATE = datetime.now().strftime("%Y-%m-%d")
@@ -273,7 +275,9 @@ def run(pipeline, force):
     default=None,
     help="Zotero dateAdded day to process in YYYY-MM-DD format. Defaults to today.",
 )
-@click.option("--force", is_flag=True, help="Overwrite an existing local Zotero briefing.")
+@click.option(
+    "--force", is_flag=True, help="Overwrite an existing local Zotero briefing."
+)
 @click.option(
     "--artifact",
     type=click.Choice(["none", "audio", "video", "both"]),
@@ -624,6 +628,62 @@ def download_pdf(input_ref, output, publisher_filter):
     click.echo(f"  /download-pdf {input_ref}")
     if output:
         click.echo(f"  (custom output: {output})")
+
+
+@cli.command("clean-cache")
+@click.option(
+    "--max-age",
+    default=24,
+    show_default=True,
+    type=int,
+    help="Maximum cache file age in hours. Files older than this are deleted.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be deleted without actually deleting anything.",
+)
+def clean_cache(max_age, dry_run):
+    """Delete stale FreshRSS SimplePie cache files.
+
+    Occasionally SimplePie cache entries get stuck (always "uses cache"
+    instead of doing a real HTTP request), causing feeds to silently stop
+    receiving new articles.  This command clears cache files older than
+    --max-age hours.
+
+    The default threshold of 24 hours is far longer than FreshRSS's normal
+    refresh cycle (15 min), so healthy caches are never affected.
+    """
+    if max_age < 1:
+        click.echo("Error: --max-age must be a positive integer", err=True)
+        sys.exit(2)
+
+    cache_dir = FRESHRSS_DATA / "cache"
+    if not cache_dir.is_dir():
+        click.echo(f"Cache directory not found: {cache_dir}")
+        sys.exit(1)
+
+    deleted, errors = clean_stale_cache(
+        cache_dir, max_age_hours=max_age, dry_run=dry_run
+    )
+
+    if dry_run:
+        if deleted == 0:
+            click.echo("No stale cache files would be deleted.")
+        else:
+            click.echo(f"Would delete {deleted} stale cache file(s) (dry run).")
+    else:
+        if deleted == 0:
+            click.echo("No stale cache files found.")
+        else:
+            msg = f"Cleaned {deleted} stale cache file(s)"
+            if errors > 0:
+                msg += f" ({errors} error(s))"
+            msg += "."
+            click.echo(msg)
+
+    if errors > 0 and not dry_run:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

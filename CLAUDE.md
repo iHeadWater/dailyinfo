@@ -45,6 +45,8 @@ dailyinfo push -d 2026-04-22    # Specific date
 dailyinfo status                 # Show today's briefing/pushed counts
 dailyinfo start/stop/restart     # FreshRSS Docker container
 dailyinfo logs                   # Tail execution log
+dailyinfo clean-cache            # Delete FreshRSS cache files older than 24h
+dailyinfo clean-cache --dry-run  # Preview what would be deleted
 
 # Zotero -> NotebookLM (agent-operated)
 # Prefer the Claude Code slash command:
