@@ -48,6 +48,17 @@ dailyinfo logs                   # Tail execution log
 dailyinfo clean-cache            # Delete FreshRSS cache files older than 24h
 dailyinfo clean-cache --dry-run  # Preview what would be deleted
 
+# Download PDFs (agent-operated, requires Playwright MCP browser)
+# Prefer the Claude Code slash command:
+# /download-pdf 10.1016/j.jhydrol.2024.132471
+dailyinfo download-pdf 10.1016/j.jhydrol.2024.132471           # Print download instructions for the skill
+python scripts/download_pdf.py verify <pdf>                    # Verify PDF and extract metadata
+python scripts/download_pdf.py detect <url>                    # Detect publisher from URL
+
+# Sync downloaded PDF to Zotero (linked_file, zero cloud quota)
+python scripts/zotero_sync.py <pdf> <doi> --json               # Copy to GDrive + create Zotero item
+python scripts/zotero_sync.py <pdf> <doi> --dry-run            # Preview without creating
+
 # Zotero -> NotebookLM (agent-operated)
 # Prefer the Claude Code slash command:
 # /zotero-notebooklm water 2026-05-28 audio
@@ -124,6 +135,8 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`
 Optional: `OPENROUTER_API_KEY` (fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`
 
+Zotero sync optional: `ZOTERO_API_KEY`, `ZOTERO_LIBRARY_ID`, `GDRIVE_PAPERS_PATH` (for `zotero_sync.py` linked_file attachment)
+
 ## Testing Conventions
 
 - **Autouse `tmp_data_root`** in `conftest.py` redirects all filesystem writes to `tmp_path` and sets `DISCORD_BOT_TOKEN`
@@ -142,6 +155,10 @@ Issues are tracked as GitHub issues on `iHeadWater/dailyinfo`. See `docs/agents/
 ### Triage labels
 
 Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Download PDF (download-pdf)
+
+Download academic PDFs through institutional access (DUT SSO) using Playwright browser automation. Zotero sync via linked_file attachment. See `skills/download-pdf/SKILL.md`.
 
 ### Domain docs
 

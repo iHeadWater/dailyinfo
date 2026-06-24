@@ -133,6 +133,19 @@ dailyinfo push
 | `dailyinfo zotero-brief --collection water --artifact audio` | Process the `water` collection and request Audio Overview |
 | `dailyinfo zotero-brief --artifact video` | Request NotebookLM Video Overview |
 | `dailyinfo zotero-brief --manual-only` | Prepare local materials without calling NotebookLM |
+| `dailyinfo download-pdf <doi>` | Print download instructions for academic PDF download skill |
+| `python scripts/zotero_sync.py <pdf> <doi>` | Sync downloaded PDF to Zotero as linked_file (zero cloud quota) |
+
+## Download PDF -> Zotero Sync Workflow
+
+`skills/download-pdf/SKILL.md` is a Claude Code skill that downloads academic papers through
+institutional access (DUT SSO) using Playwright browser automation.
+
+After download, `scripts/zotero_sync.py` creates a Zotero item with a linked_file attachment
+pointed at the Google Drive papers folder (ZotMoov-managed). The PDF lives in GDrive —
+zero Zotero cloud storage used.
+
+See [CLI Reference](docs/cli.md) for command details.
 
 ## Zotero -> NotebookLM Agent Workflow
 
@@ -175,6 +188,9 @@ See:
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback model when DeepSeek returns empty (default `moonshotai/kimi-k2.5`) |
 | `ZOTERO_LOCAL_BASE_URL` | Zotero local API base URL, default `http://127.0.0.1:23119` |
+| `ZOTERO_API_KEY` | Zotero Web API key (for `zotero_sync.py` linked_file sync) |
+| `ZOTERO_LIBRARY_ID` | Numeric Zotero user library ID (for `zotero_sync.py` linked_file sync) |
+| `GDRIVE_PAPERS_PATH` | Local path to Google Drive papers folder (ZotMoov / Linked Attachment Base Directory) |
 | `NOTEBOOKLM_HOME` | NotebookLM profile/auth directory used by `notebooklm-py` |
 
 ## Scheduling and Agents

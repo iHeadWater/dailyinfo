@@ -131,6 +131,16 @@ dailyinfo push
 | `dailyinfo zotero-brief --collection water --artifact audio` | 处理 `water` collection 并请求音频概览 |
 | `dailyinfo zotero-brief --artifact video` | 请求 NotebookLM 视频概览 |
 | `dailyinfo zotero-brief --manual-only` | 只生成本地素材，不调用 NotebookLM |
+| `dailyinfo download-pdf <doi>` | 打印学术论文下载技能的下载指令 |
+| `python scripts/zotero_sync.py <pdf> <doi>` | 将已下载 PDF 同步到 Zotero（linked_file，不占云配额） |
+
+## 下载 PDF → Zotero 同步工作流
+
+`skills/download-pdf/SKILL.md` 是一个 Claude Code 技能，通过大连理工大学机构访问（SSO）使用 Playwright 浏览器自动化下载学术论文。
+
+下载完成后，`scripts/zotero_sync.py` 创建 Zotero 条目并附加 linked_file 附件，PDF 存放在 Google Drive 文件夹（由 ZotMoov 管理）——零 Zotero 云存储消耗。
+
+详见 [CLI 参考](docs/cli.md)。
 
 ## Zotero -> NotebookLM Agent 工作流
 
@@ -171,6 +181,9 @@ NotebookLM 登录有意保留人工参与。Agent 可以打开浏览器或提示
 | `DAILYINFO_DATA_ROOT` | 覆盖默认数据根目录 |
 | `DAILYINFO_FALLBACK_MODEL` | 主模型空响应时的备用模型 |
 | `ZOTERO_LOCAL_BASE_URL` | Zotero 本地 API 地址，默认 `http://127.0.0.1:23119` |
+| `ZOTERO_API_KEY` | Zotero Web API 密钥（`zotero_sync.py` linked_file 同步用） |
+| `ZOTERO_LIBRARY_ID` | 数字型 Zotero 用户库 ID（`zotero_sync.py` linked_file 同步用） |
+| `GDRIVE_PAPERS_PATH` | Google Drive 论文文件夹本地路径（ZotMoov / 链接附件根目录） |
 | `NOTEBOOKLM_HOME` | `notebooklm-py` 使用的 NotebookLM profile/auth 目录 |
 
 ## 调度和 Agent 分工
