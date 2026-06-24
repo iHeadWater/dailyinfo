@@ -72,6 +72,7 @@ class PdfMetadata:
 PUBLISHER_PATTERNS: dict[str, Publisher] = {
     "sciencedirect.com": Publisher.ELSEVIER,
     "elsevier.com": Publisher.ELSEVIER,
+    "nature.com": Publisher.SPRINGER,  # Nature is part of Springer Nature
     "link.springer.com": Publisher.SPRINGER,
     "springer.com": Publisher.SPRINGER,
     "agupubs.onlinelibrary.wiley.com": Publisher.AGU,

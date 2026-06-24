@@ -3,8 +3,10 @@ name: download-pdf
 description: |
   Download academic paper PDFs through institutional access using Playwright browser automation.
   Supports ScienceDirect (Elsevier) with extension architecture for Springer, Wiley, and other publishers.
-  Use when the user wants to download a paper by DOI, URL, or PII.
-  Triggers: "下载论文", "download pdf", "download paper", "/download-pdf", "download_pdf".
+  Optional Zotero sync via linked_file attachment (ZotMoov + Google Drive, zero cloud quota).
+  Use when the user wants to download a paper by DOI, URL, or PII, or sync a downloaded paper to Zotero.
+  Triggers: "下载论文", "download pdf", "download paper", "/download-pdf", "download_pdf",
+  "下载并加到Zotero", "同步到Zotero", "加到文献库", "add to Zotero", "save to Zotero".
 ---
 
 # Download Academic PDFs
@@ -140,6 +142,69 @@ Template for adding a new publisher:
 
 15. **Test** with a known-access paper, then add the flow to this SKILL.md.
 
+### Phase 3: Sync to Zotero (linked_file)
+
+After a PDF is downloaded and verified, optionally sync it to Zotero with a linked_file attachment. The PDF is copied to the user's Google Drive papers folder (managed by ZotMoov), and Zotero stores only a pointer — **zero Zotero cloud storage used**.
+
+**Prerequisites (one-time):**
+- `ZOTERO_API_KEY` — create at https://www.zotero.org/settings/keys (enable "Allow library access")
+- `ZOTERO_LIBRARY_ID` — your numeric user ID (visible on the same page)
+- `GDRIVE_PAPERS_PATH` — local path to the Google Drive folder where ZotMoov stores linked PDFs
+- Zotero desktop → Preferences → Advanced → Files and Folders → "Linked Attachment Base Directory" set to the same Google Drive folder
+- Dependencies: `uv pip install -e ".[zotero]"` (installs pyzotero + zotero-mcp-server)
+
+**Flow:**
+
+16. **Ask the user** if they want to sync to Zotero. If the user invokes the skill with trigger phrases like "下载并加到Zotero", "加到文献库", or "add to Zotero", proceed automatically.
+
+17. **[Optional] Resolve the target collection.** If the user specified a collection name, resolve its key via zotero-mcp:
+    ```
+    zotero_search_collections(query="<collection_name>")
+    ```
+    Extract the 8-character key from the result.
+
+18. **Run the sync script:**
+    ```bash
+    python scripts/zotero_sync.py <pdf_path> <doi> --json
+    ```
+    This single command:
+    - Copies the PDF to `$GDRIVE_PAPERS_PATH/{doi-slug}.pdf`
+    - Fetches rich metadata from Crossref (title, authors, journal, year, abstract)
+    - Creates a Zotero parent item via pyzotero
+    - Creates a linked_file attachment using the portable `attachments:` scheme
+    - Outputs JSON: `{"ok": true, "zotero_key": "...", "title": "...", ...}`
+
+19. **[Optional] File the item into a collection.** If a collection key was resolved in step 17:
+    ```
+    zotero_manage_collections(item_keys=["<zotero_key>"], add_to=["<collection_key>"])
+    ```
+
+20. **[Optional] Verify the item was created correctly:**
+    ```
+    zotero_get_item_metadata(item_key="<zotero_key>")
+    ```
+    Confirm the title, DOI, and linked_file attachment are present.
+
+21. **Report** the Zotero item key, title, collection, and local file path.
+
+**How linked_file works:**
+
+The script uses Zotero's portable `attachments:<filename>` scheme. Zotero resolves this against the "Linked Attachment Base Directory" set in Zotero preferences. The PDF lives in Google Drive (managed by ZotMoov), so:
+- Zotero cloud storage quota is never touched
+- The PDF is available on all machines with the same Google Drive + Zotero setup
+- ZotMoov handles file organization within the linked folder
+
+**Zotero Sync Failure Handling:**
+
+| Scenario | Action |
+|----------|--------|
+| `ZOTERO_API_KEY` / `ZOTERO_LIBRARY_ID` not set | Report missing env vars; PDF is already saved locally |
+| `GDRIVE_PAPERS_PATH` not set | Report missing env var; PDF is already saved locally |
+| Crossref metadata fetch fails | Script falls back to PDF-embedded metadata (title, author, DOI) |
+| Zotero API write fails | Report error; PDF is already in GDrive folder — user can manually link |
+| Collection not found | Skip collection filing; item goes to "My Library" root |
+| `attachments:` path not resolving | User needs to configure "Linked Attachment Base Directory" in Zotero preferences |
+
 ## Failure Handling
 
 | Scenario | Action |
@@ -159,3 +224,4 @@ After each download, report:
 - Output path
 - Publisher used
 - Whether institutional access was automatic or required manual intervention
+- If synced to Zotero: item key, collection, and `attachments:` path
