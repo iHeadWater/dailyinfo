@@ -136,16 +136,53 @@ dailyinfo push
 | `dailyinfo download-pdf <doi>` | Print download instructions for academic PDF download skill |
 | `python scripts/zotero_sync.py <pdf> <doi>` | Sync downloaded PDF to Zotero as linked_file (zero cloud quota) |
 
-## Download PDF -> Zotero Sync Workflow
+## Download PDF → Zotero Sync Workflow
 
-`skills/download-pdf/SKILL.md` is a Claude Code skill that downloads academic papers through
-institutional access (DUT SSO) using Playwright browser automation.
+> **This workflow requires Claude Code.** The download step uses Claude Code's Playwright MCP
+> plugin for browser automation — it cannot run as a standalone CLI command.
 
-After download, `scripts/zotero_sync.py` creates a Zotero item with a linked_file attachment
-pointed at the Google Drive papers folder (ZotMoov-managed). The PDF lives in GDrive —
-zero Zotero cloud storage used.
+### What it does
 
-See [CLI Reference](docs/cli.md) for command details.
+1. **Download** — Claude Code navigates publisher sites in a standalone Chromium, clicks
+   through institutional login (DUT SSO), and triggers PDF downloads.
+2. **Verify** — `scripts/download_pdf.py verify` checks the PDF header and extracts metadata.
+3. **Sync** — `scripts/zotero_sync.py` copies the PDF to Google Drive and creates a Zotero
+   linked_file item (zero cloud storage, ZotMoov-managed).
+
+### One-time setup (per machine)
+
+```bash
+# 1. Enable the Playwright plugin in Claude Code settings
+#    Edit ~/.claude/settings.json → enabledPlugins → add:
+#    "playwright@claude-plugins-official": true
+
+# 2. Install Chromium (if the plugin doesn't auto-download it)
+npx playwright install chromium
+
+# 3. Install Zotero sync dependencies
+uv pip install pyzotero
+
+# 4. Configure Zotero API access in .env
+#    ZOTERO_API_KEY=<key>       # from https://www.zotero.org/settings/keys
+#    ZOTERO_LIBRARY_ID=<id>     # numeric user ID
+#    GDRIVE_PAPERS_PATH=<path>  # local GDrive path for linked attachments
+```
+
+### How to use
+
+Open this repo in Claude Code, then type:
+
+```
+/download-pdf 10.1038/s41586-026-10704-3
+```
+
+The agent opens a Chromium window, navigates to the paper, handles download, and syncs to Zotero.
+You only need to interact when:
+- **Cloudflare challenge** appears (Wiley/AGU) — click the checkbox in the browser
+- **Institutional login** is needed — complete DUT SSO in the browser window
+
+See [`skills/download-pdf/SKILL.md`](skills/download-pdf/SKILL.md) for the full agent workflow
+and publisher-specific patterns.
 
 ## Zotero -> NotebookLM Agent Workflow
 

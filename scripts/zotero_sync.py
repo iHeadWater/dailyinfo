@@ -393,7 +393,7 @@ def main():
     }
 
     if args.json:
-        print(json.dumps(result, ensure_ascii=False))
+        print(json.dumps(result, ensure_ascii=True))
     else:
         print("OK — Zotero item created")
         print(f"  Key:        {parent_key}")

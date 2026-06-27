@@ -89,7 +89,25 @@ This is the only publisher tested end-to-end. The flow:
    browser_tabs(action='select', index=<pdf_tab_index>)
    ```
 
-8. Fetch the PDF via browser `fetch()` (preserves cookies/browser context):
+8. Download the PDF. **CRITICAL**: Use `browser_run_code` with `response.body()` — NEVER use `browser_evaluate` with `fetch() + readAsDataURL()` for PDFs over 1MB. The base64 encoding adds 33% overhead and crashes MCP transport on large papers.
+
+   **Method A (preferred): browser_run_code with response.body()**
+   ```javascript
+   async (page) => {
+     const response = await page.goto(page.url(), { waitUntil: 'networkidle' });
+     const contentType = response.headers()['content-type'] || '';
+     if (!contentType.includes('pdf')) {
+       return { error: 'Not a PDF: ' + contentType, status: response.status() };
+     }
+     const buffer = await response.body();
+     const fs = require('fs');
+     const outPath = 'D:/Code/dailyinfo/temp_pdf_download.pdf';
+     fs.writeFileSync(outPath, Buffer.from(buffer));
+     return { ok: true, size: buffer.length, path: outPath };
+   }
+   ```
+
+   **Method B (fallback, only for small PDFs < 1MB): base64 via evaluate + decode**
    ```javascript
    async () => {
      const response = await fetch(window.location.href);
@@ -101,7 +119,7 @@ This is the only publisher tested end-to-end. The flow:
      });
    }
    ```
-   Save output to `D:\Code\dailyinfo\ouyang_b64.txt` (allowed path for Playwright MCP).
+   If using Method B: save output to a temp file, then decode with `python scripts/download_pdf.py decode <input> <output>`.
 
 9. Compute the output path (if the user didn't specify one):
    ```bash
@@ -109,14 +127,14 @@ This is the only publisher tested end-to-end. The flow:
    ```
    This prints the default path (e.g. `~/.myagentdata/dailyinfo/papers/j.jhydrol.2024.132471.pdf`).
 
-10. Decode the PDF using the Python helper:
+10. Copy the downloaded PDF to the final path:
     ```bash
-    python scripts/download_pdf.py decode D:/Code/dailyinfo/temp_b64.txt <output_path>
+    cp D:/Code/dailyinfo/temp_pdf_download.pdf <output_path>
     ```
 
-11. Clean up the temp base64 file:
+11. Clean up the temp file:
     ```bash
-    rm D:/Code/dailyinfo/temp_b64.txt
+    rm D:/Code/dailyinfo/temp_pdf_download.pdf
     ```
 
 12. Verify the downloaded PDF:
@@ -124,25 +142,76 @@ This is the only publisher tested end-to-end. The flow:
     python scripts/download_pdf.py verify <output_path>
     ```
 
-### Phase 2: Other Publishers (Extension Points)
+### Phase 2: Nature / Springer
 
-Template for adding a new publisher:
+Nature articles use a simple download pattern: click "Download PDF" on the article page, and Chrome's native download manager saves the PDF. No base64 encoding needed.
 
-12. **Detect**: Add the URL pattern to `detect_publisher()` in `scripts/download_pdf.py`.
+The Playwright browser profile persists WAYF/SSO cookies, so once you've logged in once, subsequent Nature papers download without re-authentication.
 
-13. **Access**: Identify the institutional login flow:
-    - Does the publisher support Shibboleth/OpenAthens/CARSI?
-    - Is there a "Login via Institution" button?
-    - Does it auto-detect from IP/cookies like Elsevier?
+**Access types:**
 
-14. **Download**: Identify the PDF access pattern:
-    - Direct PDF link on article page?
-    - "Download PDF" button opening a new tab?
-    - Redirect to a CDN (e.g., CloudFront, Akamai, S3)?
+| Type | Indicator | Action |
+|------|-----------|--------|
+| **Open Access** | Gold OA badge on article page | Click "Download PDF" directly |
+| **Institutional** | Redirects to `wayf.springernature.com` or shows "Access through your institution" | User completes WAYF → DUT SSO login, then click "Download PDF" |
+| **Subscription only** | "Buy or subscribe" button, no institutional option, `.pdf` URL redirects to article | Skip |
 
-15. **Test** with a known-access paper, then add the flow to this SKILL.md.
+**Deterministic flow:**
 
-### Phase 3: Sync to Zotero (linked_file)
+12. Navigate to the article page:
+    ```
+    mcp__plugin_playwright_playwright__browser_navigate → https://www.nature.com/articles/<article-id>
+    ```
+
+13. **If redirected to `wayf.springernature.com`** (institutional login):
+    - Take a snapshot to find the institution search box
+    - Type "Dalian" in the search box (`browser_type`)
+    - Press Enter to show results (`browser_press_key key=Enter`)
+    - Click "Dalian University of Technology" from the dropdown
+    - **Pause**: tell user to complete DUT SSO login in the browser window, wait for "done"
+    - After user confirms, the page returns to the article
+
+14. **Click "Download PDF"**:
+    - Grep the snapshot YAML for `Download PDF` to find the ref
+    - `browser_click(ref="<ref>")`
+    - Chrome's native download manager saves the PDF to `.playwright-mcp/<filename>.pdf`
+    - The tool result includes "Downloaded file ... to ..." confirming success
+
+15. **Do NOT use** `browser_evaluate` + `fetch() + readAsDataURL()` — crashes on PDFs >1MB.
+    **Do NOT use** `browser_run_code` + `require('fs')` — `require` is not defined in the Playwright MCP runtime.
+    **DO use** Chrome native download triggered by clicking the download link.
+
+### Phase 3: Wiley / AGU
+
+Wiley Online Library (including AGU journals on `agupubs.onlinelibrary.wiley.com`) uses Cloudflare Turnstile anti-bot protection. The user must pass the challenge manually once per session.
+
+**Key insight**: Wiley supports a `pdfdirect` endpoint with `?download=true` that triggers Chrome native download without opening the PDF viewer.
+
+**Pattern:**
+```
+https://onlinelibrary.wiley.com/doi/pdfdirect/<DOI>?download=true
+https://agupubs.onlinelibrary.wiley.com/doi/pdfdirect/<DOI>?download=true
+```
+
+**Deterministic flow:**
+
+16. **First download of the session**: Navigate to an article page. If Cloudflare Turnstile blocks (page title "请稍候…" or 403 errors), tell the user:
+    > Cloudflare 验证拦截了。请在浏览器窗口中手动完成人机验证，完成后回复 "done"。
+
+17. After Cloudflare passed: navigate directly to the `pdfdirect` URL:
+    ```
+    mcp__plugin_playwright_playwright__browser_navigate → https://agupubs.onlinelibrary.wiley.com/doi/pdfdirect/10.1029/2024EA004157?download=true
+    ```
+    This triggers Chrome's native download immediately. The PDF lands in `.playwright-mcp/<filename>.pdf`.
+
+18. Check for the downloaded file:
+    ```bash
+    ls -t .playwright-mcp/*.pdf | head -1
+    ```
+
+19. Cloudflare cookies persist in the browser profile, so subsequent Wiley/AGU papers in the same session can skip step 16 and go directly to the `pdfdirect` URL.
+
+### Phase 4: Sync to Zotero (linked_file)
 
 After a PDF is downloaded and verified, optionally sync it to Zotero with a linked_file attachment. The PDF is copied to the user's Google Drive papers folder (managed by ZotMoov), and Zotero stores only a pointer — **zero Zotero cloud storage used**.
 
@@ -151,21 +220,21 @@ After a PDF is downloaded and verified, optionally sync it to Zotero with a link
 - `ZOTERO_LIBRARY_ID` — your numeric user ID (visible on the same page)
 - `GDRIVE_PAPERS_PATH` — local path to the Google Drive folder where ZotMoov stores linked PDFs
 - Zotero desktop → Preferences → Advanced → Files and Folders → "Linked Attachment Base Directory" set to the same Google Drive folder
-- Dependencies: `uv pip install -e ".[zotero]"` (installs pyzotero + zotero-mcp-server)
+- Dependencies: `uv pip install -e ".[zotero]"` (installs pyzotero)
 
 **Flow:**
 
-16. **Ask the user** if they want to sync to Zotero. If the user invokes the skill with trigger phrases like "下载并加到Zotero", "加到文献库", or "add to Zotero", proceed automatically.
+20. **Ask the user** if they want to sync to Zotero. If the user invokes the skill with trigger phrases like "下载并加到Zotero", "加到文献库", or "add to Zotero", proceed automatically.
 
-17. **[Optional] Resolve the target collection.** If the user specified a collection name, resolve its key via zotero-mcp:
+21. **[Optional] Resolve the target collection.** If the user specified a collection name, resolve its key via zotero-mcp:
     ```
     zotero_search_collections(query="<collection_name>")
     ```
     Extract the 8-character key from the result.
 
-18. **Run the sync script:**
+22. **Run the sync script.** ⚠️ **MUST use `uv run python`**, NOT bare `python` (conda Python lacks pyzotero):
     ```bash
-    python scripts/zotero_sync.py <pdf_path> <doi> --json
+    uv run python scripts/zotero_sync.py <pdf_path> <doi> --json
     ```
     This single command:
     - Copies the PDF to `$GDRIVE_PAPERS_PATH/{doi-slug}.pdf`
@@ -174,12 +243,12 @@ After a PDF is downloaded and verified, optionally sync it to Zotero with a link
     - Creates a linked_file attachment using the portable `attachments:` scheme
     - Outputs JSON: `{"ok": true, "zotero_key": "...", "title": "...", ...}`
 
-19. **[Optional] File the item into a collection.** If a collection key was resolved in step 17:
+23. **[Optional] File the item into a collection.** If a collection key was resolved in step 21:
     ```
     zotero_manage_collections(item_keys=["<zotero_key>"], add_to=["<collection_key>"])
     ```
 
-20. **[Optional] Verify the item was created correctly:**
+24. **[Optional] Verify the item was created correctly:**
     ```
     zotero_get_item_metadata(item_key="<zotero_key>")
     ```
@@ -209,12 +278,54 @@ The script uses Zotero's portable `attachments:<filename>` scheme. Zotero resolv
 
 | Scenario | Action |
 |----------|--------|
-| DOI resolves to wrong page | Navigate directly to `https://www.sciencedirect.com/science/article/pii/<PII>` instead |
+| DOI resolves to wrong page | Navigate directly to the publisher's article URL instead |
 | "Access through your organization" modal blocking | Click the modal button first, wait for SSO redirect, then retry |
 | Stale element reference | Re-snapshot the page before clicking |
-| Base64 file too large (>100MB) | PDF likely contains embedded high-res figures. Try downloading in chunks or accept a lower-resolution version. |
-| `python` not `python3` | This environment uses `python`, not `python3` |
-| Institutional access expired | Tell user: open browser, go to ScienceDirect, re-authenticate via SSO |
+| **MCP crash on `browser_evaluate` + base64** | **NEVER use this pattern for PDFs.** Use Chrome native download: click the download link or navigate to `pdfdirect?download=true`. |
+| `require('fs')` not defined in `browser_run_code` | Playwright MCP runtime has no Node.js `require`. Use Chrome native download instead. |
+| `python` lacks `pyzotero` (ModuleNotFoundError) | **Always use `uv run python`** for zotero_sync.py. Conda Python doesn't have project dependencies. |
+| **Wiley/AGU: "请稍候…" page or 403 errors** | Cloudflare Turnstile blocking. Tell user to pass the challenge manually in the browser window, then retry. |
+| **Nature `.pdf` URL redirects to article page** | Paper requires institutional access. Follow Phase 2 WAYF login flow, then click "Download PDF" on the article page. |
+| **Nature Reviews journals: no "Download PDF" link** | DUT may not subscribe to that Nature-branded journal. Check for "Buy or subscribe" vs "Access via your institution". |
+| `zotero_sync.py` prints `UnicodeEncodeError: 'gbk'` | Windows terminal encoding issue. Sync itself succeeds — the error is only in the print output. |
+| Playwright MCP "No such tool available" | Use `mcp__plugin_playwright_playwright__*` (standalone Chromium from official plugin). NOT `plugin_ecc_playwright` (needs Chrome extension). |
+| `zotero-mcp` in local-only mode (can't write) | Use `scripts/zotero_sync.py` for writes (uses Web API). zotero-mcp is read-only / collection management only. |
+| Institution login needs manual intervention | **Pause and wait for user**. Tell user what to do in the browser, wait for "done" signal, then continue. |
+
+## Deterministic Patterns (for agents)
+
+These are the ONLY patterns to use. Do not deviate.
+
+### Download: Nature OA paper
+```
+1. browser_navigate → https://www.nature.com/articles/<id>
+2. Grep snapshot for "Download PDF" ref
+3. browser_click(ref="<ref>")  → triggers Chrome native download
+4. File lands in .playwright-mcp/<name>.pdf
+```
+
+### Download: Nature institutional-access paper
+```
+1. browser_navigate → https://www.nature.com/articles/<id>
+2. If WAYF redirect: type "Dalian" → Enter → click "Dalian University of Technology"
+3. ⚠️ PAUSE: tell user to complete DUT SSO login, wait for "done"
+4. After login: Grep for "Download PDF" ref, click it
+```
+
+### Download: Wiley/AGU paper (any access type)
+```
+1. browser_navigate → https://onlinelibrary.wiley.com/doi/pdfdirect/<DOI>?download=true
+   OR: https://agupubs.onlinelibrary.wiley.com/doi/pdfdirect/<DOI>?download=true
+2. If Cloudflare blocks: ⚠️ PAUSE: tell user to pass challenge, wait for "done"
+3. Chrome native download triggers automatically
+4. File lands in .playwright-mcp/<name>.pdf
+```
+
+### Sync to Zotero (all publishers)
+```
+1. uv run python scripts/zotero_sync.py <pdf_path> <doi> --json
+2. Output: {"ok": true, "zotero_key": "...", ...}
+```
 
 ## Reporting
 
