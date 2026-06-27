@@ -131,52 +131,24 @@ dailyinfo push
 | `dailyinfo zotero-brief --collection water --artifact audio` | 处理 `water` collection 并请求音频概览 |
 | `dailyinfo zotero-brief --artifact video` | 请求 NotebookLM 视频概览 |
 | `dailyinfo zotero-brief --manual-only` | 只生成本地素材，不调用 NotebookLM |
-| `dailyinfo download-pdf <doi>` | 打印下载指令（依赖 Claude Code 操作） |
-| `uv run python scripts/zotero_sync.py <pdf> <doi>` | 将已下载 PDF 同步到 Zotero（linked_file，不占云配额） |
+| `dailyinfo download-pdf <doi>` | PDF 下载（依赖 Claude Code，见[文档](docs/download-pdf.md)） |
+| `uv run python scripts/zotero_sync.py <pdf> <doi>` | Zotero linked_file 同步（见[文档](docs/zotero-sync.md)） |
 
-## 下载 PDF → Zotero 同步工作流
+## 下载 PDF → Zotero 同步
 
-> **此工作流依赖 Claude Code。** 下载步骤使用 Claude Code 的 Playwright MCP 插件进行浏览器自动化——不能作为独立 CLI 命令运行。
+> **依赖 Claude Code + Playwright MCP 插件。** 完整配置、支持的出版商和故障处理见 [PDF 下载](docs/download-pdf.md) 和 [Zotero 同步](docs/zotero-sync.md)。
 
-### 它做什么
-
-1. **下载** — Claude Code 在独立的 Chromium 中导航出版商网站，完成机构登录（大连理工大学 SSO），触发 PDF 下载。
-2. **验证** — `scripts/download_pdf.py verify` 检查 PDF 文件头并提取元数据。
-3. **同步** — `scripts/zotero_sync.py` 将 PDF 复制到 Google Drive 并创建 Zotero linked_file 条目（零云存储，由 ZotMoov 管理）。
-
-### 每台机器一次性配置
-
+快速参考：
 ```bash
-# 1. 在 Claude Code 设置中启用 Playwright 插件
-#    编辑 ~/.claude/settings.json → enabledPlugins → 添加：
-#    "playwright@claude-plugins-official": true
-
-# 2. 安装 Chromium（如果插件未自动下载）
+# 一次性配置
 npx playwright install chromium
-
-# 3. 安装 Zotero 同步依赖
 uv pip install pyzotero
 
-# 4. 在 .env 中配置 Zotero API 访问
-#    ZOTERO_API_KEY=<key>       # 从 https://www.zotero.org/settings/keys 创建
-#    ZOTERO_LIBRARY_ID=<id>     # 数字型用户 ID
-#    GDRIVE_PAPERS_PATH=<path>  # 本地 Google Drive 论文文件夹路径
-```
-
-### 如何使用
-
-在 Claude Code 中打开本仓库，然后输入：
-
-```
+# 在 Claude Code 中输入：
 /download-pdf 10.1038/s41586-026-10704-3
 ```
 
-Agent 会打开 Chromium 窗口，导航到论文页面，处理下载，并同步到 Zotero。
-你只需要在以下情况操作：
-- **Cloudflare 验证**出现时（Wiley/AGU）——在浏览器中点击人机验证复选框
-- **需要机构登录**时——在浏览器窗口中完成大连理工大学统一认证
-
-完整 agent 工作流和出版商特定模式见 [`skills/download-pdf/SKILL.md`](skills/download-pdf/SKILL.md)。
+## Zotero -> NotebookLM Agent 工作流
 
 ## Zotero -> NotebookLM Agent 工作流
 
@@ -240,6 +212,8 @@ DailyInfo 不负责调度。推荐分工如下：
 - [系统架构](docs/architecture.md)
 - [CLI 参考](docs/cli.md)
 - [Agent 配置](docs/agent-config.md)
+- [PDF 下载（机构访问）](docs/download-pdf.md)
+- [Zotero 同步（linked_file）](docs/zotero-sync.md)
 - [Zotero NotebookLM Workflow](docs/zotero-notebooklm.md)
 - [Zotero NotebookLM 工作流](docs/zotero-notebooklm.zh.md)
 - [数据源说明](docs/sources.md)

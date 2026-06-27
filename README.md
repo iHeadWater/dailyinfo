@@ -133,56 +133,22 @@ dailyinfo push
 | `dailyinfo zotero-brief --collection water --artifact audio` | Process the `water` collection and request Audio Overview |
 | `dailyinfo zotero-brief --artifact video` | Request NotebookLM Video Overview |
 | `dailyinfo zotero-brief --manual-only` | Prepare local materials without calling NotebookLM |
-| `dailyinfo download-pdf <doi>` | Print download instructions for academic PDF download skill |
-| `python scripts/zotero_sync.py <pdf> <doi>` | Sync downloaded PDF to Zotero as linked_file (zero cloud quota) |
+| `dailyinfo download-pdf <doi>` | PDF download via Claude Code (see [docs](docs/download-pdf.md)) |
+| `uv run python scripts/zotero_sync.py <pdf> <doi>` | Zotero linked_file sync (see [docs](docs/zotero-sync.md)) |
 
-## Download PDF → Zotero Sync Workflow
+## Download PDF → Zotero Sync
 
-> **This workflow requires Claude Code.** The download step uses Claude Code's Playwright MCP
-> plugin for browser automation — it cannot run as a standalone CLI command.
+> **Requires Claude Code + Playwright MCP plugin.** For setup, supported publishers, and failure handling, see [PDF Download](docs/download-pdf.md) and [Zotero Sync](docs/zotero-sync.md).
 
-### What it does
-
-1. **Download** — Claude Code navigates publisher sites in a standalone Chromium, clicks
-   through institutional login (DUT SSO), and triggers PDF downloads.
-2. **Verify** — `scripts/download_pdf.py verify` checks the PDF header and extracts metadata.
-3. **Sync** — `scripts/zotero_sync.py` copies the PDF to Google Drive and creates a Zotero
-   linked_file item (zero cloud storage, ZotMoov-managed).
-
-### One-time setup (per machine)
-
+Quick reference:
 ```bash
-# 1. Enable the Playwright plugin in Claude Code settings
-#    Edit ~/.claude/settings.json → enabledPlugins → add:
-#    "playwright@claude-plugins-official": true
-
-# 2. Install Chromium (if the plugin doesn't auto-download it)
+# One-time setup
 npx playwright install chromium
-
-# 3. Install Zotero sync dependencies
 uv pip install pyzotero
 
-# 4. Configure Zotero API access in .env
-#    ZOTERO_API_KEY=<key>       # from https://www.zotero.org/settings/keys
-#    ZOTERO_LIBRARY_ID=<id>     # numeric user ID
-#    GDRIVE_PAPERS_PATH=<path>  # local GDrive path for linked attachments
-```
-
-### How to use
-
-Open this repo in Claude Code, then type:
-
-```
+# Then in Claude Code:
 /download-pdf 10.1038/s41586-026-10704-3
 ```
-
-The agent opens a Chromium window, navigates to the paper, handles download, and syncs to Zotero.
-You only need to interact when:
-- **Cloudflare challenge** appears (Wiley/AGU) — click the checkbox in the browser
-- **Institutional login** is needed — complete DUT SSO in the browser window
-
-See [`skills/download-pdf/SKILL.md`](skills/download-pdf/SKILL.md) for the full agent workflow
-and publisher-specific patterns.
 
 ## Zotero -> NotebookLM Agent Workflow
 
@@ -248,6 +214,8 @@ DailyInfo intentionally avoids owning the scheduler. Recommended ownership:
 - [Architecture](docs/architecture.md)
 - [CLI Reference](docs/cli.md)
 - [Agent Config](docs/agent-config.md)
+- [PDF Download (Institutional Access)](docs/download-pdf.md)
+- [Zotero Sync (linked_file)](docs/zotero-sync.md)
 - [Zotero NotebookLM Workflow](docs/zotero-notebooklm.md)
 - [Zotero NotebookLM 工作流](docs/zotero-notebooklm.zh.md)
 - [Information Sources](docs/sources.md)
