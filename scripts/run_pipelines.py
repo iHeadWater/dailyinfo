@@ -822,10 +822,19 @@ def run_pipeline_code() -> int:
             )
             continue
 
-        try:
-            items = ds.fetch()
-        except Exception as e:
-            log(f"    FETCH ERR: {e}")
+        items = None
+        for _attempt in range(3):
+            try:
+                items = ds.fetch()
+                break
+            except Exception as e:
+                log(f"    FETCH ERR (attempt {_attempt + 1}/3): {e}")
+                if _attempt < 2:
+                    time.sleep(_BACKOFF_SECONDS[_attempt])
+        if items is None:
+            placeholder = f"# {ds.display_name} - {DATE}\n\n⚠️ 获取失败\n"
+            save("code", f"{ds.name}_briefing_{DATE}.md", placeholder)
+            saved += 1
             continue
 
         if not items:
@@ -868,6 +877,9 @@ def run_pipeline_code() -> int:
             time.sleep(1)
         except Exception as e:
             log(f"    AI ERR: {e}")
+            placeholder = f"# {ds.display_name} - {DATE}\n\n⚠️ AI 生成失败\n"
+            save("code", f"{ds.name}_briefing_{DATE}.md", placeholder)
+            saved += 1
 
     log(f"  Pipeline 4 done: {saved} files saved")
     return saved
