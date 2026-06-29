@@ -116,14 +116,13 @@ def test_load_api_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
     assert rp.load_api_key() == "sk-test-env"
 
 
-def test_load_api_key_exits_when_missing(tmp_path, monkeypatch):
+def test_load_api_key_returns_empty_when_missing(tmp_path, monkeypatch):
     import run_pipelines as rp
 
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
 
-    with pytest.raises(SystemExit):
-        rp.load_api_key()
+    assert rp.load_api_key() == ""
 
 
 def test_load_api_key_prefers_dotenv_over_env(tmp_path, monkeypatch):
@@ -276,6 +275,90 @@ def test_resolve_fallback_model_default(monkeypatch):
 
     monkeypatch.delenv("DAILYINFO_FALLBACK_MODEL", raising=False)
     assert rp._resolve_fallback_model(None) == rp.DEFAULT_FALLBACK_MODEL
+
+
+def test_process_regular_source_records_zero_state_for_empty_rss(rss_db, monkeypatch):
+    import run_pipelines as rp
+    from datasource import RSSDataSource
+    from paths import STATE_DIR
+
+    ds = RSSDataSource(
+        {
+            "name": "arxiv_cs_ai",
+            "type": "rss",
+            "category": "arxiv",
+            "url": "https://rss.arxiv.org/rss/cs.AI",
+        },
+        {},
+        db=rss_db,
+    )
+    monkeypatch.setattr(ds, "fetch", lambda: [])
+
+    saved = rp._process_regular_source(
+        ds,
+        ds.config,
+        "deepseek-v4-pro",
+        {"one_line_summary": "summarize {article_list}"},
+        "one_line_summary",
+    )
+
+    assert saved == 1
+    assert (STATE_DIR / "arxiv_cs_ai_zero_state.json").exists()
+
+
+def test_process_regular_source_resets_zero_state_when_rss_recovers(
+    rss_db, monkeypatch
+):
+    import run_pipelines as rp
+    from datasource import Item, RSSDataSource
+    from freshrss_cache import record_zero_result
+    from paths import STATE_DIR
+
+    record_zero_result(STATE_DIR, "arxiv_cs_ai", rp.DATE)
+    ds = RSSDataSource(
+        {
+            "name": "arxiv_cs_ai",
+            "display_name": "arXiv CS.AI",
+            "type": "rss",
+            "category": "arxiv",
+            "url": "https://rss.arxiv.org/rss/cs.AI",
+        },
+        {},
+        db=rss_db,
+    )
+    monkeypatch.setattr(
+        ds,
+        "fetch",
+        lambda: [
+            Item(
+                title="Recovered Paper",
+                date=rp.DATE,
+                url="https://arxiv.org/abs/1",
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        rp,
+        "call_ai",
+        lambda *args, **kwargs: (
+            "## arXiv CS.AI 今日简报\n\n"
+            "1. **Recovered Paper**\n"
+            "   > 中文摘要。\n\n"
+            "🔭 **Today's Highlight**\n"
+            "恢复更新。"
+        ),
+    )
+
+    saved = rp._process_regular_source(
+        ds,
+        ds.config,
+        "deepseek-v4-pro",
+        {"one_line_summary": "summarize {article_list}"},
+        "one_line_summary",
+    )
+
+    assert saved == 1
+    assert not (STATE_DIR / "arxiv_cs_ai_zero_state.json").exists()
 
 
 class _StubAIResponse:

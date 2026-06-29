@@ -588,7 +588,19 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
         ds.cleanup_seen()
         placeholder = f"# {ds.display_name} - {DATE}\n\n" + "\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
         save(category, f"{name}_briefing_{DATE}.md", placeholder)
+        if isinstance(ds, RSSDataSource):
+            from freshrss_cache import record_zero_result
+            zero_days = record_zero_result(STATE_DIR, name, DATE)
+            if zero_days >= 2:
+                log(
+                    f"  [WARN] {name}: {zero_days} consecutive days with 0 articles — "
+                    f"FreshRSS cache may be stuck. Run: dailyinfo cache-clear"
+                )
         return 1
+
+    if isinstance(ds, RSSDataSource):
+        from freshrss_cache import reset_zero_result
+        reset_zero_result(STATE_DIR, name)
 
     if ds.lookback_hours > 24 and _already_pushed_within(name, category, ds.lookback_hours):
         log(f"  {name}: {len(items)} articles - already pushed within {ds.lookback_hours}h, skip")
