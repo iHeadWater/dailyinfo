@@ -196,6 +196,34 @@ Nature login survives across Claude Code restarts; Wiley/AGU Cloudflare challeng
 - `browser_evaluate` + `readAsDataURL()` — crashes MCP on PDFs >1MB
 - `browser_run_code` + `require('fs')` — `require` is not defined in the MCP runtime
 
+### Bilibili Upload (bilibili-upload)
+
+Upload podcast audio to Bilibili as video (audio + auto-generated cover → MP4 via ffmpeg → biliup upload). See `skills/bilibili-upload/SKILL.md`.
+
+**One-time setup:**
+
+```bash
+winget install --id=ForgQi.biliup-rs -e
+biliup -u ~/.bilibili/cookies.json login   # scan QR code, valid ~2 years
+```
+
+**Usage:**
+
+```bash
+# Upload audio (cover auto-generated)
+dailyinfo bilibili-upload "output/weekly-review/2026-06-28/podcast/audio_hydrology.mp3" \
+  --title "水文AI周报 2026-W26" \
+  --tags "AI,水文,科研"
+
+# Preview only (no upload)
+dailyinfo bilibili-upload audio.mp3 --title "Test" --dry-run
+
+# In Claude Code, just say: "上传这周的水文周报音频到B站"
+```
+
+biliup cookie at `~/.bilibili/cookies.json` persists for ~2 years.
+If upload fails with code 601, wait a few minutes and retry (rate limit).
+
 ### Domain docs
 
 Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

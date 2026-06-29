@@ -423,6 +423,57 @@ def weekly(days, force):
     sys.exit(result.returncode)
 
 
+@cli.command("bilibili-upload")
+@click.argument("audio_paths", nargs=-1, type=click.Path(exists=True), required=True)
+@click.option("--title", required=True, help="Video title (max 80 chars).")
+@click.option(
+    "--tags", default="", help="Comma-separated tags (e.g. 'AI,科研,周报')."
+)
+@click.option(
+    "--tid", type=int, default=171, show_default=True,
+    help="Bilibili partition ID (171=科技·人工智能).",
+)
+@click.option("--cover", default=None, type=click.Path(exists=True),
+              help="Custom cover image; auto-generated if not provided.")
+@click.option("--desc", default="", help="Video description.")
+@click.option(
+    "--cookie-path", default=str(Path.home() / ".bilibili" / "cookies.json"),
+    help="Path to biliup cookies.json.",
+)
+@click.option("--dry-run", is_flag=True, help="Generate cover + MP4 but skip upload.")
+@click.option("--keep-cover", is_flag=True, help="Keep the auto-generated cover.")
+def bilibili_upload(audio_paths, title, tags, tid, cover, desc, cookie_path,
+                    dry_run, keep_cover):
+    """Upload audio(s) to Bilibili (cover → MP4 → biliup upload).
+
+    Multiple audio files = multi-P (one submission, multiple parts).
+
+    One-time setup before first use:
+
+    \b
+        winget install --id=ForgQi.biliup-rs -e
+        biliup -u ~/.bilibili/cookies.json login
+    """
+    script = SCRIPTS_DIR / "bilibili_upload.py"
+    cmd = [
+        _python(), str(script),
+        *audio_paths,
+        "--title", title,
+        "--tags", tags,
+        "--tid", str(tid),
+        "--desc", desc,
+        "--cookie-path", cookie_path,
+    ]
+    if cover:
+        cmd += ["--cover", cover]
+    if dry_run:
+        cmd.append("--dry-run")
+    if keep_cover:
+        cmd.append("--keep-cover")
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    sys.exit(result.returncode)
+
+
 @cli.command()
 def status():
     """Show today's briefing and pushed file counts."""

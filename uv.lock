@@ -822,6 +822,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
+    { name = "pillow" },
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "scikit-learn" },
@@ -856,6 +857,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=24" },
     { name = "click", specifier = ">=8.1" },
     { name = "notebooklm-py", extras = ["browser"], marker = "extra == 'notebooklm'", specifier = ">=0.5.0" },
+    { name = "pillow", specifier = ">=10.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyzotero", marker = "extra == 'zotero'", specifier = ">=1.5" },
