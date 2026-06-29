@@ -14,6 +14,7 @@ Usage:
 """
 
 import os
+import json
 import subprocess
 import sys
 from datetime import datetime
@@ -460,6 +461,90 @@ def logs():
         sys.exit(1)
     result = subprocess.run(["tail", "-n", "100", str(log_file)])
     sys.exit(result.returncode)
+
+
+def _source_url(source_name: str) -> str:
+    """Resolve a configured source URL from config/sources.json."""
+    sources_path = PROJECT_ROOT / "config" / "sources.json"
+    with open(sources_path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    for source in cfg.get("sources", []):
+        if source.get("name") == source_name:
+            return source.get("url", "")
+    return ""
+
+
+@cli.command("cache-clear")
+@click.option(
+    "--source",
+    default="arxiv_cs_ai",
+    show_default=True,
+    help="Configured source name whose FreshRSS cache should be cleared.",
+)
+@click.option("--url", default="", help="Explicit feed URL to clear instead of --source.")
+@click.option("--all-stale", is_flag=True, help="Clear every stale SimplePie cache entry.")
+@click.option("--max-age", default=24, show_default=True, help="Stale threshold in hours for --all-stale.")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted without deleting.")
+@click.option("--refresh", is_flag=True, help="Run FreshRSS actualize_script.php after clearing.")
+@click.option("--container", default="dailyinfo_freshrss", show_default=True, help="FreshRSS container name for --refresh.")
+def cache_clear(source, url, all_stale, max_age, dry_run, refresh, container):
+    """Clear FreshRSS SimplePie cache files for stuck feeds (see issue #57)."""
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    from freshrss_cache import (
+        clear_stale_caches,
+        delete_cache_files,
+        find_cache_files_for_url,
+        find_stale_caches,
+        refresh_freshrss,
+    )
+    from paths import FRESHRSS_DATA
+
+    cache_dir = FRESHRSS_DATA / "cache"
+    if not cache_dir.exists():
+        click.echo(f"Cache directory not found: {cache_dir}")
+        sys.exit(1)
+
+    if all_stale:
+        targets = find_stale_caches(cache_dir, max_age_hours=max_age)
+        description = f"stale cache file(s) older than {max_age}h"
+    else:
+        feed_url = url or _source_url(source)
+        if not feed_url:
+            click.echo(f"Source not found or has no URL: {source}")
+            sys.exit(1)
+        targets = find_cache_files_for_url(cache_dir, feed_url)
+        description = f"cache file(s) for {source if not url else feed_url}"
+
+    if not targets:
+        click.echo(f"No {description} found.")
+        return
+
+    click.echo(f"Found {len(targets)} {description}:")
+    for f in targets:
+        click.echo(f"  {f.name}")
+
+    if dry_run:
+        click.echo("Dry run — nothing deleted.")
+        return
+
+    count = (
+        clear_stale_caches(cache_dir, max_age_hours=max_age)
+        if all_stale
+        else delete_cache_files(targets)
+    )
+    click.echo(f"Deleted {count} cache file(s).")
+
+    if refresh:
+        result = refresh_freshrss(container=container)
+        if result.returncode != 0:
+            click.echo("FreshRSS refresh failed.")
+            sys.exit(result.returncode)
+        click.echo("FreshRSS refresh triggered.")
+    else:
+        click.echo(
+            "Run with --refresh or execute: "
+            f"docker exec {container} php /var/www/FreshRSS/app/actualize_script.php"
+        )
 
 
 @cli.command("weekly-report")

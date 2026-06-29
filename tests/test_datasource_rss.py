@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime
+
 DEFAULTS = {"lookback_hours": 24}
 
 
@@ -239,8 +241,6 @@ def test_commit_seen_empty_list_is_harmless(rss_db):
 
 def test_cleanup_seen_removes_old_entries(rss_db):
     """cleanup_seen should remove entries older than max_age_days."""
-    from datasource import Item
-
     ds = _make_rss(
         {
             "name": "test_feed1",
@@ -250,18 +250,19 @@ def test_cleanup_seen_removes_old_entries(rss_db):
         },
         rss_db,
     )
+    old_1 = (datetime.date.today() - datetime.timedelta(days=42)).isoformat()
+    old_2 = (datetime.date.today() - datetime.timedelta(days=33)).isoformat()
+    recent = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+
     # Manually add old + new entries to seen
     ds._seen = {
-        "https://old.com/1": "2026-04-01",
-        "https://old.com/2": "2026-04-10",
-        "https://new.com/1": "2026-05-12",
+        "https://old.com/1": old_1,
+        "https://old.com/2": old_2,
+        "https://new.com/1": recent,
     }
     ds._save_seen()
 
     ds.cleanup_seen(max_age_days=30)
-    # 2026-04-01 is 42 days before 2026-05-13 → removed
-    # 2026-04-10 is 33 days before → removed
-    # 2026-05-12 is 1 day before → kept
     assert "https://old.com/1" not in ds._seen
     assert "https://old.com/2" not in ds._seen
     assert "https://new.com/1" in ds._seen

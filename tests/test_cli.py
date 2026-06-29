@@ -403,3 +403,69 @@ class TestCleanCacheCommand:
         assert result.exit_code == 1, result.output
         assert "Cleaned 2 stale cache file(s)" in result.output
         assert "1 error(s)" in result.output
+
+
+def test_cache_clear_defaults_to_arxiv_source(cli_mod):
+    from paths import FRESHRSS_DATA
+
+    cache_dir = FRESHRSS_DATA / "cache"
+    cache_dir.mkdir(parents=True)
+    arxiv_spc = cache_dir / "arxiv.spc"
+    arxiv_html = cache_dir / "arxiv.html"
+    nature_spc = cache_dir / "nature.spc"
+    arxiv_spc.write_text("https://rss.arxiv.org/rss/cs.AI", encoding="utf-8")
+    arxiv_html.write_text("cached html", encoding="utf-8")
+    nature_spc.write_text("https://www.nature.com/nature.rss", encoding="utf-8")
+
+    result = CliRunner().invoke(cli_mod.cli, ["cache-clear"])
+
+    assert result.exit_code == 0, result.output
+    assert "Deleted 2 cache file(s)." in result.output
+    assert not arxiv_spc.exists()
+    assert not arxiv_html.exists()
+    assert nature_spc.exists()
+
+
+def test_cache_clear_dry_run_keeps_files(cli_mod):
+    from paths import FRESHRSS_DATA
+
+    cache_dir = FRESHRSS_DATA / "cache"
+    cache_dir.mkdir(parents=True)
+    arxiv_spc = cache_dir / "arxiv.spc"
+    arxiv_spc.write_text("https://rss.arxiv.org/rss/cs.AI", encoding="utf-8")
+
+    result = CliRunner().invoke(cli_mod.cli, ["cache-clear", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "Dry run" in result.output
+    assert arxiv_spc.exists()
+
+
+def test_cache_clear_refresh_runs_actualize_script(cli_mod, monkeypatch):
+    from paths import FRESHRSS_DATA
+    import freshrss_cache
+
+    cache_dir = FRESHRSS_DATA / "cache"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "arxiv.spc").write_text("https://rss.arxiv.org/rss/cs.AI", encoding="utf-8")
+
+    calls = []
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(cmd)
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(freshrss_cache.subprocess, "run", fake_run)
+
+    result = CliRunner().invoke(cli_mod.cli, ["cache-clear", "--refresh"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        [
+            "docker",
+            "exec",
+            "dailyinfo_freshrss",
+            "php",
+            "/var/www/FreshRSS/app/actualize_script.php",
+        ]
+    ]
