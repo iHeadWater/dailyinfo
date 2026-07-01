@@ -157,3 +157,50 @@ def test_dlut_news_respects_max_items(fake_requests):
     )
 
     assert len(ds.fetch()) == 2
+
+
+def test_chinawater_filters_seen_articles(fake_requests):
+    from conftest import FakeResponse
+    from datasource import DataSource
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    index_html = (
+        '<a href="guokan_list?year=2026&issue=13&yearId=year-uuid'
+        '&issueId=issue-uuid">2026年13期</a>'
+    )
+    list_html = """
+    <a href="/portal/journal/portal/client/paper/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">水利调度研究</a>
+    <a href="/portal/journal/portal/client/paper/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">智慧水网建设</a>
+    """
+    detail_html = f"<div>出版时间：{today}</div>"
+
+    fake_requests.register(
+        "https://slzg.cbpt.cnki.net/portal/journal/portal/client/index",
+        FakeResponse(status=200, text=index_html),
+    )
+    fake_requests.register(
+        "https://slzg.cbpt.cnki.net/portal/journal/portal/client/guokan_list",
+        FakeResponse(status=200, text=list_html),
+    )
+    fake_requests.register(
+        "https://slzg.cbpt.cnki.net/portal/journal/portal/client/paper",
+        FakeResponse(status=200, text=detail_html),
+    )
+
+    cfg = {
+        "name": "chinawater",
+        "display_name": "中国水利",
+        "category": "papers",
+        "type": "scrape",
+        "url": "https://slzg.cbpt.cnki.net/portal/journal/portal/client/index",
+        "lookback_hours": 48,
+        "max_items": 20,
+    }
+
+    first = DataSource.create(cfg, DEFAULTS)
+    first_items = first.fetch()
+    assert [item.title for item in first_items] == ["水利调度研究", "智慧水网建设"]
+    first.commit_seen(first_items)
+
+    second = DataSource.create(cfg, DEFAULTS)
+    assert second.fetch() == []

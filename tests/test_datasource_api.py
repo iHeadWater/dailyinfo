@@ -259,3 +259,46 @@ def test_dlut_api_list_key_shape():
         DEFAULTS,
     )
     assert [it.title for it in ds._parse_dlut_api(api_data)] == ["first"]
+
+
+def test_crossref_fetch_filters_seen_articles(fake_requests):
+    from conftest import FakeResponse
+    from datasource import DataSource
+
+    now = datetime.now()
+    payload = {
+        "message": {
+            "items": [
+                {
+                    "title": ["Hydraulic engineering paper"],
+                    "URL": "https://doi.org/10.1234/example",
+                    "DOI": "10.1234/example",
+                    "published": {
+                        "date-parts": [[now.year, now.month, now.day]]
+                    },
+                }
+            ]
+        }
+    }
+    fake_requests.register(
+        "https://api.crossref.org/works",
+        FakeResponse(status=200, json_data=payload),
+    )
+
+    cfg = {
+        "name": "shuili_xuebao",
+        "display_name": "水利学报",
+        "category": "papers",
+        "type": "api",
+        "url": "https://api.crossref.org/works",
+        "parser": "crossref",
+        "lookback_hours": 720,
+    }
+
+    first = DataSource.create(cfg, DEFAULTS)
+    first_items = first.fetch()
+    assert [item.title for item in first_items] == ["Hydraulic engineering paper"]
+    first.commit_seen(first_items)
+
+    second = DataSource.create(cfg, DEFAULTS)
+    assert second.fetch() == []

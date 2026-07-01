@@ -385,11 +385,11 @@ class RSSDataSource(DataSource):
 class ScrapeDataSource(DataSource):
     def fetch(self) -> list[Item]:
         if self.name == "github_trending":
-            return self._fetch_github()
+            return self._filter_seen(self._fetch_github())
         if self.name == "chinawater":
-            return self._fetch_chinawater_journal()
+            return self._filter_seen(self._fetch_chinawater_journal())
         if self.name == "skxjz":
-            return self._fetch_skxjz_journal()
+            return self._filter_seen(self._fetch_skxjz_journal())
         resp = requests.get(
             self.config["url"],
             timeout=20,
@@ -399,8 +399,8 @@ class ScrapeDataSource(DataSource):
         )
         resp.encoding = resp.apparent_encoding or "utf-8"
         if self.name == "skxjz":
-            return self._parse_skxjz(resp.text)
-        return self._parse_dlut_html(resp.text)
+            return self._filter_seen(self._parse_skxjz(resp.text))
+        return self._filter_seen(self._parse_dlut_html(resp.text))
 
     # --- GitHub Trending ---
     def _fetch_github(self) -> list[Item]:
@@ -744,7 +744,7 @@ class APIDataSource(DataSource):
         params = self.config.get("params", {})
         if method == "POST":
             if self.config.get("paginate"):
-                return self._fetch_dlut_paginated(params)
+                return self._filter_seen(self._fetch_dlut_paginated(params))
             resp = requests.post(self.config["url"], data=params, timeout=20)
         else:
             params_str = {k: str(v) for k, v in params.items()}
@@ -757,10 +757,10 @@ class APIDataSource(DataSource):
         data = resp.json()
 
         if self.name.startswith("huggingface_"):
-            return self._parse_huggingface(data)
+            return self._filter_seen(self._parse_huggingface(data))
         if self.config.get("parser") == "crossref":
-            return self._parse_crossref(data)
-        return self._parse_dlut_api(data)
+            return self._filter_seen(self._parse_crossref(data))
+        return self._filter_seen(self._parse_dlut_api(data))
 
     def _fetch_dlut_paginated(self, base_params: dict) -> list[Item]:
         """Paginate DLUT POST API.
