@@ -285,6 +285,7 @@ def _create_zotero_item(
     attach_tmpl["title"] = attachment_filename
     attach_tmpl["parentItem"] = parent_key
     attach_tmpl["path"] = f"attachments:{attachment_filename}"
+    attach_tmpl["contentType"] = "application/pdf"
 
     attach_resp = zot.create_items([attach_tmpl])
     attach_created = attach_resp.get("success", {})
