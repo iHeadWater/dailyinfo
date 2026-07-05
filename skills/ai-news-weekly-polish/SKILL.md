@@ -15,6 +15,7 @@ This skill is designed to be invoked by external agent runtimes (myopenclaw / Cl
 - Use WebSearch + WebFetch for supplementary research on obscure entities, missing context, or fact-checking.
 - Write the polished article to a new file: `{briefings_dir}/weekly/weekly_recap_{DATE}_polished.md`.
 - Keep the four-section structure (导读 + 🧠 模型进展 + 🤖 Agent/产品进展 + 🔬 AI for Science + 🏭 产业新闻) but improve depth, accuracy, and readability within each section.
+- **All polished articles MUST end with a "📮 信息来源" footer.** See Phase 3.6 for the exact format.
 
 ## Quality Standards
 
@@ -31,6 +32,7 @@ A polished article must meet these gates before the loop exits:
 - [ ] **术语克制**: 区分"必须精确"和"可以模糊"。**版本号永远保留**（GPT-5.6 不是"新一代旗舰模型"）。**国产公司/模型的具体产品名保留**（DeepSeek DSpark、智谱 GLM-5.2、美团 LongCat 2.0、阿里 Qwen）。功能描述是**补充不是替代**——写"Baseten（模型推理托管平台）"而非删掉 Baseten 只说"一个推理平台"。需要克制的是：融资跟投方列表、作为对比基准出现的模型名、技术栈中的非核心组件
 - [ ] **主线聚焦**: 每个小节只展开 1-2 个主线故事，其余事件最多一句话带过或直接舍弃。宁可少而深，不可多而浅
 - [ ] **递进克制**: 两个事件之间没有真实的因果或时序关系，就不写"随后/紧接着/在此之后"。独立事件各自成段，不强求串联
+- [ ] **信息来源**: 文章末尾必须包含 "📮 信息来源" 脚注，说明数据来源与验证方式
 
 ## Workflow
 
@@ -160,6 +162,22 @@ Rewrite if scored <4. Lead with the week's most dramatic finding.
 - Ensure ≥5 specific numbers.
 
 Write to `weekly_recap_{DATE}_polished.md`. Preserve the HTML comment metadata line from the original.
+
+#### 3.6 信息来源脚注（NEW）
+
+**每篇润色文章末尾必须追加以下脚注**：
+
+```markdown
+---
+> 📮 **信息来源**：本文基于 dailyinfo 每日 AI News 简报生成，原始信息来自主流科技媒体 RSS 源（TechCrunch、The Verge、Ars Technica 等）、AI 社区动态（Hugging Face、GitHub Trending）及厂商官方发布渠道。关键事件细节经 WebSearch 交叉验证。数据截至本周日。
+```
+
+规则：
+- 放在文章最后，与其他内容用 `---` 分隔线隔开
+- 使用 `>` 引用块格式，视觉上与正文区分
+- 内容固定，不需要每期修改（日期除外，用"本周日"即可）
+- 如果本期有 WebSearch 验证过的事件，可以加一句"本期对 {N} 个事件进行了交叉验证"（可选）
+- **不要**用"值得一提的是""值得注意的是"等套话包装这个脚注——它就是一段来源声明，不需要装饰
 
 ### Phase 4: Independent Re-Audit (separate sub-agent — CRITICAL)
 
