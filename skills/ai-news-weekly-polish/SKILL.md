@@ -27,6 +27,10 @@ A polished article must meet these gates before the loop exits:
 - [ ] **At least 5 specific numbers** (valuations, percentages, scores, dates) appear in the article
 - [ ] **Section titles** describe content, not function (not "重点论文深度解读")
 - [ ] **No single-day event** is given 300+ words when a cross-day event in the same section is under-covered
+- [ ] **日期脱敏**: 每日推送时间 ≠ 事件发生时间。不得出现"周一/周二/周三…"、"X月X日，XXX发布了…"等将推送日当作事件日的表述。跨日事件用"本周初/本周后期/周中"等模糊时间，单日事件不标具体日期。**注意：版本号、模型名不受此规则影响**——GPT-5.6 是版本号不是日期，"6月28日"才是需要模糊的日期
+- [ ] **术语克制**: 区分"必须精确"和"可以模糊"。**版本号永远保留**（GPT-5.6 不是"新一代旗舰模型"）。**国产公司/模型的具体产品名保留**（DeepSeek DSpark、智谱 GLM-5.2、美团 LongCat 2.0、阿里 Qwen）。功能描述是**补充不是替代**——写"Baseten（模型推理托管平台）"而非删掉 Baseten 只说"一个推理平台"。需要克制的是：融资跟投方列表、作为对比基准出现的模型名、技术栈中的非核心组件
+- [ ] **主线聚焦**: 每个小节只展开 1-2 个主线故事，其余事件最多一句话带过或直接舍弃。宁可少而深，不可多而浅
+- [ ] **递进克制**: 两个事件之间没有真实的因果或时序关系，就不写"随后/紧接着/在此之后"。独立事件各自成段，不强求串联
 
 ## Workflow
 
@@ -43,13 +47,15 @@ A polished article must meet these gates before the loop exits:
 Launch an **audit sub-agent** with:
 - The full draft text
 - The audit dimensions and scoring rubric below
-- Instruction: "You are an independent quality auditor. Score this article honestly. Point out every weakness with specific line references. Do not suggest fixes — only identify problems."
+- Instruction: "You are an independent quality auditor. Score this article honestly on ALL 11 dimensions. Point out every weakness with specific line references. Do not suggest fixes — only identify problems."
 
 The sub-agent reads the draft and produces a structured audit. Score each dimension 1-5:
 
+#### Core Quality (7 dimensions)
+
 | Dimension | What to check |
 |-----------|--------------|
-| 导读 hook | Concrete? Specific number or contradiction? |
+| 导读 hook | Concrete? Specific number or contradiction? Not "本周AI领域发生了许多重要事件"? |
 | 模型进展 depth | Cross-day evolution shown? Key methods/numbers included? |
 | Agent depth | Same as above |
 | AI for Science | If "暂无重要进展" but events exist in source data, flag it |
@@ -57,7 +63,16 @@ The sub-agent reads the draft and produces a structured audit. Score each dimens
 | Entity context | Are obscure names explained? (Baseten, Sail, Mirendil AI, etc.) |
 | AI flavor | Count banned patterns |
 
-Output the audit as a table with specific line references to the draft.
+#### Readability & Restraint (4 dimensions — NEW)
+
+| Dimension | What to check |
+|-----------|--------------|
+| **日期脱敏** | Flag EVERY instance of "X月X日", "周一/周二/周三", "上周五" etc. that treats push date as event date. Also flag "本周X月X日~X月X日" calendar-style openings. Score 5 = zero date anchors, 1 = dates everywhere |
+| **术语密度** | Count company names + framework names + model names per paragraph. Flag any paragraph with >3. **But distinguish**: model version numbers (GPT-5.6, GLM-5.2) and protagonist company names are NOT name-dump — they are facts. Only flag decorative/redundant names: investor lists, comparison benchmarks, non-core stack components. Also flag when a name is REPLACED by a vague description ("新一代旗舰模型" instead of "GPT-5.6", "另一家公司" instead of the actual name). Score 5 = precise where it matters, restrained where it doesn't. Score 1 = either name-dump OR over-vague |
+| **主线聚焦** | For each section: how many distinct storylines are developed with 100+ words? If >2, flag it. Also flag sections that read as "A did X. B did Y. C did Z." with equal weight and no prioritization. Score 5 = 1-2 clear storylines per section, 1 = laundry list |
+| **递进克制** | Flag every "随后", "紧接着", "在此之后", "与此同时" between events. For each: is there a genuine causal or temporal link, or is it a forced transition? Score 5 = only genuine connections, 1 = everything is forced to link |
+
+Output the audit as a table with specific line references to the draft. Each flagged issue must cite at least one line number.
 
 ### Phase 2: Supplementary Research
 
@@ -71,28 +86,93 @@ For each gap found in Phase 1:
 
 4. **Fact-checking**: If a claim seems exaggerated ("首个", "最大", "革命性"), verify against search results. Flag if unsubstantiated.
 
+5. **Event date verification (NEW)**: When the draft anchors an event to a specific day ("6月29日，OpenAI发布了…"), search for the actual announcement date. The push date in the briefing is NOT the event date — it's just when the news was collected. If the actual date differs, note the correction for the rewrite.
+
 Store all research findings as bullet points under each audit gap. **Do not rewrite yet.**
 
 ### Phase 3: Rewrite
 
-Apply all research findings to produce the polished article:
+Apply all research findings to produce the polished article. Below are section-specific rewrite rules. The audit scores from Phase 1 determine which sections need heavy vs. light editing.
 
-1. **导读**: Rewrite if scored <4. Lead with the week's most dramatic finding.
-2. **Each section**: Incorporate supplementary context. Add parenthetical backgrounds for obscure entities. Strengthen cross-day evolution narratives with any additional timeline details found in research.
-3. **AI for Science**: If genuinely empty, keep "本周暂无重要进展。" — don't pad. If events exist but were under-covered, expand.
-4. **Global**: Remove all AI filler patterns. Replace weak transitions with substantive connections. Ensure ≥5 specific numbers.
+#### 3.1 导读
+
+Rewrite if scored <4. Lead with the week's most dramatic finding.
+
+**日期处理**: 不得出现日历式开头（"本周（6月29日~7月5日）…"）。用"本周"即可，不标具体日期范围。如果导读需要提到时间，用"本周初/临近周末"等模糊表述。
+
+#### 3.2 每节主线选择（NEW — 写前必做）
+
+**在写每个小节之前，先从事件卡片中选出 1-2 个主线故事。** 选择标准：
+- 跨日事件优先（有演化轨迹可写）
+- 有具体数字/结果的优先
+- 对中文读者有信息增量的优先（别选人尽皆知的事）
+- **国产 AI 贡献优先**：DeepSeek、智谱/GLM、阿里/Qwen、美团、Kimi/月之暗面等中国公司的技术突破，应该比海外同等量级的事件多给笔墨。这不是偏好，是对读者信息需求的判断——中文读者更难从英文渠道获取这些细节
+
+未被选为"主线"的事件卡片：
+- 如果和主线有真实关联 → 一句话带过作为背景
+- 如果完全独立但确实重要 → 一句话带过作为"其他动态"
+- 如果只是常规迭代新闻 → 直接舍弃
+
+**每个小节的目标**: 1-2 个主线故事深度展开（各 150-300 字），其余 0-3 个事件一句话收尾。禁止每个事件平均分配篇幅。
+
+#### 3.3 术语管理（NEW — v3 重写）
+
+改写时逐段检查术语。核心原则：**该精确的精确，该克制的克制。功能描述是补充不是替代。**
+
+##### 永远保留（不得用描述替代）
+
+| 类别 | 示例 | 原因 |
+|------|------|------|
+| 模型版本号 | GPT-5.6、GLM-5.2、Claude Opus 4.8、Gemini 3.5 Flash | 版本号是事实，不是装饰。GPT-5.6 ≠ "新一代旗舰模型" |
+| 国产公司具体产品/技术 | DeepSeek DSpark、智谱 GLM-5.2、美团 LongCat 2.0、阿里 AgentWorld-35B-A3B | 中文读者需要这些名字去搜索、追踪、引用 |
+| 主线故事的主角 | Anthropic、OpenAI、Hugging Face、Cognition | 故事的主角名可以重复出现，不需要每段换说法 |
+
+##### 功能描述怎么用
+
+功能描述是**补充信息**，不是**替代名称**：
+- ✅ "Baseten（企业级模型推理托管平台）完成 15 亿美元融资"
+- ✅ "Cognition（Devin 的开发商）推出混合架构"
+- ❌ "一家模型推理平台完成 15 亿美元融资"（删掉了 Baseten 的名字）
+- ❌ "另一家编程 Agent 公司"（有描述无名字 → 应该写"另一家编程 Agent 公司 Cognition"）
+
+##### 可以省略/模糊的
+
+- 融资跟投方列表（"本轮由 a16z、Sequoia、Lightspeed 等参投" → "本轮由 a16z 领投"）
+- 作为对比基准出现的模型名，除非数字本身是核心信息
+- 技术栈中的非核心组件
+- 装饰性公司名堆砌（"AWS Marketplace、Baseten、Hugging Face、Replicate 等超 20 个平台" → "超 20 个推理平台"）
+
+##### 每段上限
+
+每段不超过 3 个专有名词（公司名 + 框架名 + 模型名 + 产品名）。但**主线主角名不计入上限**——一个关于 GPT-5.6 的段落可以出现两次 "GPT-5.6"，只算一次额度。
+
+#### 3.4 递进关系管理（NEW）
+
+- **只在以下情况写递进**: (a) A 事件是 B 事件的直接原因 (b) A 和 B 是同一产品的连续版本迭代 (c) A 事件是对 B 事件的官方回应
+- **以下情况各自独立成段**: (a) 两个公司同一天发了不同产品 (b) 两个事件恰好在同一板块但没有因果关系 (c) 一个趋势下多个独立案例
+- **删除所有强行串联词**: "随后"、"紧接着"、"与此同时"、"在此之后" — 除非上面三条中的真实关联成立
+
+#### 3.5 通用规则
+
+- Incorporate supplementary context from Phase 2 research. Add parenthetical backgrounds for obscure entities.
+- **AI for Science**: If genuinely empty, keep "本周暂无重要进展。" — don't pad. If events exist but were under-covered, expand.
+- Remove all AI filler patterns. Replace weak transitions with substantive connections (or just start a new paragraph — no transition is better than a fake one).
+- Ensure ≥5 specific numbers.
 
 Write to `weekly_recap_{DATE}_polished.md`. Preserve the HTML comment metadata line from the original.
 
 ### Phase 4: Independent Re-Audit (separate sub-agent — CRITICAL)
 
-After rewriting, launch a **fresh audit sub-agent** (not the same one from Phase 1) to re-score the polished article against the original audit:
+After rewriting, launch a **fresh audit sub-agent** (not the same one from Phase 1) to re-score the polished article using the **full 11-dimension rubric** from Phase 1:
 
 1. Give the sub-agent both the original draft AND the polished version.
-2. The sub-agent re-runs the same audit rubric on the polished version.
-3. If any dimension scored <3, go back to Phase 2 for that specific gap, then rewrite the affected section only.
-4. If all dimensions ≥3 and at least 3 dimensions improved by ≥1 point vs. the original audit, exit.
-5. Maximum 3 full rewrite loops. If still not passing, note remaining gaps in a `<!-- outstanding: ... -->` comment at the end of the file and exit.
+2. The sub-agent re-runs the same 11-dimension audit on the polished version.
+3. Exit criteria (all must be met):
+   - All 11 dimensions scored ≥ 3
+   - At least 3 dimensions improved by ≥ 1 point vs. original audit
+   - The 4 new readability dimensions (日期脱敏, 术语密度, 主线聚焦, 递进克制) average ≥ 3.5
+4. If exit criteria not met, go back to Phase 2 for the specific gaps, then rewrite only the affected sections.
+5. **Maximum 3 full rewrite loops.** If still not passing, note remaining gaps in a `<!-- outstanding: ... -->` comment at the end of the file and exit.
 
 ### Phase 5: Report
 
@@ -109,6 +189,7 @@ Output a summary:
   - {improvement 1}
   - {improvement 2}
   - ...
+- **Readability scores**: 日期脱敏={score} 术语密度={score} 主线聚焦={score} 递进克制={score}
 - **Remaining gaps** (if any): ...
 ```
 
@@ -119,5 +200,6 @@ Output a summary:
 | No weekly recap found | Tell user: run `dailyinfo weekly --force` first |
 | WebSearch returns no useful results for an entity | Note in polished article as `<!-- TODO: verify {entity} context -->` and continue |
 | Rewrite loop hits 3 iterations without passing | Exit with outstanding gaps noted — don't loop indefinitely |
-| Article is already high quality (all scores ≥4) | Light polish only: fix AI patterns, add entity context. One pass, then exit. |
+| Article is already high quality (all scores ≥4) | Light polish only: fix AI patterns, add entity context, apply the 4 readability rules. One pass, then exit. |
 | Polish makes article worse (scores drop) | Revert to previous iteration, note what went wrong, exit |
+| Rewrite introduces new date anchors | This is a regression. Revert the affected paragraphs and re-apply the 日期脱敏 rule explicitly |
