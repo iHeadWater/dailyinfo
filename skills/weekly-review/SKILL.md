@@ -80,6 +80,12 @@ Every article should follow a natural arc, not a paper list. The default tone is
 3. Verify Zotero MCP connectivity with a lightweight call such as listing collections. If the MCP server returns a connection error, stop and tell the user:
    > Zotero MCP 无法连接。请确认 Zotero Desktop 7 已启动，且在 Settings → Advanced → Allow other applications to communicate with Zotero（允许其他程序通过 API 访问 Zotero）已勾选。
 
+4. Verify NotebookLM CLI auth with `NOTEBOOKLM_HOME="D:/code/dailyinfo/.tmp/notebooklm" uv run notebooklm doctor`. If auth fails:
+   - Run `NOTEBOOKLM_HOME="D:/code/dailyinfo/.tmp/notebooklm" uv run notebooklm login --browser chrome`
+   - The CLI reads Chrome's existing Google login session — if already logged into Google in Chrome, auth completes in seconds without any OAuth prompt
+   - Verify with `notebooklm doctor` again
+   - Do NOT attempt to inject cookies from Playwright — Playwright's Chromium and the notebooklm CLI's browser profile are incompatible
+
 ### Phase 1: Fetch Papers
 
 4. Search for papers added in the last 7 days using `zotero_advanced_search`:
@@ -303,6 +309,10 @@ The article must be evaluated by a **separate agent** — not the same agent tha
 
 Each article/direction gets its own independent podcast. One podcast covers 2-4 papers on a single theme. This keeps each episode focused, prevents forced connections between unrelated topics, and produces digestible ~15-20 minute episodes.
 
+#### Language Requirement (MANDATORY)
+
+**All podcasts MUST be in Chinese (Mandarin).** The audience is Chinese researchers. Always pass `--language zh_Hans` to `notebooklm generate audio`. Without this flag, NotebookLM defaults to English. Verify this flag is present before every `generate audio` call. Run `notebooklm language list` to confirm `zh_Hans` is available.
+
 #### Factual Grounding Principle
 
 **Upload all analysis cards and original PDFs for each direction.** The cards contain structured, fact-checked extractions; the PDFs give raw completeness. The article is uploaded for narrative structure only. The AI host is instructed to ground every factual claim in a card or PDF, not in an article.
@@ -395,7 +405,7 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
 | Evaluation phase skipped or bypassed | This is a Contract violation. Stop, launch evaluation agents for all articles, and do not deliver articles until all evaluations pass. |
 | Stories cannot form single narrative | Propose split to user. Wait for confirmation, then write separate articles. |
 | `notebooklm` CLI not installed | `pip install notebooklm-py[browser]` into the project environment |
-| `notebooklm doctor` reports no auth | Give exact command: `NOTEBOOKLM_HOME="D:/code/dailyinfo/.tmp/notebooklm" notebooklm login --browser chrome`. Explain that the user must complete browser login, then you can continue. |
+| `notebooklm doctor` reports no auth | Run `NOTEBOOKLM_HOME="D:/code/dailyinfo/.tmp/notebooklm" uv run notebooklm login --browser chrome`. The CLI opens Chrome and reads the existing Google login session — if you're already logged into Google in Chrome (most users), it detects this automatically and saves auth in under 5 seconds without any OAuth prompt. No need for Playwright or manual browser interaction. Verify with `notebooklm doctor`. |
 | NotebookLM generation times out | The `--timeout 900` flag gives 15 minutes. If it still times out, the podcast may be very long. Write `MANUAL_NOTEBOOKLM_STEPS.md` and tell user to generate in the web UI. |
 | Article too long for single NotebookLM source | Split into multiple text sources: `article_part1.md`, `article_part2.md`. NotebookLM limit is ~500K words per source. |
 
