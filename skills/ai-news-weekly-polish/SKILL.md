@@ -169,7 +169,7 @@ Write to `weekly_recap_{DATE}_polished.md`. Preserve the HTML comment metadata l
 
 ```markdown
 ---
-> 📮 **信息来源**：本文基于 dailyinfo 每日 AI News 简报生成，原始信息来自主流科技媒体 RSS 源（TechCrunch、The Verge、Ars Technica 等）、AI 社区动态（Hugging Face、GitHub Trending）及厂商官方发布渠道。关键事件细节经 WebSearch 交叉验证。数据截至本周日。
+> 📮 **信息来源**：本文基于 dailyinfo 每日 AI News 简报生成，原始新闻来自 [smol.ai](https://smol.ai) 的 AI 领域资讯聚合。关键事件细节经 WebSearch 交叉验证。数据截至本周日。
 ```
 
 规则：
