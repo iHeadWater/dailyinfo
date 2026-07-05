@@ -42,14 +42,15 @@ A polished article must meet these gates before the loop exits:
 2. Read it in full. Note the date, word count, and section structure.
 3. If no file exists, tell the user to run `dailyinfo weekly --force` first.
 
-### Phase 1: Quality Audit (independent sub-agent — CRITICAL)
+### Phase 1: Quality Audit — CRITICAL（不可跳过）
 
-**This audit MUST be performed by a separate sub-agent**, not the main agent that will later do the rewrite. Self-review is unreliable — the writer cannot objectively audit their own output.
+**This audit is the single most important phase.** It forces critical thinking before any rewrite begins. Skipping it produces shallow, formulaic output. Running it produces deep, analytical journalism.
 
-Launch an **audit sub-agent** with:
-- The full draft text
-- The audit dimensions and scoring rubric below
-- Instruction: "You are an independent quality auditor. Score this article honestly on ALL 11 dimensions. Point out every weakness with specific line references. Do not suggest fixes — only identify problems."
+The audit can be done in two ways depending on the runtime:
+
+**Full mode (Claude Code with sub-agent support)**: Launch a separate sub-agent with the draft, rubric, and instruction: "You are an independent quality auditor. Score this article honestly on ALL 12 dimensions. Point out every weakness with specific line references. Do not suggest fixes — only identify problems."
+
+**Single-pass mode (--print / non-interactive)**: Read the draft yourself, then internally score each dimension before writing a single word of the polished article. The act of scoring — even mentally — changes how you rewrite. Think of it as: *audit with your critic hat on, then rewrite with your writer hat on.*
 
 The sub-agent reads the draft and produces a structured audit. Score each dimension 1-5:
 
@@ -108,7 +109,7 @@ Rewrite if scored <4. Lead with the week's most dramatic finding.
 - 跨日事件优先（有演化轨迹可写）
 - 有具体数字/结果的优先
 - 对中文读者有信息增量的优先（别选人尽皆知的事）
-- **国产 AI 贡献优先**：DeepSeek、智谱/GLM、阿里/Qwen、美团、Kimi/月之暗面等中国公司的技术突破，应该比海外同等量级的事件多给笔墨。这不是偏好，是对读者信息需求的判断——中文读者更难从英文渠道获取这些细节
+- **国产 AI 贡献优先**：中国公司的技术突破（例如 DeepSeek、智谱/GLM、阿里/Qwen、美团、Kimi/月之暗面等，以当周实际出现者为准），应该比海外同等量级的事件多给笔墨。这不是偏好，是对读者信息需求的判断——中文读者更难从英文渠道获取这些细节
 
 未被选为"主线"的事件卡片：
 - 如果和主线有真实关联 → 一句话带过作为背景
@@ -117,7 +118,7 @@ Rewrite if scored <4. Lead with the week's most dramatic finding.
 
 **每个小节的目标**: 1-2 个主线故事深度展开（各 150-300 字），其余 0-3 个事件一句话收尾。禁止每个事件平均分配篇幅。
 
-#### 3.3 术语管理（NEW — v3 重写）
+#### 3.3 术语管理
 
 改写时逐段检查术语。核心原则：**该精确的精确，该克制的克制。功能描述是补充不是替代。**
 
@@ -154,16 +155,49 @@ Rewrite if scored <4. Lead with the week's most dramatic finding.
 - **以下情况各自独立成段**: (a) 两个公司同一天发了不同产品 (b) 两个事件恰好在同一板块但没有因果关系 (c) 一个趋势下多个独立案例
 - **删除所有强行串联词**: "随后"、"紧接着"、"与此同时"、"在此之后" — 除非上面三条中的真实关联成立
 
-#### 3.5 通用规则
+#### 3.5 写作风格（NEW）
+
+以下规则来自对多版输出的对比分析，它们共同决定了文章是"活"的还是"僵"的。
+
+##### 节奏控制
+
+- **长短句交替**。不要连续三个长句（>40 字），也不要连续三个短句（<15 字）。用短句收束一个观点，用长句展开一个论证。
+- **段落开头换句式**。不要每段都以"XXX 发布了…"开头。可以以结果开头、以数字开头、以矛盾开头、以问题开头。
+- **导读不超过 5 句话**。如果写了 6 句，删一句。导读的作用是让读者 30 秒决定是否读下去，不是概括全文。
+
+##### 分析深度
+
+- **不只说"是什么"，要说"为什么重要"**。写"GPT-5.6 被限制访问"只是报道；写"GPT-5.6 被限制访问——这意味着前沿模型正从商品市场滑向牌照管理"才是分析。
+- **用具体代替抽象**。"推理成本降低了 35%" 比 "大幅降低了推理成本" 有力 10 倍。
+- **数字要有参照系**。"78% 的字准确率" 不如 "78% 的字准确率——距离实用化门槛（~85%）只差临门一脚"。
+
+##### 取舍纪律
+
+- **不是每个事件卡片都值得写进文章**。如果一个事件没有数字、没有演化、没有对中文读者的信息增量——直接舍弃。
+- **一个论证用 2-3 个论据支撑即可，不必堆到 5 个**。读者不需要被说服 5 次，2 次有力的就够了。
+- **如果两个事件本质在说同一件事，合并成一个论证，不要分别写**。
+
+##### AI 套话黑名单
+
+以下表述永远不要出现在润色文章中（持续更新）：
+- "值得注意的是" / "值得一提的是" / "另一个值得注意的是"
+- "此外" / "另一个重要进展是" / "与此同时"（当没有真实并发关系时）
+- "综上所述" / "总而言之" / "整体来看"
+- "本周AI领域发生了许多重要事件" / "本周是AI领域极为活跃的一周"
+- "这场……还在继续" / "让我们拭目以待" / "值得持续关注"
+- "不仅在……也在……" / "既是……也是……" / "从……到……再到……"
+- "不可否认" / "毫无疑问" / "显然"
+
+#### 3.6 通用规则
 
 - Incorporate supplementary context from Phase 2 research. Add parenthetical backgrounds for obscure entities.
-- **AI for Science**: If genuinely empty, keep "本周暂无重要进展。" — don't pad. If events exist but were under-covered, expand.
+- **AI for Science**: If genuinely empty, write "本周暂无重要进展。" — don't pad. If events exist but were under-covered, expand. If there's genuinely nothing to report, the section can be just one sentence.
 - Remove all AI filler patterns. Replace weak transitions with substantive connections (or just start a new paragraph — no transition is better than a fake one).
-- Ensure ≥5 specific numbers.
+- Ensure ≥5 specific numbers, each with context that explains why the number matters.
 
 Write to `weekly_recap_{DATE}_polished.md`. Preserve the HTML comment metadata line from the original.
 
-#### 3.6 信息来源脚注（NEW）
+#### 3.7 信息来源脚注
 
 **每篇润色文章末尾必须追加以下脚注**：
 
@@ -181,12 +215,12 @@ Write to `weekly_recap_{DATE}_polished.md`. Preserve the HTML comment metadata l
 
 ### Phase 4: Independent Re-Audit (separate sub-agent — CRITICAL)
 
-After rewriting, launch a **fresh audit sub-agent** (not the same one from Phase 1) to re-score the polished article using the **full 11-dimension rubric** from Phase 1:
+After rewriting, launch a **fresh audit sub-agent** (not the same one from Phase 1) to re-score the polished article using the **full 12-dimension rubric** from Phase 1:
 
 1. Give the sub-agent both the original draft AND the polished version.
-2. The sub-agent re-runs the same 11-dimension audit on the polished version.
+2. The sub-agent re-runs the same 12-dimension audit on the polished version.
 3. Exit criteria (all must be met):
-   - All 11 dimensions scored ≥ 3
+   - All 12 dimensions scored ≥ 3
    - At least 3 dimensions improved by ≥ 1 point vs. original audit
    - The 4 new readability dimensions (日期脱敏, 术语密度, 主线聚焦, 递进克制) average ≥ 3.5
 4. If exit criteria not met, go back to Phase 2 for the specific gaps, then rewrite only the affected sections.
