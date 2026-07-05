@@ -16,6 +16,8 @@ This Skill is **decoupled from the dailyinfo Python codebase**. It operates pure
 - Claude Code is the deep analysis engine. Do not call external AI APIs for analysis.
 - **Per-paper sub-agent rule**: EVERY paper gets its own dedicated sub-agent for reading and analysis. The main agent does NOT read full papers directly — it only orchestrates. For each paper, launch a sub-agent that (a) reads the full text in sequential chunks until 100% coverage, (b) writes the analysis card following the 8-section template, and (c) returns a brief summary. The main agent then verifies the card's structure and spot-checks 2-3 claims. This isolates each paper's context, prevents pollution across papers, and lets the sub-agent's reading technique be optimized independently.
 - **Sub-agent reading technique**: The sub-agent MUST read the full paper completely — no skimming, no abstract-only analysis. Read the file in small sequential chunks (limit=50-80 lines each) until the entire content is consumed. Before writing any card, the sub-agent MUST state what percentage of the paper it has read. If the paper is too large to fit in a single chunk, the sub-agent reads across multiple turns, accumulating understanding before writing the card.
+- **No card, no article.** Do not proceed to Phase 3 (article writing) for any paper that lacks a completed analysis card in `cards/`. The card is the fact layer; the article is the narrative layer. Writing an article without cards means all claims are unverifiable — the audit found this is the strongest predictor of factual errors. Papers without cards may be listed in a brief "also added this week" note, but not analyzed in depth.
+- **Card-article sync.** If an article is substantially rewritten after initial creation (Phase 3.5 evaluation feedback, user revision requests), the corresponding analysis cards must be re-audited before the next evaluation pass. After any rewrite that changes factual claims, numbers, terminology, or limitation coverage, the main agent must read each card alongside the revised article and verify: (a) all numbers cited in the article still match the card, (b) no new factual claims were added that the card doesn't support, (c) no card-documented limitations or frameworks were dropped from the article. Run this sync check before re-invoking the Phase 3.5 evaluator.
 - Output directory convention: `output/weekly-review/{YYYY-MM-DD}/` with subdirectories `cards/`, `article/`, `podcast/`. Create all directories before starting analysis.
 - For NotebookLM: call the `notebooklm` CLI directly via Bash. Do not use dailyinfo's `NotebookLMAutomation` wrapper class. If the CLI is unavailable, provide manual fallback steps.
 - **Evaluation is NOT optional**: Phase 3.5 (independent evaluation agent) is a hard gate. Every article must pass evaluation before delivery. The main agent MUST NOT skip or shortcut this phase. If an evaluation finds issues, fix them and re-evaluate until the verdict is "通过".
@@ -30,6 +32,8 @@ These rules govern ALL article output from this Skill:
 - **Proof before adjectives.** A number (KGE=0.66) beats an adjective ("impressive accuracy"). A mechanism description beats a label ("创新性的").
 - **Earned transitions.** No "值得注意的是", "此外", "另一个重要进展是" as standalone bridges. If two topics connect, show the connection with a specific shared method, dataset, or problem.
 - **Story over list.** If papers fall into genuinely different domains, split into separate articles rather than forcing a disjointed list. Each article must have one clear narrative thread.
+- **Respect the source's own emphasis. Do NOT cherry-pick.** When reporting on a broad document (survey, annual report, multi-topic review), do not amplify a minor mention into the appearance of a major focus just because it aligns with the reader's domain. If a report devotes 2% of its Science chapter to hydrology, the article must reflect that proportion — not restructure the narrative as if the chapter were about hydrology. Always preserve: (a) the source's chapter structure and relative weight, (b) which claims are the source's own framing vs. your extraction, (c) what broader context surrounds any specific data point you highlight. **The reader should finish the article understanding what the source actually emphasizes, not just what is relevant to them.**
+- **For AI/ML methods papers: present the paper first, connect to domain second.** The default ratio should be ~80% faithful presentation of what the paper says and ~20% brief pointers on domain relevance. Do not over-translate — don't reframe every concept through a hydrology lens. Trust the reader to make their own connections. The domain guidance should be a short paragraph at the end, clearly signaled as our extrapolation (e.g., "从水文建模的角度看，这篇论文的三个思想值得关注：…"), not woven into the main exposition as if the paper itself addresses hydrology. A hydrologist reading an AI methods paper wants to understand the method on its own terms first.
 
 ### Banned AI Patterns
 
@@ -99,7 +103,7 @@ Every article should follow a natural arc, not a paper list. The default tone is
 The main agent NEVER reads full papers directly. Every paper gets its own **dedicated sub-agent**. The main agent's role is pure orchestration: launch sub-agents, verify card output, keep context clean for Phase 3 synthesis.
 
 7. For each confirmed paper, the main agent:
-   a. First calls `zotero_get_item_fulltext` to retrieve the full text. If the result is inline, pass it directly to the sub-agent. If it's a persisted-output file path, pass the file path to the sub-agent — the sub-agent will read the file in chunks.
+   a. First calls `zotero_get_item_fulltext` to retrieve the full text. If the result is inline, pass it directly to the sub-agent. If it's a persisted-output file path, pass the file path to the sub-agent — the sub-agent will read the file in chunks. **If the paper is extremely large (>100K chars, e.g. a multi-hundred-page annual report), pre-split it first:** run `python scripts/chunk_fulltext.py <saved_json> --output-dir output/weekly-review/{date}/chunks/ [--markers markers.json]` to split the fulltext into manageable files by section markers (or fixed-size chunks as fallback). Then pass individual chunk file paths to sub-agents.
    b. Launches a sub-agent with:
       - The paper's full text (inline) OR the file path to read (persisted output)
       - The **analysis card template** (8 sections below)
@@ -253,12 +257,31 @@ The article must be evaluated by a **separate agent** — not the same agent tha
     | AI flavor scan | Check for banned patterns from the Contract. Flag each instance with signal strength (强/中/弱). |
     | Listing feel | If any section reads as "Paper A did X. Paper B did Y. Paper C did Z." without connecting tissue, flag as **HIGH — list mode**. |
 
+    #### Terminology Precision Check
+    | Check | Method |
+    |-------|--------|
+    | Domain term accuracy | For every domain-specific term (e.g., "流域属性", "产流机制", "同化"), verify it's used with its accepted disciplinary meaning. "流域属性" must refer to static catchment characteristics, not time series. Flag misuse as **HIGH — term misuse**. |
+    | Jargon accessibility | If a technical term is essential to understanding the sentence and is NOT common knowledge for a hydrology graduate student (e.g., "C 波段散射计", "Budyko 框架", "求积权重"), it should be briefly explained on first use. Flag unexplained niche jargon as **MEDIUM — accessibility gap**. |
+    | Concept conflation | Check whether distinct concepts are conflated under one term (e.g., calling both time series and static attributes "流域属性"). Flag as **HIGH — concept conflation**. |
+    | Title-to-content alignment | Does the section title match what the section actually discusses? A title promising "属性增强" but describing time series upgrades is a mismatch. Flag as **MEDIUM — title-content mismatch**. |
+
+    #### Source Fidelity Check (for survey/report/multi-topic sources)
+    | Check | Method |
+    |-------|--------|
+    | Proportional representation | Compare the article's word count per topic to the source's. If the source devotes 15% of its Science chapter to Earth science and 2% to hydrology, the article should not read as if the chapter is about hydrology. Flag disproportionate emphasis as **HIGH — cherry-picking**. |
+    | Source's own framing preserved | If the source says "AI is beginning to show promise in X" and the article says "AI is transforming X", that's a distortion. Check 3-5 key claims against the source's exact wording. Flag framing inflation as **HIGH — source distortion**. |
+    | Context transparency | When spotlighting a specific data point (e.g., "LSTM outperforms process-based models"), does the article indicate where this sits in the source's broader structure? If a reader would mistakenly think this was a headline finding of the source rather than a detail in a subsection, flag as **MEDIUM — missing context**. |
+    | AI methods paper: domain-application ratio | For articles on AI/ML methods papers (not application papers), count the proportion of text devoted to domain application vs. faithful presentation of the method. If domain application exceeds ~30% of total word count, flag as **MEDIUM — over-translation**. The article should present the method on its own terms; domain pointers belong in a clearly marked short section at the end. |
+
     #### Output Format
     ```
     ## Evaluation Report: {article_title}
 
     ### Accuracy
     - ✅/⚠️/❌ {finding} — {specific reference to card}
+
+    ### Terminology Precision
+    - ✅/⚠️/❌ {finding} — {specific reference to article text}
 
     ### Narrative Coherence
     - ✅/⚠️/❌ {finding} — {specific reference to article section}
@@ -364,6 +387,7 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
 | No papers found in 7-day range | Offer to expand to 14 days, or check if the user has the correct Zotero collection selected |
 | Full text unavailable (scanned/OCR-failed PDF) | Use `zotero_get_item_metadata` for abstract-based analysis. Mark card clearly: "⚠️ 全文不可用，仅基于摘要分析". Still use a sub-agent — it works from metadata instead of full text. |
 | Sub-agent fails to read paper completely | Check if the sub-agent reported <100% coverage. If so, re-launch with a smaller chunk size (limit=30-40) and explicit instruction to continue until end-of-file. If the file is fundamentally unreadable (corrupted JSON, encoding error), fall back to abstract-based analysis with clear marking. |
+| Full text too large for single sub-agent (>100K chars) | Use `python scripts/chunk_fulltext.py <fulltext.json> --output-dir output/weekly-review/{date}/chunks/ --markers markers.json` to pre-split the fulltext. Create a `markers.json` with `{"section": {"start": "...", "end": "..."}}` entries using the paper's section headers. Then launch one sub-agent per chunk file. For a 1M+ character document, this can produce ~10 manageable chunks. |
 | Sub-agent fails to write analysis card | Retry once with a tighter prompt. If it still fails, the main agent writes the card directly from metadata and flags it for extra scrutiny in evaluation. |
 | Sub-agent writes card but factual claims are unverifiable | If the card lacks specific section/page references, ask the sub-agent (via SendMessage) to add them. If the sub-agent is gone, spot-verify 3-5 claims directly and annotate the card with verification notes. |
 | Sub-agent accumulation of mediocre cards | If multiple sub-agents return shallow or generic analysis, pause. The reading technique may need adjustment — try adding more specific extraction instructions (e.g., "quote the paper's own research question from Section 1", "extract exact numbers from results tables"). |
