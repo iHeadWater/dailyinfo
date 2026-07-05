@@ -75,6 +75,16 @@ def _resolve_output(audio_path: str | Path, ext: str = ".mp4") -> Path:
     return OUTPUT_DIR / f"{stem}{ext}"
 
 
+def _copy_to_dir(src: Path, dst_dir: Path) -> Path | None:
+    """Copy file to directory; return None if source doesn't exist."""
+    if not src.exists():
+        return None
+    import shutil as _shutil
+    dst = dst_dir / src.name
+    _shutil.copy2(src, dst)
+    return dst
+
+
 # ── theme context resolution ───────────────────────────────────────────
 
 @dataclass
@@ -162,7 +172,9 @@ def _load_card_info(card_path: Path, author_surname: str) -> CardInfo:
     """Extract DOI and English title from a card file."""
     text = card_path.read_text(encoding='utf-8')
     doi_m = re.search(r'\*\*DOI:\*\*\s*(.+?)$', text, re.MULTILINE)
-    title_m = re.search(r'\*\*原文标题:\*\*\s*(.+?)$', text, re.MULTILINE)
+    # Multiple possible title field names
+    title_m = (re.search(r'\*\*原文标题:\*\*\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'\*\*报告全称:\*\*\s*(.+?)$', text, re.MULTILINE))
     return CardInfo(
         path=card_path,
         doi=doi_m.group(1).strip() if doi_m else None,
@@ -201,12 +213,60 @@ def _build_description(contexts: list[ThemeContext | None]) -> str:
             idx += 1
         lines.append("")
     if lines:
-        lines.append("更多内容: dailyinfo")
+        lines.append("由 dailyinfo 自动生成 | https://github.com/iHeadWater/dailyinfo")
     return "\n".join(lines)
 
 
+def _find_article_md(wr_root: Path, theme: str) -> Path | None:
+    """Find article_{date}_{theme}.md in the article directory."""
+    article_dir = wr_root / "article"
+    if not article_dir.exists():
+        return None
+    date_str = wr_root.name  # YYYY-MM-DD
+    candidate = article_dir / f"article_{date_str}_{theme}.md"
+    return candidate if candidate.exists() else None
+
+
+def _extract_authors_from_article(text: str) -> list[str]:
+    """Extract first-author surnames from article text.
+
+    Matches patterns like:
+    - 'Crow 等人（2026, WRR）'
+    - 'Thébault et al. (2026, HESS)'
+    - 'Sajadieh, S., et al. (2026)'
+    - '**Crow et al.**'
+    """
+    surnames: list[str] = []
+    seen: set[str] = set()
+    # Match Chinese «Author 等人» or English «Author et al.»
+    # Handle optional comma-initial like 'Sajadieh, S., et al.'
+    patterns = [
+        # English: Author et al. (with optional comma-initial)
+        re.compile(r'(?:^|[.。\s\n])([A-Z][a-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc]+)(?:,\s*[A-Z]\.?,\s*)?et\s+al\.'),
+        # Chinese: Author 等人
+        re.compile(r'(?:^|[.。\s\n])([A-Z][a-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc]+)\s*等人'),
+    ]
+    for pat in patterns:
+        for m in pat.finditer(text):
+            name = m.group(1)
+            key = _ascii_fold(name)
+            if key not in seen:
+                seen.add(key)
+                surnames.append(name)
+    return surnames
+
+
 def _resolve_theme_context(audio_path: Path) -> ThemeContext | None:
-    """Full mapping: audio → theme → cards → ThemeContext."""
+    """Full mapping: audio → article → cards → DOI + subtitle.
+
+    For each audio file:
+    1. Find the weekly-review root (date-based directory)
+    2. Extract theme name from audio filename
+    3. Find the matching article_{date}_{theme}.md
+    4. Extract first-author surnames from article text
+    5. Match surnames to card files for DOI/title
+    6. Generate subtitle from podcast H1 or fallback
+    """
     theme = _audio_stem_to_theme(audio_path.stem)
     if not theme:
         return None
@@ -214,15 +274,19 @@ def _resolve_theme_context(audio_path: Path) -> ThemeContext | None:
     if not wr_root:
         return ThemeContext(theme=theme, subtitle=_COVER_SUBTITLE_FALLBACK.get(
             theme, "AI for Science · 前沿论文"))
+
     cards_dir = wr_root / "cards"
     podcast_md = _find_podcast_md(audio_path.parent, theme)
+    article_md = _find_article_md(wr_root, theme)
+
     papers: list[CardInfo] = []
-    if podcast_md:
-        text = podcast_md.read_text(encoding='utf-8')
-        for surname in _extract_author_surnames(text):
+    if article_md and cards_dir.exists():
+        text = article_md.read_text(encoding='utf-8')
+        for surname in _extract_authors_from_article(text):
             card_path = _find_card_for_author(surname, cards_dir)
             if card_path:
                 papers.append(_load_card_info(card_path, surname))
+
     subtitle = _build_subtitle(theme, podcast_md)
     return ThemeContext(theme=theme, subtitle=subtitle, papers=papers)
 
@@ -464,7 +528,7 @@ def run_bilibili_upload(
             return 1
         resolved.append(p)
 
-    date_str = datetime.date.today().strftime("%Y 第 %W 周")
+    date_str = datetime.date.today().strftime("%Y 第 %U 周")
 
     # ── resolve theme contexts (audio → cards → subtitle + desc) ──
     theme_contexts: list[ThemeContext | None] = []
@@ -505,10 +569,23 @@ def run_bilibili_upload(
         log("ERROR: ffmpeg not found. Install: winget install ffmpeg")
         return 1
 
+    # Save artifacts to date-organized folder
+    today = datetime.date.today().isoformat()
+    artifact_dir = OUTPUT_DIR / today
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
     video_paths = []
     for ap, cp in zip(resolved, cover_paths):
         vp = audio_to_video(ap, cp)
         video_paths.append(vp)
+        # Copy artifacts to date folder
+        _copy_to_dir(cp, artifact_dir)
+        _copy_to_dir(vp, artifact_dir)
+
+    # Save description
+    if desc:
+        (artifact_dir / "description.md").write_text(desc, encoding="utf-8")
+    log(f"  artifacts saved → {artifact_dir}")
 
     # ── upload ──
     if dry_run:
