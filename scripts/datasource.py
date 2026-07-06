@@ -804,6 +804,31 @@ class APIDataSource(DataSource):
 
         return result
 
+    @staticmethod
+    def _crossref_date(row: dict) -> Optional[datetime.datetime]:
+        """Return the best date for deciding whether a Crossref item is new."""
+        for key in (
+            "published-online",
+            "created",
+            "deposited",
+            "indexed",
+            "published",
+            "published-print",
+            "issued",
+        ):
+            value = row.get(key) or {}
+            parts = (value.get("date-parts") or [[]])[0]
+            try:
+                if len(parts) >= 3:
+                    return datetime.datetime(parts[0], parts[1], parts[2])
+                if len(parts) >= 2:
+                    return datetime.datetime(parts[0], parts[1], 1)
+                if len(parts) >= 1:
+                    return datetime.datetime(parts[0], 1, 1)
+            except (ValueError, TypeError):
+                continue
+        return None
+
     def _parse_crossref(self, api_data: dict) -> list[Item]:
         """Crossref REST API (/works) — returns English titles with publication dates."""
         rows = api_data.get("message", {}).get("items", [])
@@ -814,22 +839,7 @@ class APIDataSource(DataSource):
             title = titles[0] if titles else ""
             if not title:
                 continue
-            pub = (
-                row.get("published")
-                or row.get("published-print")
-                or row.get("published-online")
-                or {}
-            )
-            parts = (pub.get("date-parts") or [[]])[0]
-            try:
-                if len(parts) >= 3:
-                    dt: Optional[datetime.datetime] = datetime.datetime(parts[0], parts[1], parts[2])
-                elif len(parts) >= 2:
-                    dt = datetime.datetime(parts[0], parts[1], 1)
-                else:
-                    dt = None
-            except (ValueError, TypeError):
-                dt = None
+            dt = self._crossref_date(row)
             if dt and dt < self._cutoff_dt:
                 continue
             items.append(Item(

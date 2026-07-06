@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from conftest import fixture_path
 
@@ -259,3 +260,50 @@ def test_dlut_api_list_key_shape():
         DEFAULTS,
     )
     assert [it.title for it in ds._parse_dlut_api(api_data)] == ["first"]
+
+
+def test_crossref_parse_uses_online_date_for_new_items():
+    from datasource import APIDataSource
+
+    now = datetime.now()
+    old = now - timedelta(days=60)
+    api_data = {
+        "message": {
+            "items": [
+                {
+                    "title": ["Recently posted online"],
+                    "URL": "https://doi.org/10.3724/example",
+                    "DOI": "10.3724/example",
+                    "published-print": {
+                        "date-parts": [[old.year, old.month, old.day]]
+                    },
+                    "published-online": {
+                        "date-parts": [[now.year, now.month, now.day]]
+                    },
+                }
+            ]
+        }
+    }
+    ds = APIDataSource(
+        {
+            "name": "shuili_xuebao",
+            "category": "papers",
+            "url": "https://api.crossref.org/works",
+            "parser": "crossref",
+            "lookback_hours": 24,
+        },
+        DEFAULTS,
+    )
+
+    items = ds._parse_crossref(api_data)
+
+    assert [item.title for item in items] == ["Recently posted online"]
+    assert items[0].date == now.strftime("%Y-%m-%d")
+
+
+def test_shuili_xuebao_config_sorts_by_updated():
+    cfg_path = Path(__file__).parent.parent / "config" / "sources.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    source = next(s for s in cfg["sources"] if s["name"] == "shuili_xuebao")
+
+    assert "sort=updated" in source["url"]
