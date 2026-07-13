@@ -259,3 +259,86 @@ def test_dlut_api_list_key_shape():
         DEFAULTS,
     )
     assert [it.title for it in ds._parse_dlut_api(api_data)] == ["first"]
+
+
+def test_dlut_recruitment_filters_expired_deadlines(monkeypatch):
+    import datetime
+
+    import datasource
+    from datasource import APIDataSource
+
+    monkeypatch.setattr(
+        datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0)
+    )
+    api_data = {
+        "object": {
+            "list": [
+                {
+                    "id": "old",
+                    "title": "Expired internship",
+                    "startTime": "2026-05-27 01:00:00",
+                    "endTime": "2026-05-26 00:00:00",
+                },
+                {
+                    "id": "today",
+                    "title": "Today deadline internship",
+                    "startTime": "2026-05-27 01:00:00",
+                    "endTime": "2026-05-27 00:00:00",
+                },
+                {
+                    "id": "future",
+                    "title": "Future internship",
+                    "startTime": "2026-05-27 01:00:00",
+                    "endTime": "2026-05-28 00:00:00",
+                },
+            ]
+        }
+    }
+    ds = APIDataSource(
+        {
+            "name": "dlut_internship",
+            "category": "resource",
+            "url": "https://x.test/",
+            "list_url": "https://x.test/list",
+            "extract": {
+                "fields": {
+                    "title": "title",
+                    "date": "startTime",
+                    "deadline": "endTime",
+                }
+            },
+            "max_items": 10,
+        },
+        DEFAULTS,
+    )
+
+    items = ds._parse_dlut_api(api_data)
+
+    assert [item.title for item in items] == [
+        "Today deadline internship",
+        "Future internship",
+    ]
+    assert [item.extra["deadline"] for item in items] == [
+        "2026-05-27",
+        "2026-05-28",
+    ]
+
+
+def test_dlut_recruitment_format_items_includes_deadline():
+    from datasource import APIDataSource, Item
+
+    ds = APIDataSource(
+        {"name": "dlut_internship", "url": "x", "category": "resource"},
+        DEFAULTS,
+    )
+    out = ds.format_items(
+        [
+            Item(
+                title="Internship",
+                date="2026-05-27",
+                extra={"deadline": "2026-05-28"},
+            )
+        ]
+    )
+
+    assert "截止: 2026-05-28" in out
