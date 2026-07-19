@@ -159,21 +159,27 @@ def _find_card_for_author(author_surname: str, cards_dir: Path) -> Path | None:
     """Match author surname to a card file by filename prefix."""
     if not cards_dir.exists():
         return None
-    target = _ascii_fold(author_surname)
-    for card_path in sorted(cards_dir.iterdir()):
-        if not card_path.name.endswith('.md'):
-            continue
-        if _ascii_fold(card_path.stem).startswith(f"{target}_"):
-            return card_path
+    candidates = [_ascii_fold(author_surname)]
+    # For hyphenated names, also try just the first part (Rodriguez-Pardo → rodriguez)
+    if '-' in author_surname:
+        candidates.append(_ascii_fold(author_surname.split('-')[0]))
+    for target in candidates:
+        for card_path in sorted(cards_dir.iterdir()):
+            if not card_path.name.endswith('.md'):
+                continue
+            if _ascii_fold(card_path.stem).startswith(f"{target}_"):
+                return card_path
     return None
 
 
 def _load_card_info(card_path: Path, author_surname: str) -> CardInfo:
     """Extract DOI and English title from a card file."""
     text = card_path.read_text(encoding='utf-8')
-    doi_m = re.search(r'\*\*DOI:\*\*\s*(.+?)$', text, re.MULTILINE)
-    # Multiple possible title field names
-    title_m = (re.search(r'\*\*原文标题:\*\*\s*(.+?)$', text, re.MULTILINE)
+    # Cards use **DOI**: or **DOI:** (colon position varies by card version)
+    doi_m = (re.search(r'\*\*DOI\*\*:\s*(.+?)$', text, re.MULTILINE)
+             or re.search(r'\*\*DOI:\*\*\s*(.+?)$', text, re.MULTILINE))
+    title_m = (re.search(r'\*\*原文标题\*\*:\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'\*\*原文标题:\*\*\s*(.+?)$', text, re.MULTILINE)
                or re.search(r'\*\*报告全称:\*\*\s*(.+?)$', text, re.MULTILINE))
     return CardInfo(
         path=card_path,
@@ -230,21 +236,18 @@ def _find_article_md(wr_root: Path, theme: str) -> Path | None:
 def _extract_authors_from_article(text: str) -> list[str]:
     """Extract first-author surnames from article text.
 
-    Matches patterns like:
-    - 'Crow 等人（2026, WRR）'
-    - 'Thébault et al. (2026, HESS)'
-    - 'Sajadieh, S., et al. (2026)'
-    - '**Crow et al.**'
+    Matches: 'Crow et al.', 'Crow 等人', 'Rodriguez-Pardo 与 Tavoni',
+    'Guidi 与 Dominici', 'Author1、Author2 等人'
     """
     surnames: list[str] = []
     seen: set[str] = set()
-    # Match Chinese «Author 等人» or English «Author et al.»
-    # Handle optional comma-initial like 'Sajadieh, S., et al.'
     patterns = [
-        # English: Author et al. (with optional comma-initial)
-        re.compile(r'(?:^|[.。\s\n])([A-Z][a-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc]+)(?:,\s*[A-Z]\.?,\s*)?et\s+al\.'),
+        # English: Author et al. (optional comma-initial)
+        re.compile(r'(?:^|[.。\s\n])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)(?:,\s*[A-Z]\.?,\s*)?et\s+al\.'),
         # Chinese: Author 等人
-        re.compile(r'(?:^|[.。\s\n])([A-Z][a-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc]+)\s*等人'),
+        re.compile(r'(?:^|[.。\s\n])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*等人'),
+        # Chinese co-author: Author1 与 Author2
+        re.compile(r'(?:^|[.。\s\n])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*[与和]\s*[A-Z]'),
     ]
     for pat in patterns:
         for m in pat.finditer(text):
@@ -256,39 +259,70 @@ def _extract_authors_from_article(text: str) -> list[str]:
     return surnames
 
 
-def _resolve_theme_context(audio_path: Path) -> ThemeContext | None:
-    """Full mapping: audio → article → cards → DOI + subtitle.
+def _extract_h1(text: str) -> str | None:
+    """Extract the first H1 heading from markdown text."""
+    m = re.search(r'^#\s+(.+?)$', text, re.MULTILINE)
+    return m.group(1).strip() if m else None
 
-    For each audio file:
-    1. Find the weekly-review root (date-based directory)
-    2. Extract theme name from audio filename
-    3. Find the matching article_{date}_{theme}.md
-    4. Extract first-author surnames from article text
-    5. Match surnames to card files for DOI/title
-    6. Generate subtitle from podcast H1 or fallback
+
+def _build_contexts_from_content(audio_paths: list[Path]) -> list[ThemeContext]:
+    """Build theme contexts purely from article/card content, not filenames.
+
+    1. Scan all article_{date}_*.md files in natural sort order
+    2. For each article: extract H1 as subtitle, authors → match cards → DOIs
+    3. Pair articles with audio files by index (1:1)
+    4. Enrich subtitle from podcast H1 where content overlaps
     """
-    theme = _audio_stem_to_theme(audio_path.stem)
-    if not theme:
-        return None
-    wr_root = _find_weekly_review_root(audio_path)
+    if not audio_paths:
+        return []
+
+    wr_root = _find_weekly_review_root(audio_paths[0])
     if not wr_root:
-        return ThemeContext(theme=theme, subtitle=_COVER_SUBTITLE_FALLBACK.get(
-            theme, "AI for Science · 前沿论文"))
+        return [ThemeContext(subtitle="AI for Science · 前沿论文") for _ in audio_paths]
 
+    article_dir = wr_root / "article"
     cards_dir = wr_root / "cards"
-    podcast_md = _find_podcast_md(audio_path.parent, theme)
-    article_md = _find_article_md(wr_root, theme)
+    podcast_dir = audio_paths[0].parent
 
-    papers: list[CardInfo] = []
-    if article_md and cards_dir.exists():
-        text = article_md.read_text(encoding='utf-8')
-        for surname in _extract_authors_from_article(text):
-            card_path = _find_card_for_author(surname, cards_dir)
-            if card_path:
-                papers.append(_load_card_info(card_path, surname))
+    # Scan ALL articles in sort order
+    art_paths = sorted(article_dir.glob("article_*.md")) if article_dir.exists() else []
 
-    subtitle = _build_subtitle(theme, podcast_md)
-    return ThemeContext(theme=theme, subtitle=subtitle, papers=papers)
+    contexts: list[ThemeContext] = []
+    for i, art_path in enumerate(art_paths):
+        if i >= len(audio_paths):
+            break
+        text = art_path.read_text(encoding='utf-8')
+        h1 = _extract_h1(text)
+        authors = _extract_authors_from_article(text)
+
+        # Match cards for DOIs
+        papers: list[CardInfo] = []
+        if cards_dir.exists():
+            for surname in authors:
+                card_path = _find_card_for_author(surname, cards_dir)
+                if card_path:
+                    papers.append(_load_card_info(card_path, surname))
+
+        subtitle = h1 or art_path.stem
+        # Try content-based podcast H1 enrichment
+        if podcast_dir.exists():
+            for pod in sorted(podcast_dir.glob("podcast_*.md")):
+                pod_text = pod.read_text(encoding='utf-8')
+                pod_h1 = _extract_h1(pod_text)
+                if pod_h1 and len(pod_h1) <= 24:
+                    pod_authors = set(_ascii_fold(a) for a in _extract_authors_from_article(pod_text))
+                    art_authors = set(_ascii_fold(a) for a in authors)
+                    if pod_authors and art_authors and pod_authors & art_authors:
+                        subtitle = pod_h1
+                        break
+
+        contexts.append(ThemeContext(theme=art_path.stem, subtitle=subtitle, papers=papers))
+
+    # Fill remainder with fallback
+    while len(contexts) < len(audio_paths):
+        contexts.append(ThemeContext(subtitle="AI for Science · 前沿论文"))
+
+    return contexts
 
 
 # ── cover generation ───────────────────────────────────────────────────
@@ -530,13 +564,11 @@ def run_bilibili_upload(
 
     date_str = datetime.date.today().strftime("%Y 第 %U 周")
 
-    # ── resolve theme contexts (audio → cards → subtitle + desc) ──
-    theme_contexts: list[ThemeContext | None] = []
-    for ap in resolved:
-        ctx = _resolve_theme_context(ap)
-        theme_contexts.append(ctx)
-        if ctx and ctx.papers:
-            log(f"  theme '{ctx.theme}': {len(ctx.papers)} paper(s) matched")
+    # ── build theme contexts from content (scan articles, match cards) ──
+    theme_contexts = _build_contexts_from_content(resolved)
+    for ctx in theme_contexts:
+        if ctx.papers:
+            log(f"  theme '{ctx.subtitle}': {len(ctx.papers)} paper(s) matched")
 
     # ── auto-generate description if not provided ──
     if not desc and any(tc for tc in theme_contexts if tc and tc.papers):
@@ -556,7 +588,7 @@ def run_bilibili_upload(
     else:
         cover_paths = []
         for ap, ctx in zip(resolved, theme_contexts):
-            sub = ctx.subtitle if ctx else "AI for Science · 前沿论文"
+            sub = ctx.subtitle if ctx and ctx.subtitle else "AI for Science · 前沿论文"
             log(f"  generating cover for {ap.stem} → '{sub}'")
             cover_out = OUTPUT_DIR / f"{ap.stem}_cover.png"
             cp = generate_cover(title=title, date_str=date_str, subtitle=sub,
