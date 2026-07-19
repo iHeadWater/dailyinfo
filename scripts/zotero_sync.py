@@ -155,13 +155,20 @@ def _build_zotero_item(
         # -- Creators
         creators = []
         for a in crossref_data.get("author", []):
-            creators.append(
-                {
-                    "creatorType": "author",
-                    "firstName": a.get("given", ""),
-                    "lastName": a.get("family", ""),
-                }
-            )
+            given = a.get("given", "")
+            family = a.get("family", "")
+            name = a.get("name", "")
+            if not given and not family and name:
+                # Consortium / group author (e.g. "Tabula Sapiens Consortium")
+                creators.append({"creatorType": "author", "name": name})
+            else:
+                creators.append(
+                    {
+                        "creatorType": "author",
+                        "firstName": given or "",
+                        "lastName": family or given or "",
+                    }
+                )
         if creators:
             item["creators"] = creators
 
