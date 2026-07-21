@@ -396,6 +396,41 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
     - Cover only the papers in this direction (2-4 papers)
     - Be under 5,000 characters (~500 words in Chinese, much shorter since only 2-4 papers)
 
+17.5 **Pre-Generation Source Checklist (HARD GATE — CANNOT BE SKIPPED OR SHORTCUT):**
+
+    **Why this gate exists**: On 2026-07-20, Phase 4 ran with only 16c (article) + 16d (prompt) uploaded. Analysis cards (16a) and original PDFs (16b) were omitted. On re-run, PDFs were again omitted because "local paths unresolved." On a third attempt, PDFs were collected from Zotero storage and arXiv — proving that PDFs are almost always obtainable if you actually try. The lesson: **"PDF unavailable" must be the result of documented effort, not passive acceptance.**
+
+    **Rule — no exceptions without evidence**:
+
+    > For EVERY paper, a PDF MUST be uploaded as a source. The only acceptable reason for a missing PDF is a documented, named failure (404 from publisher, Zotero attachment not found after searching G:/ drive, etc.). A generic "unresolved local path" from `zotero_get_attachment_path` is NOT sufficient — many Zotero PDFs have unresolved paths but ARE present as files in `G:/我的云端硬盘/Documents/Papers/Zotero_Papers/`. Always search the Zotero storage directory before concluding a PDF is unavailable. For arXiv preprints, always download from `https://arxiv.org/pdf/{id}`. The bar for "unavailable" is: you tried curl, you searched G:/ drive, you checked the DOI redirect — and ALL three failed.
+
+    **Verification procedure (execute for EACH direction BEFORE calling `generate audio`)**:
+
+    1. Run `notebooklm source list --json` for the active notebook
+    2. Count sources: cards (title ends with "— Analysis Card"), PDFs (file type), article (title starts with "Article:"), prompt (title is "Podcast Instructions")
+    3. **Hard requirement**: ALL four categories MUST have ≥1 source. Cards MUST equal the number of papers in this direction. PDFs MUST equal the number of papers (minus any with documented unobtainable status).
+    4. If any category is short: **STOP everything. Do not pass go. Do not call `generate audio`.** Upload the missing sources first, then re-verify.
+    5. If a PDF cannot be obtained after documented effort (curl + Zotero storage search + DOI redirect ALL failed): report the specific paper to the user before proceeding. Do not silently skip.
+
+    **No-chained-execution rule**: The `create → source add → generate → download` chain is forbidden. The correct sequence is:
+
+    ```
+    create → source add (all 4 categories) → source list (verify) → generate → download
+    ```
+
+    The `source list` step MUST be a separate, visible step — not absorbed into a Bash `&&` chain. This forces the executor to see the source counts before generating.
+
+    **For each direction, confirm before generate**:
+
+    | # | Source Type | Required | Status |
+    |---|-----------|----------|--------|
+    | 16a | Analysis Cards | N papers | ☐ Verified (count = N) |
+    | 16b | Original PDFs | N papers (minus documented misses) | ☐ Verified (count ≥ N - documented) |
+    | 16c | Article | 1 | ☐ Verified |
+    | 16d | Podcast Prompt | 1 | ☐ Verified |
+
+    If any ☐ is unchecked: do NOT proceed to `generate audio`.
+
 18. Generate audio for each direction independently:
 
     ```bash
@@ -403,7 +438,32 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
     NOTEBOOKLM_HOME="${NOTEBOOKLM_HOME:-D:/code/dailyinfo/.tmp/notebooklm}" \
       notebooklm create "{Theme} {YYYY-MM-DD}" --use --json
 
-    # Upload direction-specific sources (Steps 16a-16d)
+    # Step 16a: Upload analysis cards (one per paper in this direction)
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add output/weekly-review/{date}/cards/{paper1_slug}.md \
+        --type text --title "{Paper1 Title} — Analysis Card" --json
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add output/weekly-review/{date}/cards/{paper2_slug}.md \
+        --type text --title "{Paper2 Title} — Analysis Card" --json
+
+    # Step 16b: Upload original PDFs (one per paper; skip if genuinely unavailable)
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add "podcast/pdfs/{paper1_slug}.pdf" \
+        --type file --title "{Paper1 Title} (Original PDF)" --json
+
+    # Step 16c: Upload article (narrative structure)
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add output/weekly-review/{date}/article/article_{date}_{theme}.md \
+        --type text --title "Article: {theme}" --json
+
+    # Step 16d: Upload podcast prompt
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add output/weekly-review/{date}/podcast/podcast_{theme}.md \
+        --type text --title "Podcast Instructions" --json
+
+    # Step 17.5: Verify all 4 source categories present (HARD GATE)
+    # Run: notebooklm source list --json | check: cards(16a)✓ PDFs(16b)✓ article(16c)✓ prompt(16d)✓
+    # If any category missing: STOP, upload it, re-verify. Do NOT proceed to generate.
 
     NOTEBOOKLM_HOME="..." \
       notebooklm generate audio \
