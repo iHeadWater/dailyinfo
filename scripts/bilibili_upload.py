@@ -155,21 +155,26 @@ def _extract_author_surnames(text: str) -> list[str]:
     return _PAPER_REF_RE.findall(text)
 
 
-def _find_card_for_author(author_surname: str, cards_dir: Path) -> Path | None:
-    """Match author surname to a card file by filename prefix."""
+def _find_cards_for_author(author_surname: str, cards_dir: Path) -> list[Path]:
+    """Match author surname to ALL card files by filename prefix.
+
+    Returns ALL matches — important when multiple papers share a first-author surname
+    (e.g. two different 'Wang' papers in the same issue).
+    """
     if not cards_dir.exists():
-        return None
+        return []
     candidates = [_ascii_fold(author_surname)]
     # For hyphenated names, also try just the first part (Rodriguez-Pardo → rodriguez)
     if '-' in author_surname:
         candidates.append(_ascii_fold(author_surname.split('-')[0]))
+    matches: list[Path] = []
     for target in candidates:
         for card_path in sorted(cards_dir.iterdir()):
             if not card_path.name.endswith('.md'):
                 continue
             if _ascii_fold(card_path.stem).startswith(f"{target}_"):
-                return card_path
-    return None
+                matches.append(card_path)
+    return matches
 
 
 def _load_card_info(card_path: Path, author_surname: str) -> CardInfo:
@@ -178,9 +183,13 @@ def _load_card_info(card_path: Path, author_surname: str) -> CardInfo:
     # Cards use **DOI**: or **DOI:** (colon position varies by card version)
     doi_m = (re.search(r'\*\*DOI\*\*:\s*(.+?)$', text, re.MULTILINE)
              or re.search(r'\*\*DOI:\*\*\s*(.+?)$', text, re.MULTILINE))
+    # Title priority: explicit field → YAML frontmatter title: → H1 "Author et al. — Title"
     title_m = (re.search(r'\*\*原文标题\*\*:\s*(.+?)$', text, re.MULTILINE)
                or re.search(r'\*\*原文标题:\*\*\s*(.+?)$', text, re.MULTILINE)
-               or re.search(r'\*\*报告全称:\*\*\s*(.+?)$', text, re.MULTILINE))
+               or re.search(r'\*\*报告全称:\*\*\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'\*\*标题\*\*:\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'^title:\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'^#\s+\S.*?\s+[—–-]\s+(.+?)$', text, re.MULTILINE))
     return CardInfo(
         path=card_path,
         doi=doi_m.group(1).strip() if doi_m else None,
@@ -240,22 +249,24 @@ def _extract_authors_from_article(text: str) -> list[str]:
     'Guidi 与 Dominici', 'Author1、Author2 等人'
     """
     surnames: list[str] = []
-    seen: set[str] = set()
     patterns = [
         # English: Author et al. (optional comma-initial)
-        re.compile(r'(?:^|[.。\s\n])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)(?:,\s*[A-Z]\.?,\s*)?et\s+al\.'),
-        # Chinese: Author 等人
-        re.compile(r'(?:^|[.。\s\n])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*等人'),
+        re.compile(r'(?:^|[.。\s\n（])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)(?:,\s*[A-Z]\.?,\s*)?et\s+al\.'),
+        # Chinese: Author 等人 or Author 等（ (with or without 人)
+        re.compile(r'(?:^|[.。\s\n（])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*等[人（]?'),
         # Chinese co-author: Author1 与 Author2
-        re.compile(r'(?:^|[.。\s\n])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*[与和]\s*[A-Z]'),
+        re.compile(r'(?:^|[.。\s\n（])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*[与和]\s*[A-Z]'),
+        # Chinese enumeration: Author1、Author2（... (e.g., "Posner、Lei 和 Schölkopf（2026")
+        re.compile(r'(?:^|[.。\s\n（])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*[、]'),
     ]
     for pat in patterns:
         for m in pat.finditer(text):
             name = m.group(1)
-            key = _ascii_fold(name)
-            if key not in seen:
-                seen.add(key)
-                surnames.append(name)
+            # NOTE: we intentionally do NOT deduplicate by ASCII-folded surname here.
+            # Two papers in the same article may share a first-author surname
+            # (e.g. "Wang" for both FIRE-Bench and Evolutionary Intelligence).
+            # DOI-based dedup happens downstream in _build_contexts_from_content.
+            surnames.append(name)
     return surnames
 
 
@@ -295,13 +306,17 @@ def _build_contexts_from_content(audio_paths: list[Path]) -> list[ThemeContext]:
         h1 = _extract_h1(text)
         authors = _extract_authors_from_article(text)
 
-        # Match cards for DOIs
+        # Match cards for DOIs (allow multiple cards per author for same-surname papers)
         papers: list[CardInfo] = []
+        seen_dois: set[str] = set()
         if cards_dir.exists():
             for surname in authors:
-                card_path = _find_card_for_author(surname, cards_dir)
-                if card_path:
-                    papers.append(_load_card_info(card_path, surname))
+                card_paths = _find_cards_for_author(surname, cards_dir)
+                for card_path in card_paths:
+                    info = _load_card_info(card_path, surname)
+                    if info.doi and info.doi not in seen_dois:
+                        seen_dois.add(info.doi)
+                        papers.append(info)
 
         subtitle = h1 or art_path.stem
         # Try content-based podcast H1 enrichment

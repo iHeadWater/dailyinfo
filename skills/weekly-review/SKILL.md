@@ -398,7 +398,7 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
 
 17.5 **Pre-Generation Source Checklist (HARD GATE — CANNOT BE SKIPPED OR SHORTCUT):**
 
-    **Why this gate exists**: On 2026-07-20, Phase 4 ran with only 16c (article) + 16d (prompt) uploaded. Analysis cards (16a) and original PDFs (16b) were omitted. On re-run, PDFs were again omitted because "local paths unresolved." On a third attempt, PDFs were collected from Zotero storage and arXiv — proving that PDFs are almost always obtainable if you actually try. The lesson: **"PDF unavailable" must be the result of documented effort, not passive acceptance.**
+    **Why this gate exists**: In a past run, Phase 4 generated audio with only the article and podcast prompt uploaded. Analysis cards and original PDFs were omitted. On re-run, PDFs were again omitted because "local paths unresolved." On a third attempt, PDFs were collected from Zotero storage and arXiv — proving that PDFs are almost always obtainable if you actually try. The lesson: **"PDF unavailable" must be the result of documented effort, not passive acceptance.**
 
     **Rule — no exceptions without evidence**:
 
@@ -476,6 +476,43 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
     ```
 
     Audio files: `podcast/audio_{theme}.mp3` — one per direction. If any step fails, write `podcast/MANUAL_NOTEBOOKLM_STEPS_{theme}.md`.
+
+18.5 **Post-Download Audio Verification (HARD GATE — CANNOT BE SKIPPED):**
+
+    **Why this gate exists**: In a past run, four audio files were downloaded but three had identical MD5 hashes — the download step had cross-wired: multiple `download audio` commands all pointed at (or fell back to) the same notebook, and no one verified afterward. The sources, prompts, and generations were all correct — the error was purely in the download step.
+
+    **Verification procedure (execute AFTER all downloads complete):**
+
+    ```bash
+    # Step 1: Compute MD5 hashes of all downloaded audio files
+    cd output/weekly-review/{date}/podcast
+    md5sum audio_*.mp3  # macOS: md5 audio_*.mp3
+
+    # Step 2: Verify ALL hashes are UNIQUE
+    # If any two files share the same MD5 → CROSS-WIRED DOWNLOAD DETECTED
+    # → Delete the duplicates, re-download from the correct notebooks, re-verify.
+    ```
+
+    **Step 3: Verify each audio file's artifact title matches its intended direction.**
+
+    For each downloaded audio, the `notebooklm download audio` command prints a line like:
+    `Artifact: {auto-generated title} (latest of N artifacts)`
+
+    Record these titles and cross-reference against the intended direction:
+
+    | Audio File | Intended Direction | Downloaded Artifact Title | Match? |
+    |-----------|-------------------|--------------------------|--------|
+    | audio_1.mp3 | {direction_1_theme} | {title from download} | ☐ |
+    | audio_2.mp3 | {direction_2_theme} | {title from download} | ☐ |
+    | ... | ... | ... | ☐ |
+
+    **Match criteria** (not exact title match — NotebookLM auto-generates creative titles):
+    - The artifact title should be TOPICALLY RELATED to the notebook's intended theme
+    - If the same artifact title appears for two different notebooks → CROSS-WIRED → re-download
+    - If an artifact title clearly belongs to a different direction (e.g., an audio for the "flood error structures" direction has a title about "AI compressing weather data") → CROSS-WIRED → re-download
+    - **When in doubt**: play the first 30 seconds of the audio to verify the topic
+
+    **Hard rule**: ALL audio files must have UNIQUE MD5 hashes AND topically-matching artifact titles. If either check fails, fix the downloads and re-verify. Do NOT deliver audio files to the user without passing this gate.
 
 ## Failure Handling
 
