@@ -133,6 +133,22 @@ dailyinfo push
 | `dailyinfo zotero-brief --collection water --artifact audio` | Process the `water` collection and request Audio Overview |
 | `dailyinfo zotero-brief --artifact video` | Request NotebookLM Video Overview |
 | `dailyinfo zotero-brief --manual-only` | Prepare local materials without calling NotebookLM |
+| `dailyinfo download-pdf <doi>` | PDF download via Claude Code (see [docs](download-pdf.md)) |
+| `uv run python scripts/zotero_sync.py <pdf> <doi>` | Zotero linked_file sync (see [docs](zotero-sync.md)) |
+
+## Download PDF → Zotero Sync
+
+> **Requires Claude Code + Playwright MCP plugin.** For setup, supported publishers, and failure handling, see [PDF Download](download-pdf.md) and [Zotero Sync](zotero-sync.md).
+
+Quick reference:
+```bash
+# One-time setup
+npx playwright install chromium
+uv pip install pyzotero
+
+# Then in Claude Code:
+/download-pdf 10.1038/s41586-026-10704-3
+```
 
 ## Zotero -> NotebookLM Agent Workflow
 
@@ -175,6 +191,9 @@ See:
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback model when DeepSeek returns empty (default `moonshotai/kimi-k2.5`) |
 | `ZOTERO_LOCAL_BASE_URL` | Zotero local API base URL, default `http://127.0.0.1:23119` |
+| `ZOTERO_API_KEY` | Zotero Web API key (for `zotero_sync.py` linked_file sync) |
+| `ZOTERO_LIBRARY_ID` | Numeric Zotero user library ID (for `zotero_sync.py` linked_file sync) |
+| `GDRIVE_PAPERS_PATH` | Local path to Google Drive papers folder (ZotMoov / Linked Attachment Base Directory) |
 | `NOTEBOOKLM_HOME` | NotebookLM profile/auth directory used by `notebooklm-py` |
 
 ## Scheduling and Agents
@@ -195,6 +214,8 @@ DailyInfo intentionally avoids owning the scheduler. Recommended ownership:
 - [Architecture](docs/architecture.md)
 - [CLI Reference](docs/cli.md)
 - [Agent Config](docs/agent-config.md)
+- [PDF Download (Institutional Access)](docs/download-pdf.md)
+- [Zotero Sync (linked_file)](docs/zotero-sync.md)
 - [Zotero NotebookLM Workflow](docs/zotero-notebooklm.md)
 - [Zotero NotebookLM 工作流](docs/zotero-notebooklm.zh.md)
 - [Information Sources](docs/sources.md)

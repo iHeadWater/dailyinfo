@@ -1,0 +1,3 @@
+display_name: Weekly Review
+short_description: Generate a weekly literature review from Zotero papers with deep full-text analysis, WeChat article, and NotebookLM podcast.
+default_prompt: Orchestrate the full weekly literature review workflow. Fetch recent Zotero papers via Zotero MCP, conduct deep full-text analysis one paper at a time, write a Chinese WeChat public account article (~2500 words), and generate a NotebookLM podcast via the notebooklm CLI. All output goes to output/weekly-review/{date}/.
