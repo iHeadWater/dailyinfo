@@ -585,7 +585,6 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
     if not items:
         log(f"  {name}: 0 new articles - placeholder")
         ds.commit_seen(items)
-        ds.cleanup_seen()
         placeholder = f"# {ds.display_name} - {DATE}\n\n" + "\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
         save(category, f"{name}_briefing_{DATE}.md", placeholder)
         if isinstance(ds, RSSDataSource):
@@ -645,7 +644,6 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
             log(f"    SAVE ERR: {e}")
 
     ds.commit_seen(all_items)
-    ds.cleanup_seen()
     return 1 if merged_content else 0
 
 
@@ -708,7 +706,6 @@ def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
                 committed_items.append(item)
 
     ds.commit_seen(committed_items)
-    ds.cleanup_seen()
     return saved
 
 
