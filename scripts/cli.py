@@ -424,6 +424,19 @@ def weekly(days, force):
     sys.exit(result.returncode)
 
 
+@cli.command("code-weekly")
+@click.option("--days", default=7, show_default=True, help="Lookback window in days.")
+@click.option("--force", is_flag=True, help="Overwrite existing data file for today.")
+def code_weekly(days, force):
+    """Generate a weekly GitHub Trending top-5 JSON data file."""
+    script = SCRIPTS_DIR / "weekly_code_trends.py"
+    cmd = [_python(), str(script), "--days", str(days)]
+    if force:
+        cmd.append("--force")
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    sys.exit(result.returncode)
+
+
 @cli.command("bilibili-upload")
 @click.argument("audio_paths", nargs=-1, type=click.Path(exists=True), required=True)
 @click.option("--title", required=True, help="Video title (max 80 chars).")
