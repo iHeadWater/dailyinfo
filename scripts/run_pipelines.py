@@ -113,8 +113,7 @@ def load_api_key() -> str:
     key = os.environ.get("OPENROUTER_API_KEY", "")
     if key:
         return key
-    log("ERROR: No OPENROUTER_API_KEY found in .env or environment")
-    sys.exit(1)
+    return ""
 
 
 def load_deepseek_key() -> str:
@@ -589,7 +588,19 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
         ds.cleanup_seen()
         placeholder = f"# {ds.display_name} - {DATE}\n\n" + "\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
         save(category, f"{name}_briefing_{DATE}.md", placeholder)
+        if isinstance(ds, RSSDataSource):
+            from freshrss_cache import record_zero_result
+            zero_days = record_zero_result(STATE_DIR, name, DATE)
+            if zero_days >= 2:
+                log(
+                    f"  [WARN] {name}: {zero_days} consecutive days with 0 articles — "
+                    f"FreshRSS cache may be stuck. Run: dailyinfo cache-clear"
+                )
         return 1
+
+    if isinstance(ds, RSSDataSource):
+        from freshrss_cache import reset_zero_result
+        reset_zero_result(STATE_DIR, name)
 
     if ds.lookback_hours > 24 and _already_pushed_within(name, category, ds.lookback_hours):
         log(f"  {name}: {len(items)} articles - already pushed within {ds.lookback_hours}h, skip")
@@ -823,10 +834,19 @@ def run_pipeline_code() -> int:
             )
             continue
 
-        try:
-            items = ds.fetch()
-        except Exception as e:
-            log(f"    FETCH ERR: {e}")
+        items = None
+        for _attempt in range(3):
+            try:
+                items = ds.fetch()
+                break
+            except Exception as e:
+                log(f"    FETCH ERR (attempt {_attempt + 1}/3): {e}")
+                if _attempt < 2:
+                    time.sleep(_BACKOFF_SECONDS[_attempt])
+        if items is None:
+            placeholder = f"# {ds.display_name} - {DATE}\n\n⚠️ 获取失败\n"
+            save("code", f"{ds.name}_briefing_{DATE}.md", placeholder)
+            saved += 1
             continue
 
         if not items:
@@ -869,6 +889,9 @@ def run_pipeline_code() -> int:
             time.sleep(1)
         except Exception as e:
             log(f"    AI ERR: {e}")
+            placeholder = f"# {ds.display_name} - {DATE}\n\n⚠️ AI 生成失败\n"
+            save("code", f"{ds.name}_briefing_{DATE}.md", placeholder)
+            saved += 1
 
     log(f"  Pipeline 4 done: {saved} files saved")
     return saved

@@ -158,6 +158,34 @@ automation. If Google changes the NotebookLM UI/API or auth is not ready, the
 command degrades to the local material package so the run can be completed
 manually in the NotebookLM web UI.
 
+### Download PDF (institutional access)
+
+Requires Claude Code + Playwright MCP plugin. The CLI is a thin helper — real browser
+orchestration happens through the agent skill. See [PDF Download](download-pdf.md) for
+full setup, supported publishers, and failure handling.
+
+```bash
+dailyinfo download-pdf <doi|pii|url>           # Print download instructions for the skill
+python scripts/download_pdf.py detect <url>    # Detect publisher from URL
+python scripts/download_pdf.py verify <pdf>    # Verify PDF and extract metadata
+python scripts/download_pdf.py doi <doi>       # Resolve DOI to article URL + publisher
+```
+
+### Sync PDF to Zotero (linked_file)
+
+Creates a Zotero item with a linked_file attachment. See [Zotero Sync](zotero-sync.md)
+for prerequisites, setup, and design rationale.
+
+```bash
+uv run python scripts/zotero_sync.py <pdf> <doi> --json       # Copy to GDrive + create Zotero item
+uv run python scripts/zotero_sync.py <pdf> <doi> --dry-run    # Preview only
+```
+
+Design rationale: uses pyzotero Web API with `linked_file` attachment
+(`attachments:<filename>` scheme) rather than `imported_file`, because Zotero's
+300 MB cloud quota is too small for institutional PDFs (10-90 MB each).
+See [ADR-001](decisions/adr-001-zotero-linked-file-sync.md).
+
 ### Weekly Recap
 
 ```bash
@@ -198,6 +226,9 @@ FRESHRSS_PASSWORD=freshrss123
 | `FRESHRSS_PASSWORD` | FreshRSS password |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `moonshotai/kimi-k2.5`) |
 | `ZOTERO_LOCAL_BASE_URL` | Zotero local API base URL for `zotero-brief` (default `http://127.0.0.1:23119`) |
+| `ZOTERO_API_KEY` | Zotero Web API key for `zotero_sync.py` linked_file import (create at https://www.zotero.org/settings/keys) |
+| `ZOTERO_LIBRARY_ID` | Numeric Zotero user library ID for `zotero_sync.py` |
+| `GDRIVE_PAPERS_PATH` | Local path to Google Drive papers folder (ZotMoov target, same as Zotero's Linked Attachment Base Directory) |
 | `NOTEBOOKLM_HOME` | NotebookLM profile/auth directory used by `notebooklm-py`; must match the login run |
 
 ## Scheduling

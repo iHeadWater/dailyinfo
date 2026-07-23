@@ -131,6 +131,24 @@ dailyinfo push
 | `dailyinfo zotero-brief --collection water --artifact audio` | 处理 `water` collection 并请求音频概览 |
 | `dailyinfo zotero-brief --artifact video` | 请求 NotebookLM 视频概览 |
 | `dailyinfo zotero-brief --manual-only` | 只生成本地素材，不调用 NotebookLM |
+| `dailyinfo download-pdf <doi>` | PDF 下载（依赖 Claude Code，见[文档](docs/download-pdf.md)） |
+| `uv run python scripts/zotero_sync.py <pdf> <doi>` | Zotero linked_file 同步（见[文档](docs/zotero-sync.md)） |
+
+## 下载 PDF → Zotero 同步
+
+> **依赖 Claude Code + Playwright MCP 插件。** 完整配置、支持的出版商和故障处理见 [PDF 下载](docs/download-pdf.md) 和 [Zotero 同步](docs/zotero-sync.md)。
+
+快速参考：
+```bash
+# 一次性配置
+npx playwright install chromium
+uv pip install pyzotero
+
+# 在 Claude Code 中输入：
+/download-pdf 10.1038/s41586-026-10704-3
+```
+
+## Zotero -> NotebookLM Agent 工作流
 
 ## Zotero -> NotebookLM Agent 工作流
 
@@ -171,6 +189,9 @@ NotebookLM 登录有意保留人工参与。Agent 可以打开浏览器或提示
 | `DAILYINFO_DATA_ROOT` | 覆盖默认数据根目录 |
 | `DAILYINFO_FALLBACK_MODEL` | 主模型空响应时的备用模型 |
 | `ZOTERO_LOCAL_BASE_URL` | Zotero 本地 API 地址，默认 `http://127.0.0.1:23119` |
+| `ZOTERO_API_KEY` | Zotero Web API 密钥（`zotero_sync.py` linked_file 同步用） |
+| `ZOTERO_LIBRARY_ID` | 数字型 Zotero 用户库 ID（`zotero_sync.py` linked_file 同步用） |
+| `GDRIVE_PAPERS_PATH` | Google Drive 论文文件夹本地路径（ZotMoov / 链接附件根目录） |
 | `NOTEBOOKLM_HOME` | `notebooklm-py` 使用的 NotebookLM profile/auth 目录 |
 
 ## 调度和 Agent 分工
@@ -191,6 +212,8 @@ DailyInfo 不负责调度。推荐分工如下：
 - [系统架构](docs/architecture.md)
 - [CLI 参考](docs/cli.md)
 - [Agent 配置](docs/agent-config.md)
+- [PDF 下载（机构访问）](docs/download-pdf.md)
+- [Zotero 同步（linked_file）](docs/zotero-sync.md)
 - [Zotero NotebookLM Workflow](docs/zotero-notebooklm.md)
 - [Zotero NotebookLM 工作流](docs/zotero-notebooklm.zh.md)
 - [数据源说明](docs/sources.md)

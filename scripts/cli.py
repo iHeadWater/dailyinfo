@@ -14,6 +14,7 @@ Usage:
 """
 
 import os
+import json
 import subprocess
 import sys
 from datetime import datetime
@@ -30,6 +31,8 @@ if _SCRIPTS_DIR not in sys.path:
 import click
 
 from paths import BRIEFINGS_DIR, CURRENT_ENV, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
+
+from clean_cache import clean_stale_cache
 
 SCRIPTS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent
@@ -273,7 +276,9 @@ def run(pipeline, force):
     default=None,
     help="Zotero dateAdded day to process in YYYY-MM-DD format. Defaults to today.",
 )
-@click.option("--force", is_flag=True, help="Overwrite an existing local Zotero briefing.")
+@click.option(
+    "--force", is_flag=True, help="Overwrite an existing local Zotero briefing."
+)
 @click.option(
     "--artifact",
     type=click.Choice(["none", "audio", "video", "both"]),
@@ -419,6 +424,57 @@ def weekly(days, force):
     sys.exit(result.returncode)
 
 
+@cli.command("bilibili-upload")
+@click.argument("audio_paths", nargs=-1, type=click.Path(exists=True), required=True)
+@click.option("--title", required=True, help="Video title (max 80 chars).")
+@click.option(
+    "--tags", default="", help="Comma-separated tags (e.g. 'AI,科研,周报')."
+)
+@click.option(
+    "--tid", type=int, default=171, show_default=True,
+    help="Bilibili partition ID (171=科技·人工智能).",
+)
+@click.option("--cover", default=None, type=click.Path(exists=True),
+              help="Custom cover image; auto-generated if not provided.")
+@click.option("--desc", default="", help="Video description.")
+@click.option(
+    "--cookie-path", default=str(Path.home() / ".bilibili" / "cookies.json"),
+    help="Path to biliup cookies.json.",
+)
+@click.option("--dry-run", is_flag=True, help="Generate cover + MP4 but skip upload.")
+@click.option("--keep-cover", is_flag=True, help="Keep the auto-generated cover.")
+def bilibili_upload(audio_paths, title, tags, tid, cover, desc, cookie_path,
+                    dry_run, keep_cover):
+    """Upload audio(s) to Bilibili (cover → MP4 → biliup upload).
+
+    Multiple audio files = multi-P (one submission, multiple parts).
+
+    One-time setup before first use:
+
+    \b
+        winget install --id=ForgQi.biliup-rs -e
+        biliup -u ~/.bilibili/cookies.json login
+    """
+    script = SCRIPTS_DIR / "bilibili_upload.py"
+    cmd = [
+        _python(), str(script),
+        *audio_paths,
+        "--title", title,
+        "--tags", tags,
+        "--tid", str(tid),
+        "--desc", desc,
+        "--cookie-path", cookie_path,
+    ]
+    if cover:
+        cmd += ["--cover", cover]
+    if dry_run:
+        cmd.append("--dry-run")
+    if keep_cover:
+        cmd.append("--keep-cover")
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT)
+    sys.exit(result.returncode)
+
+
 @cli.command()
 def status():
     """Show today's briefing and pushed file counts."""
@@ -456,6 +512,314 @@ def logs():
         sys.exit(1)
     result = subprocess.run(["tail", "-n", "100", str(log_file)])
     sys.exit(result.returncode)
+
+
+def _source_url(source_name: str) -> str:
+    """Resolve a configured source URL from config/sources.json."""
+    sources_path = PROJECT_ROOT / "config" / "sources.json"
+    with open(sources_path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    for source in cfg.get("sources", []):
+        if source.get("name") == source_name:
+            return source.get("url", "")
+    return ""
+
+
+@cli.command("cache-clear")
+@click.option(
+    "--source",
+    default="arxiv_cs_ai",
+    show_default=True,
+    help="Configured source name whose FreshRSS cache should be cleared.",
+)
+@click.option("--url", default="", help="Explicit feed URL to clear instead of --source.")
+@click.option("--all-stale", is_flag=True, help="Clear every stale SimplePie cache entry.")
+@click.option("--max-age", default=24, show_default=True, help="Stale threshold in hours for --all-stale.")
+@click.option("--dry-run", is_flag=True, help="Show what would be deleted without deleting.")
+@click.option("--refresh", is_flag=True, help="Run FreshRSS actualize_script.php after clearing.")
+@click.option("--container", default="dailyinfo_freshrss", show_default=True, help="FreshRSS container name for --refresh.")
+def cache_clear(source, url, all_stale, max_age, dry_run, refresh, container):
+    """Clear FreshRSS SimplePie cache files for stuck feeds (see issue #57)."""
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    from freshrss_cache import (
+        clear_stale_caches,
+        delete_cache_files,
+        find_cache_files_for_url,
+        find_stale_caches,
+        refresh_freshrss,
+    )
+    from paths import FRESHRSS_DATA
+
+    cache_dir = FRESHRSS_DATA / "cache"
+    if not cache_dir.exists():
+        click.echo(f"Cache directory not found: {cache_dir}")
+        sys.exit(1)
+
+    if all_stale:
+        targets = find_stale_caches(cache_dir, max_age_hours=max_age)
+        description = f"stale cache file(s) older than {max_age}h"
+    else:
+        feed_url = url or _source_url(source)
+        if not feed_url:
+            click.echo(f"Source not found or has no URL: {source}")
+            sys.exit(1)
+        targets = find_cache_files_for_url(cache_dir, feed_url)
+        description = f"cache file(s) for {source if not url else feed_url}"
+
+    if not targets:
+        click.echo(f"No {description} found.")
+        return
+
+    click.echo(f"Found {len(targets)} {description}:")
+    for f in targets:
+        click.echo(f"  {f.name}")
+
+    if dry_run:
+        click.echo("Dry run — nothing deleted.")
+        return
+
+    count = (
+        clear_stale_caches(cache_dir, max_age_hours=max_age)
+        if all_stale
+        else delete_cache_files(targets)
+    )
+    click.echo(f"Deleted {count} cache file(s).")
+
+    if refresh:
+        result = refresh_freshrss(container=container)
+        if result.returncode != 0:
+            click.echo("FreshRSS refresh failed.")
+            sys.exit(result.returncode)
+        click.echo("FreshRSS refresh triggered.")
+    else:
+        click.echo(
+            "Run with --refresh or execute: "
+            f"docker exec {container} php /var/www/FreshRSS/app/actualize_script.php"
+        )
+
+
+@cli.command("weekly-report")
+@click.option("--collection", default="water", show_default=True, help="Zotero collection name.")
+@click.option("-d", "--date", "date_str", default=None, help="Date YYYY-MM-DD (default: today).")
+@click.option(
+    "--artifact",
+    type=click.Choice(["none", "audio", "video", "both"]),
+    default="audio",
+    show_default=True,
+    help="NotebookLM artifact to generate.",
+)
+@click.option("--open-missing-pdfs", is_flag=True, help="Open missing Zotero PDFs for cloud sync.")
+@click.option("--title", default=None, help="Override WeChat article title.")
+@click.option("--thumb", default=None, help="WeChat cover image media_id.")
+@click.option("--dry-run", is_flag=True, help="Save HTML locally, do not push to WeChat.")
+@click.option("--skip-zotero", is_flag=True, help="Skip zotero-brief step, reuse existing briefing.md.")
+@click.option("--skip-polish", is_flag=True, help="Skip DeepSeek polish step, reuse existing polished MD.")
+@click.option("--skip-figures", is_flag=True, help="Skip figure extraction/generation step.")
+def weekly_report(collection, date_str, artifact, open_missing_pdfs, title, thumb, dry_run, skip_zotero, skip_polish, skip_figures):
+    """One-shot: Zotero -> NotebookLM -> DeepSeek polish -> WeChat draft.
+
+    Chains three steps automatically:
+    1. zotero-brief  (Zotero + NotebookLM -> briefing.md)
+    2. polish_wechat (DeepSeek + SKILL.md -> wechat_article_polished.md)
+    3. push_wechat   (MD -> HTML -> WeChat draft box)
+    """
+    import datetime as _dt
+
+    sys.path.insert(0, str(SCRIPTS_DIR))
+    from zotero_notebooklm import make_paths, parse_date, resolve_zotero_collection
+
+    target_date = parse_date(date_str)
+    collection_info = resolve_zotero_collection(collection) if collection else None
+    collection_name = collection_info["name"] if collection_info else None
+    paths = make_paths(target_date, collection_name=collection_name)
+
+    # ── Step 1: Zotero -> NotebookLM ────────────────────────────────────────
+    if not skip_zotero:
+        click.echo(f"\n[Step 1/3] Running zotero-brief for {target_date} / collection={collection} ...")
+        rc = _run_zotero_brief(
+            date_str=date_str,
+            force=False,
+            artifact=artifact,
+            manual_only=False,
+            limit=50,
+            collection=collection,
+            open_missing_pdfs=open_missing_pdfs,
+            pdf_wait_seconds=20,
+            notebooklm_home=None,
+            notebook_title=None,
+        )
+        if rc != 0:
+            click.echo("zotero-brief failed; aborting.", err=True)
+            sys.exit(rc)
+    else:
+        click.echo("[Step 1/3] Skipped (--skip-zotero).")
+
+    briefing_path = paths.briefing
+    if not briefing_path.exists():
+        click.echo(f"briefing.md not found: {briefing_path}", err=True)
+        sys.exit(1)
+
+    # ── Step 2: DeepSeek polish ──────────────────────────────────────────────
+    polished_path = paths.output_dir / "wechat_article_polished.md"
+    if not skip_polish:
+        click.echo(f"\n[Step 2/3] Polishing {briefing_path.name} with DeepSeek ...")
+        from wechat.polish import load_skill_prompt, polish
+
+        skill_prompt = load_skill_prompt()
+        polished_text = polish(briefing_path.read_text(encoding="utf-8"), skill_prompt)
+        polished_path.write_text(polished_text, encoding="utf-8")
+        click.echo(f"  Saved: {polished_path}")
+    else:
+        click.echo("[Step 2/3] Skipped (--skip-polish).")
+        if not polished_path.exists():
+            click.echo(f"Polished MD not found: {polished_path}", err=True)
+            sys.exit(1)
+
+    # ── Step 2.5: Extract / generate figures ────────────────────────────────
+    figures_json = paths.output_dir / "figures" / "figures.json"
+    if not skip_figures:
+        click.echo(f"\n[Step 2.5/3] Extracting figures ...")
+        fig_cmd = [_python(), str(SCRIPTS_DIR / "wechat" / "figure.py"), str(polished_path),
+                   "--output-dir", str(paths.output_dir)]
+        result = subprocess.run(fig_cmd, cwd=PROJECT_ROOT)
+        if result.returncode != 0:
+            click.echo("Warning: figure extraction failed, continuing without figures.", err=True)
+    else:
+        click.echo("[Step 2.5/3] Skipped (--skip-figures).")
+
+    # ── Step 3: Push to WeChat ───────────────────────────────────────────────
+    click.echo(f"\n[Step 3/3] Pushing to WeChat draft box ...")
+    push_cmd = [_python(), str(SCRIPTS_DIR / "wechat" / "push.py"), str(polished_path)]
+    if title:
+        push_cmd += ["--title", title]
+    if thumb:
+        push_cmd += ["--thumb", thumb]
+    if dry_run:
+        push_cmd.append("--dry-run")
+    if not skip_figures and figures_json.exists():
+        push_cmd += ["--figures", str(figures_json)]
+    result = subprocess.run(push_cmd, cwd=PROJECT_ROOT)
+    sys.exit(result.returncode)
+
+
+@cli.command("download-pdf")
+@click.argument("input_ref")
+@click.option(
+    "-o",
+    "--output",
+    default=None,
+    help="Output PDF path. Default: ~/.myagentdata/dailyinfo/papers/<slug>.pdf",
+)
+@click.option(
+    "--publisher",
+    "publisher_filter",
+    default=None,
+    type=click.Choice(["elsevier", "springer", "wiley", "taylor-francis", "agu"]),
+    help="Force a specific publisher workflow (skips auto-detection).",
+)
+def download_pdf(input_ref, output, publisher_filter):
+    """Resolve a DOI/PII/URL and download the PDF via institutional access.
+
+    INPUT_REF: a DOI (10.xxx/...), PII (S00221694...), or article URL.
+
+    The actual browser download is performed by the ``download-pdf``
+    Claude Code skill, which uses Playwright MCP tools. This CLI command
+    resolves the input, detects the publisher, and prints the download
+    instructions. When run inside Claude Code, invoke ``/download-pdf``
+    instead.
+
+    \b
+    Examples:
+        dailyinfo download-pdf 10.1016/j.jhydrol.2024.132471
+        dailyinfo download-pdf S0022169424018675
+        dailyinfo download-pdf "https://www.sciencedirect.com/..."
+    """
+    from download_pdf import Publisher, classify_input, detect_publisher, output_path_for
+
+    result = classify_input(input_ref)
+    pub_enum = detect_publisher(result["url"]) if result["url"] else Publisher.UNKNOWN
+    publisher_name = pub_enum.name.lower() if pub_enum != Publisher.UNKNOWN else None
+
+    # Compute default output path
+    default_path = output if output else str(output_path_for(input_ref))
+
+    if result["type"] == "unknown":
+        click.echo(f"Error: Cannot classify input: {input_ref!r}", err=True)
+        click.echo("Expected: DOI (10.xxx/...), PII, or article URL.")
+        sys.exit(2)
+
+    click.echo(f"Input Type:  {result['type']}")
+    click.echo(f"Normalized:  {result['normalized']}")
+    click.echo(f"Article URL: {result['url']}")
+    if publisher_filter:
+        click.echo(f"Publisher:   {publisher_filter} (forced)")
+    elif publisher_name:
+        click.echo(f"Publisher:   {publisher_name}")
+    elif result["type"] == "doi":
+        click.echo("Publisher:   (resolves after DOI redirect)")
+
+    click.echo(f"Output:      {default_path}")
+    click.echo("")
+    click.echo("To download this PDF, use the Claude Code skill:")
+    click.echo(f"  /download-pdf {input_ref}")
+    if output:
+        click.echo(f"  (custom output: {output})")
+
+
+@cli.command("clean-cache")
+@click.option(
+    "--max-age",
+    default=24,
+    show_default=True,
+    type=int,
+    help="Maximum cache file age in hours. Files older than this are deleted.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be deleted without actually deleting anything.",
+)
+def clean_cache(max_age, dry_run):
+    """Delete stale FreshRSS SimplePie cache files.
+
+    Occasionally SimplePie cache entries get stuck (always "uses cache"
+    instead of doing a real HTTP request), causing feeds to silently stop
+    receiving new articles.  This command clears cache files older than
+    --max-age hours.
+
+    The default threshold of 24 hours is far longer than FreshRSS's normal
+    refresh cycle (15 min), so healthy caches are never affected.
+    """
+    if max_age < 1:
+        click.echo("Error: --max-age must be a positive integer", err=True)
+        sys.exit(2)
+
+    cache_dir = FRESHRSS_DATA / "cache"
+    if not cache_dir.is_dir():
+        click.echo(f"Cache directory not found: {cache_dir}")
+        sys.exit(1)
+
+    deleted, errors = clean_stale_cache(
+        cache_dir, max_age_hours=max_age, dry_run=dry_run
+    )
+
+    if dry_run:
+        if deleted == 0:
+            click.echo("No stale cache files would be deleted.")
+        else:
+            click.echo(f"Would delete {deleted} stale cache file(s) (dry run).")
+    else:
+        if deleted == 0:
+            click.echo("No stale cache files found.")
+        else:
+            msg = f"Cleaned {deleted} stale cache file(s)"
+            if errors > 0:
+                msg += f" ({errors} error(s))"
+            msg += "."
+            click.echo(msg)
+
+    if errors > 0 and not dry_run:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

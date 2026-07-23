@@ -37,7 +37,7 @@ def _read_env_value(key: str) -> str:
     if not ENV_FILE.exists():
         return ""
     prefix = f"{key}="
-    with open(ENV_FILE) as f:
+    with open(ENV_FILE, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if line.startswith(prefix):
