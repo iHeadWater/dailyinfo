@@ -966,10 +966,6 @@ class APIDataSource(DataSource):
                         break
                     except ValueError:
                         pass
-            deadline_dt = _parse_date_dlut_recruitment(deadline_val)
-            if _is_expired_deadline(deadline_dt):
-                continue
-
             if cursor:
                 # Cursor mode: stop at the previously-seen item
                 if cursor_id and item_id == cursor_id:
@@ -984,6 +980,10 @@ class APIDataSource(DataSource):
                 if dt and dt < self._cutoff_dt:
                     should_stop = True
                     continue
+
+            deadline_dt = _parse_date_dlut_recruitment(deadline_val)
+            if _is_expired_deadline(deadline_dt):
+                continue
 
             items.append(
                 Item(
