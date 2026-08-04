@@ -43,7 +43,7 @@ def log(msg):
 def load_env(key):
     env_path = os.path.join(PROJECT_ROOT, ".env")
     if os.path.exists(env_path):
-        with open(env_path) as f:
+        with open(env_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith(f"{key}="):
@@ -115,7 +115,7 @@ def discord_send(token, channel_id, content, dry_run=False):
 def archive(name, date_str, content):
     os.makedirs(PUSHED_DIR / "papers", exist_ok=True)
     path = PUSHED_DIR / "papers" / f"{name}_backfill_{date_str}.md"
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return path
 

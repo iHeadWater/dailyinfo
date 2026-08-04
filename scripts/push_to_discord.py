@@ -69,7 +69,7 @@ def _load_env_value(key):
         return dotenv_values(env_path).get(key, "") or ""
     except ImportError:
         prefix = f"{key}="
-        with open(env_path) as f:
+        with open(env_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("#") or not line.startswith(prefix):

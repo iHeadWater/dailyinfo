@@ -1085,7 +1085,7 @@ def test_pipeline_code_skips_when_fetch_fails(
     today = datetime.now().strftime("%Y-%m-%d")
     placeholder = BRIEFINGS_DIR / "code" / f"github_trending_briefing_{today}.md"
     assert placeholder.exists()
-    assert "⚠️ 获取失败" in placeholder.read_text()
+    assert "⚠️ 获取失败" in placeholder.read_text(encoding="utf-8")
 
 
 # -----------------------------------------------------------------

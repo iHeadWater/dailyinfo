@@ -37,7 +37,7 @@ API_KEY = ""
 def _get_freshrss_user() -> str:
     env_path = os.path.join(PROJECT_ROOT, ".env")
     if os.path.exists(env_path):
-        with open(env_path) as f:
+        with open(env_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("FRESHRSS_USER="):
@@ -368,7 +368,7 @@ def save(directory: str, filename: str, content: str) -> str:
     path = BRIEFINGS_DIR / directory
     path.mkdir(parents=True, exist_ok=True)
     full = path / filename
-    with open(full, "w") as f:
+    with open(full, "w", encoding="utf-8") as f:
         f.write(content)
     return str(full)
 
