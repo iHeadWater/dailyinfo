@@ -37,7 +37,7 @@ API_KEY = ""
 def _get_freshrss_user() -> str:
     env_path = os.path.join(PROJECT_ROOT, ".env")
     if os.path.exists(env_path):
-        with open(env_path) as f:
+        with open(env_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("FRESHRSS_USER="):
@@ -368,7 +368,7 @@ def save(directory: str, filename: str, content: str) -> str:
     path = BRIEFINGS_DIR / directory
     path.mkdir(parents=True, exist_ok=True)
     full = path / filename
-    with open(full, "w") as f:
+    with open(full, "w", encoding="utf-8") as f:
         f.write(content)
     return str(full)
 
@@ -585,7 +585,6 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
     if not items:
         log(f"  {name}: 0 new articles - placeholder")
         ds.commit_seen(items)
-        ds.cleanup_seen()
         placeholder = f"# {ds.display_name} - {DATE}\n\n" + "\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
         save(category, f"{name}_briefing_{DATE}.md", placeholder)
         if isinstance(ds, RSSDataSource):
@@ -645,7 +644,6 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
             log(f"    SAVE ERR: {e}")
 
     ds.commit_seen(all_items)
-    ds.cleanup_seen()
     return 1 if merged_content else 0
 
 
@@ -708,7 +706,6 @@ def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
                 committed_items.append(item)
 
     ds.commit_seen(committed_items)
-    ds.cleanup_seen()
     return saved
 
 

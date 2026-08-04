@@ -53,3 +53,6 @@ output/
 
 # Firecrawl 输出
 .firecrawl/
+
+# Spec Kit 本地脚手架（specify init 生成，不提交）
+.specify/

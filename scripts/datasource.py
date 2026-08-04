@@ -274,11 +274,6 @@ class DataSource(ABC):
                 self._seen[it.url] = today
         self._save_seen()
 
-    def cleanup_seen(self, max_age_days: int = 30) -> None:
-        """Remove seen records older than max_age_days."""
-        cutoff = (datetime.date.today() - datetime.timedelta(days=max_age_days)).isoformat()
-        self._seen = {k: v for k, v in self._seen.items() if v >= cutoff}
-        self._save_seen()
 
     @abstractmethod
     def fetch(self) -> list[Item]:
