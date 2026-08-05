@@ -239,8 +239,10 @@ def test_commit_seen_empty_list_is_harmless(rss_db):
     assert len(ds._seen) == 1
 
 
-def test_cleanup_seen_removes_old_entries(rss_db):
-    """cleanup_seen should remove entries older than max_age_days."""
+def test_seen_never_expires(rss_db):
+    """60-day-old seen records should still participate in dedup and not be cleaned."""
+    from datasource import Item
+
     ds = _make_rss(
         {
             "name": "test_feed1",
@@ -250,19 +252,19 @@ def test_cleanup_seen_removes_old_entries(rss_db):
         },
         rss_db,
     )
-    old_1 = (datetime.date.today() - datetime.timedelta(days=42)).isoformat()
-    old_2 = (datetime.date.today() - datetime.timedelta(days=33)).isoformat()
-    recent = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    old_date = (datetime.date.today() - datetime.timedelta(days=60)).isoformat()
+    old_url = "https://old-paper.com/1"
 
-    # Manually add old + new entries to seen
-    ds._seen = {
-        "https://old.com/1": old_1,
-        "https://old.com/2": old_2,
-        "https://new.com/1": recent,
-    }
+    ds._seen = {old_url: old_date}
     ds._save_seen()
 
-    ds.cleanup_seen(max_age_days=30)
-    assert "https://old.com/1" not in ds._seen
-    assert "https://old.com/2" not in ds._seen
-    assert "https://new.com/1" in ds._seen
+    # Simulate _filter_seen after fetch: old URL should still be blocked
+    items = [Item(title="Old Paper", url=old_url, date=datetime.date.today().isoformat())]
+    filtered = ds._filter_seen(items)
+    assert len(filtered) == 0, "60-day-old URL should still be filtered by dedup"
+
+    # commit_seen should not purge old records
+    new_items = [Item(title="New Paper", url="https://new.com/1", date=datetime.date.today().isoformat())]
+    ds.commit_seen(new_items)
+    assert old_url in ds._seen, "commit_seen should not purge old records"
+    assert len(ds._seen) == 2  # old + new both present

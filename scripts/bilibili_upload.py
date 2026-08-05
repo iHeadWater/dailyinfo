@@ -14,10 +14,14 @@ One-time setup:
 import argparse
 import datetime
 import os
+import re
 import shutil
 import subprocess
 import sys
+import unicodedata
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Optional
 
 
 def log(msg: str) -> None:
@@ -69,6 +73,271 @@ def _resolve_output(audio_path: str | Path, ext: str = ".mp4") -> Path:
     stem = Path(audio_path).stem
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     return OUTPUT_DIR / f"{stem}{ext}"
+
+
+def _copy_to_dir(src: Path, dst_dir: Path) -> Path | None:
+    """Copy file to directory; return None if source doesn't exist."""
+    if not src.exists():
+        return None
+    import shutil as _shutil
+    dst = dst_dir / src.name
+    _shutil.copy2(src, dst)
+    return dst
+
+
+# ── theme context resolution ───────────────────────────────────────────
+
+@dataclass
+class CardInfo:
+    """Metadata extracted from a single analysis card."""
+    path: Path
+    doi: str | None = None
+    title: str | None = None
+    author_surname: str = ""
+
+@dataclass
+class ThemeContext:
+    """Resolved context for one audio file's theme."""
+    theme: str = ""
+    subtitle: str = ""
+    papers: list[CardInfo] = field(default_factory=list)
+
+_COVER_SUBTITLE_FALLBACK: dict[str, str] = {
+    "hydrology":       "水文 · 径流预测 · 数据同化",
+    "ai_foundations":  "大模型 · 训练效率 · 推理突破",
+    "ai-index":        "AI Index 2026 · 科学趋势",
+    "datasets":        "全球数据集 · CAMELS · 干旱",
+    "neural-operator": "Neural Operator · 离散化无关",
+    "remote_sensing":  "遥感大模型 · SAR/光学融合 · 地球观测",
+}
+
+_PAPER_REF_RE = re.compile(
+    r'[*]{0,2}([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4'
+    r'\xee\xef\xe7ŠČŘŽ\xc1\xc9\xcd\xd3\xda\xdd'
+    r'ŇĎŤ\xc4\xcb\xcf\xd6\xdc]+)\s+et\s+al\.[*]{0,2}'
+)
+
+_DATE_SEGMENT_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+
+def _ascii_fold(text: str) -> str:
+    """Fold unicode to ASCII for author name matching (Thébault → thebault)."""
+    nfkd = unicodedata.normalize('NFKD', text)
+    return nfkd.encode('ascii', 'ignore').decode('ascii').lower()
+
+
+def _find_weekly_review_root(audio_path: Path) -> Path | None:
+    """Walk up from audio path to find 'weekly-review/YYYY-MM-DD' root."""
+    parts = audio_path.resolve().parts
+    for i, part in enumerate(parts):
+        if part == "weekly-review" and i + 1 < len(parts):
+            if _DATE_SEGMENT_RE.match(parts[i + 1]):
+                return Path(*parts[:i + 2])
+    return None
+
+
+def _audio_stem_to_theme(stem: str) -> str | None:
+    """Extract theme from audio stem: 'audio_hydrology_v1' → 'hydrology'."""
+    if not stem.startswith('audio_'):
+        return None
+    theme = stem[len('audio_'):]
+    return re.sub(r'_v\d+$', '', theme)
+
+
+def _find_podcast_md(audio_dir: Path, theme: str) -> Path | None:
+    """Find podcast_{theme}.md in the audio's directory."""
+    candidate = audio_dir / f"podcast_{theme}.md"
+    return candidate if candidate.exists() else None
+
+
+def _extract_author_surnames(text: str) -> list[str]:
+    """Parse 'Author et al.' references from text."""
+    return _PAPER_REF_RE.findall(text)
+
+
+def _find_cards_for_author(author_surname: str, cards_dir: Path) -> list[Path]:
+    """Match author surname to ALL card files by filename prefix.
+
+    Returns ALL matches — important when multiple papers share a first-author surname
+    (e.g. two different 'Wang' papers in the same issue).
+    """
+    if not cards_dir.exists():
+        return []
+    candidates = [_ascii_fold(author_surname)]
+    # For hyphenated names, also try just the first part (Rodriguez-Pardo → rodriguez)
+    if '-' in author_surname:
+        candidates.append(_ascii_fold(author_surname.split('-')[0]))
+    matches: list[Path] = []
+    for target in candidates:
+        for card_path in sorted(cards_dir.iterdir()):
+            if not card_path.name.endswith('.md'):
+                continue
+            if _ascii_fold(card_path.stem).startswith(f"{target}_"):
+                matches.append(card_path)
+    return matches
+
+
+def _load_card_info(card_path: Path, author_surname: str) -> CardInfo:
+    """Extract DOI and English title from a card file."""
+    text = card_path.read_text(encoding='utf-8')
+    # Cards use **DOI**: or **DOI:** (colon position varies by card version)
+    doi_m = (re.search(r'\*\*DOI\*\*:\s*(.+?)$', text, re.MULTILINE)
+             or re.search(r'\*\*DOI:\*\*\s*(.+?)$', text, re.MULTILINE))
+    # Title priority: explicit field → YAML frontmatter title: → H1 "Author et al. — Title"
+    title_m = (re.search(r'\*\*原文标题\*\*:\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'\*\*原文标题:\*\*\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'\*\*报告全称:\*\*\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'\*\*标题\*\*:\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'^title:\s*(.+?)$', text, re.MULTILINE)
+               or re.search(r'^#\s+\S.*?\s+[—–-]\s+(.+?)$', text, re.MULTILINE))
+    return CardInfo(
+        path=card_path,
+        doi=doi_m.group(1).strip() if doi_m else None,
+        title=title_m.group(1).strip() if title_m else None,
+        author_surname=author_surname,
+    )
+
+
+def _build_subtitle(theme: str, podcast_md: Path | None) -> str:
+    """Generate cover subtitle from podcast H1 or fallback map."""
+    if podcast_md:
+        text = podcast_md.read_text(encoding='utf-8')
+        m = re.search(r'^#\s+Podcast Instructions:\s*(.+)$', text, re.MULTILINE)
+        if m and len(m.group(1).strip()) <= 24:
+            return m.group(1).strip()
+    return _COVER_SUBTITLE_FALLBACK.get(theme, "AI for Science · 前沿论文")
+
+
+def _build_description(contexts: list[ThemeContext | None]) -> str:
+    """Build video description with DOIs organized by theme."""
+    lines: list[str] = []
+    idx = 1
+    for ctx in contexts:
+        if not ctx or not ctx.papers:
+            continue
+        label = ctx.theme.replace('-', ' ').title()
+        lines.append(f"【{label}】")
+        for card in ctx.papers:
+            parts = [f"{idx}. {card.author_surname} et al."]
+            if card.title:
+                t = card.title if len(card.title) <= 80 else card.title[:77] + "..."
+                parts.append(f" — {t}")
+            lines.append("".join(parts))
+            if card.doi:
+                lines.append(f"   https://doi.org/{card.doi}")
+            idx += 1
+        lines.append("")
+    if lines:
+        lines.append("由 dailyinfo 自动生成 | https://github.com/iHeadWater/dailyinfo")
+    return "\n".join(lines)
+
+
+def _find_article_md(wr_root: Path, theme: str) -> Path | None:
+    """Find article_{date}_{theme}.md in the article directory."""
+    article_dir = wr_root / "article"
+    if not article_dir.exists():
+        return None
+    date_str = wr_root.name  # YYYY-MM-DD
+    candidate = article_dir / f"article_{date_str}_{theme}.md"
+    return candidate if candidate.exists() else None
+
+
+def _extract_authors_from_article(text: str) -> list[str]:
+    """Extract first-author surnames from article text.
+
+    Matches: 'Crow et al.', 'Crow 等人', 'Rodriguez-Pardo 与 Tavoni',
+    'Guidi 与 Dominici', 'Author1、Author2 等人'
+    """
+    surnames: list[str] = []
+    patterns = [
+        # English: Author et al. (optional comma-initial)
+        re.compile(r'(?:^|[.。\s\n（])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)(?:,\s*[A-Z]\.?,\s*)?et\s+al\.'),
+        # Chinese: Author 等人 or Author 等（ (with or without 人)
+        re.compile(r'(?:^|[.。\s\n（])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*等[人（]?'),
+        # Chinese co-author: Author1 与 Author2
+        re.compile(r'(?:^|[.。\s\n（])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*[与和]\s*[A-Z]'),
+        # Chinese enumeration: Author1、Author2（... (e.g., "Posner、Lei 和 Schölkopf（2026")
+        re.compile(r'(?:^|[.。\s\n（])([A-Z][A-Za-z\xe9\xe8\xea\xeb\xe0\xe2\xe4\xf9\xfb\xfc\xf4\xee\xef\xe7\xc1\xc9\xcd\xd3\xda\xdd\xc4\xcb\xcf\xd6\xdc-]+)\s*[、]'),
+    ]
+    for pat in patterns:
+        for m in pat.finditer(text):
+            name = m.group(1)
+            # NOTE: we intentionally do NOT deduplicate by ASCII-folded surname here.
+            # Two papers in the same article may share a first-author surname
+            # (e.g. "Wang" for both FIRE-Bench and Evolutionary Intelligence).
+            # DOI-based dedup happens downstream in _build_contexts_from_content.
+            surnames.append(name)
+    return surnames
+
+
+def _extract_h1(text: str) -> str | None:
+    """Extract the first H1 heading from markdown text."""
+    m = re.search(r'^#\s+(.+?)$', text, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def _build_contexts_from_content(audio_paths: list[Path]) -> list[ThemeContext]:
+    """Build theme contexts purely from article/card content, not filenames.
+
+    1. Scan all article_{date}_*.md files in natural sort order
+    2. For each article: extract H1 as subtitle, authors → match cards → DOIs
+    3. Pair articles with audio files by index (1:1)
+    4. Enrich subtitle from podcast H1 where content overlaps
+    """
+    if not audio_paths:
+        return []
+
+    wr_root = _find_weekly_review_root(audio_paths[0])
+    if not wr_root:
+        return [ThemeContext(subtitle="AI for Science · 前沿论文") for _ in audio_paths]
+
+    article_dir = wr_root / "article"
+    cards_dir = wr_root / "cards"
+    podcast_dir = audio_paths[0].parent
+
+    # Scan ALL articles in sort order
+    art_paths = sorted(article_dir.glob("article_*.md")) if article_dir.exists() else []
+
+    contexts: list[ThemeContext] = []
+    for i, art_path in enumerate(art_paths):
+        if i >= len(audio_paths):
+            break
+        text = art_path.read_text(encoding='utf-8')
+        h1 = _extract_h1(text)
+        authors = _extract_authors_from_article(text)
+
+        # Match cards for DOIs (allow multiple cards per author for same-surname papers)
+        papers: list[CardInfo] = []
+        seen_dois: set[str] = set()
+        if cards_dir.exists():
+            for surname in authors:
+                card_paths = _find_cards_for_author(surname, cards_dir)
+                for card_path in card_paths:
+                    info = _load_card_info(card_path, surname)
+                    if info.doi and info.doi not in seen_dois:
+                        seen_dois.add(info.doi)
+                        papers.append(info)
+
+        subtitle = h1 or art_path.stem
+        # Try content-based podcast H1 enrichment
+        if podcast_dir.exists():
+            for pod in sorted(podcast_dir.glob("podcast_*.md")):
+                pod_text = pod.read_text(encoding='utf-8')
+                pod_h1 = _extract_h1(pod_text)
+                if pod_h1 and len(pod_h1) <= 24:
+                    pod_authors = set(_ascii_fold(a) for a in _extract_authors_from_article(pod_text))
+                    art_authors = set(_ascii_fold(a) for a in authors)
+                    if pod_authors and art_authors and pod_authors & art_authors:
+                        subtitle = pod_h1
+                        break
+
+        contexts.append(ThemeContext(theme=art_path.stem, subtitle=subtitle, papers=papers))
+
+    # Fill remainder with fallback
+    while len(contexts) < len(audio_paths):
+        contexts.append(ThemeContext(subtitle="AI for Science · 前沿论文"))
+
+    return contexts
 
 
 # ── cover generation ───────────────────────────────────────────────────
@@ -308,7 +577,20 @@ def run_bilibili_upload(
             return 1
         resolved.append(p)
 
-    date_str = datetime.date.today().strftime("%Y 第 %W 周")
+    date_str = datetime.date.today().strftime("%Y 第 %U 周")
+
+    # ── build theme contexts from content (scan articles, match cards) ──
+    theme_contexts = _build_contexts_from_content(resolved)
+    for ctx in theme_contexts:
+        if ctx.papers:
+            log(f"  theme '{ctx.subtitle}': {len(ctx.papers)} paper(s) matched")
+
+    # ── auto-generate description if not provided ──
+    if not desc and any(tc for tc in theme_contexts if tc and tc.papers):
+        auto = _build_description(theme_contexts)
+        if auto:
+            desc = auto
+            log(f"  auto-generated description ({len(desc)} chars, {desc.count('doi.org')} DOIs)")
 
     # ── covers ──
     if cover:
@@ -320,18 +602,12 @@ def run_bilibili_upload(
         cover_paths = [cover_path] * len(resolved)
     else:
         cover_paths = []
-        for ap in resolved:
-            # Derive per-P subtitle from filename
-            fname = ap.stem
-            topic_map = {
-                "audio_hydrology": "水文 · 径流预测 · 数据同化",
-                "audio_ai_foundations": "大模型 · 训练效率 · 推理突破",
-                "audio_remote_sensing": "遥感大模型 · SAR/光学融合 · 地球观测",
-                "audio_overview": "综述 · 本周精选",
-            }
-            sub = topic_map.get(fname, "AI for Science · 前沿论文")
-            log(f"  generating cover for {fname} ...")
-            cp = generate_cover(title=title, date_str=date_str, subtitle=sub)
+        for ap, ctx in zip(resolved, theme_contexts):
+            sub = ctx.subtitle if ctx and ctx.subtitle else "AI for Science · 前沿论文"
+            log(f"  generating cover for {ap.stem} → '{sub}'")
+            cover_out = OUTPUT_DIR / f"{ap.stem}_cover.png"
+            cp = generate_cover(title=title, date_str=date_str, subtitle=sub,
+                                output_path=cover_out)
             cover_paths.append(cp)
         cover_path = cover_paths[0]  # main cover for upload
 
@@ -340,10 +616,23 @@ def run_bilibili_upload(
         log("ERROR: ffmpeg not found. Install: winget install ffmpeg")
         return 1
 
+    # Save artifacts to date-organized folder
+    today = datetime.date.today().isoformat()
+    artifact_dir = OUTPUT_DIR / today
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
     video_paths = []
     for ap, cp in zip(resolved, cover_paths):
         vp = audio_to_video(ap, cp)
         video_paths.append(vp)
+        # Copy artifacts to date folder
+        _copy_to_dir(cp, artifact_dir)
+        _copy_to_dir(vp, artifact_dir)
+
+    # Save description
+    if desc:
+        (artifact_dir / "description.md").write_text(desc, encoding="utf-8")
+    log(f"  artifacts saved → {artifact_dir}")
 
     # ── upload ──
     if dry_run:

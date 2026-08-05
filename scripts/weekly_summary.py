@@ -152,7 +152,10 @@ def collect_week_briefings(
     category: str = "ai_news", days: int = 7
 ) -> list[tuple[str, str]]:
     """Return (date, content) tuples for briefings in the lookback window."""
-    cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+    cutoff = datetime.datetime.combine(
+        datetime.date.today() - datetime.timedelta(days=days),
+        datetime.time.min,
+    )
     collected: list[tuple[str, str]] = []
 
     for base_dir in (BRIEFINGS_DIR, PUSHED_DIR):

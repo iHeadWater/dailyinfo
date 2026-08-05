@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import sys
 from pathlib import Path
 
@@ -286,9 +287,12 @@ class TestEndToEnd:
         weekly_dir = briefings_dir / "weekly"
         weekly_dir.mkdir(parents=True)
 
-        # Write a sample briefing to pushed/
+        # Write a sample briefing to pushed/ (within the 7-day lookback window)
+        recent = (datetime.date.today() - datetime.timedelta(days=1)).strftime(
+            "%Y-%m-%d"
+        )
         fixture_content = read_fixture("ai_news_2026-06-27.md")
-        (pushed_dir / "smolai_news_briefing_2026-06-27.md").write_text(
+        (pushed_dir / f"smolai_news_briefing_{recent}.md").write_text(
             fixture_content, encoding="utf-8"
         )
 
@@ -332,11 +336,18 @@ class TestCollectWeekBriefings:
         briefings_ai.mkdir(parents=True)
         pushed_ai.mkdir(parents=True)
 
-        # Write same date to both dirs
+        # Write same date to both dirs (within the 7-day lookback window)
+        recent = (datetime.date.today() - datetime.timedelta(days=1)).strftime(
+            "%Y-%m-%d"
+        )
         content_b = "briefings version"
         content_p = "pushed version"
-        (briefings_ai / "news_briefing_2026-06-27.md").write_text(content_b, encoding="utf-8")
-        (pushed_ai / "news_briefing_2026-06-27.md").write_text(content_p, encoding="utf-8")
+        (briefings_ai / f"news_briefing_{recent}.md").write_text(
+            content_b, encoding="utf-8"
+        )
+        (pushed_ai / f"news_briefing_{recent}.md").write_text(
+            content_p, encoding="utf-8"
+        )
 
         monkeypatch.setattr("weekly_summary.BRIEFINGS_DIR", data_root / "briefings")
         monkeypatch.setattr("weekly_summary.PUSHED_DIR", data_root / "pushed")
