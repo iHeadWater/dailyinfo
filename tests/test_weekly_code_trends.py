@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -19,6 +20,11 @@ FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 def read_fixture(name: str) -> str:
     return (FIXTURES_DIR / name).read_text(encoding="utf-8")
+
+
+def briefing_date(days_ago: int) -> str:
+    """YYYY-MM-DD relative to today — keeps window-dependent tests time-independent."""
+    return (date.today() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -95,13 +101,14 @@ class TestCollectWeekCodeBriefings:
         briefings_code.mkdir(parents=True)
         pushed_code.mkdir(parents=True)
 
+        d = briefing_date(1)
         content_b = read_fixture("github_trending_briefing_2026-07-01.md")
-        content_p = "# GitHub Trending - 2026-07-01\n\n**different/repo** — other.\n"
+        content_p = f"# GitHub Trending - {d}\n\n**different/repo** — other.\n"
 
-        (briefings_code / "github_trending_briefing_2026-07-01.md").write_text(
+        (briefings_code / f"github_trending_briefing_{d}.md").write_text(
             content_b, encoding="utf-8"
         )
-        (pushed_code / "github_trending_briefing_2026-07-01.md").write_text(
+        (pushed_code / f"github_trending_briefing_{d}.md").write_text(
             content_p, encoding="utf-8"
         )
 
@@ -125,10 +132,11 @@ class TestCollectWeekCodeBriefings:
         code_dir.mkdir(parents=True)
         (data_root / "pushed" / "code").mkdir(parents=True)
 
-        (code_dir / "github_trending_briefing_2026-07-01.md").write_text(
+        d = briefing_date(1)
+        (code_dir / f"github_trending_briefing_{d}.md").write_text(
             "# GitHub Trending\n\n**a/b** — desc.\n", encoding="utf-8"
         )
-        (code_dir / "huggingface_models_briefing_2026-07-01.md").write_text(
+        (code_dir / f"huggingface_models_briefing_{d}.md").write_text(
             "# HF Models\n\nNot a github file.\n", encoding="utf-8"
         )
 
@@ -141,7 +149,7 @@ class TestCollectWeekCodeBriefings:
 
         result = collect_week_code_briefings("code", days=7)
         assert len(result) == 1
-        assert "github_trending" in result[0][0] or "2026-07-01" in result[0][0]
+        assert result[0][0] == d  # only the github_trending file was collected
 
 
 # ── Ranking ──────────────────────────────────────────────────────────────
@@ -345,30 +353,32 @@ class TestEndToEnd:
         code_weekly_dir.mkdir(parents=True)
 
         # Write 3 days of github trending briefings with some repo overlap
-        content_day1 = """# GitHub Trending - 2026-07-01
+        # (dates relative to today so tests stay within the lookback window)
+        d1, d2, d3 = briefing_date(3), briefing_date(2), briefing_date(1)
+        content_day1 = f"""# GitHub Trending - {d1}
 **shared/repo** — A shared repo appearing multiple days.
 **unique1/repo1** — Day 1 unique repo.
 **unique2/repo2** — Day 1 also unique.
 """
 
-        content_day2 = """# GitHub Trending - 2026-07-02
+        content_day2 = f"""# GitHub Trending - {d2}
 **shared/repo** — Same shared repo, day 2.
 **unique3/repo3** — Day 2 unique.
 """
 
-        content_day3 = """# GitHub Trending - 2026-07-03
+        content_day3 = f"""# GitHub Trending - {d3}
 **shared/repo** — Same shared repo, day 3.
 **unique4/repo4** — Day 3 unique.
 **unique5/repo5** — Another day 3 repo.
 """
 
-        (briefings_code / "github_trending_briefing_2026-07-01.md").write_text(
+        (briefings_code / f"github_trending_briefing_{d1}.md").write_text(
             content_day1, encoding="utf-8"
         )
-        (briefings_code / "github_trending_briefing_2026-07-02.md").write_text(
+        (briefings_code / f"github_trending_briefing_{d2}.md").write_text(
             content_day2, encoding="utf-8"
         )
-        (briefings_code / "github_trending_briefing_2026-07-03.md").write_text(
+        (briefings_code / f"github_trending_briefing_{d3}.md").write_text(
             content_day3, encoding="utf-8"
         )
 
