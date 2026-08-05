@@ -2,7 +2,9 @@
 
 [中文](https://github.com/iHeadWater/dailyinfo/blob/main/README.zh-CN.md) | English
 
-DailyInfo is an automated research intelligence system for AI for Science researchers. It collects papers, AI news, code trends, and institutional updates, writes local Markdown briefings, pushes them to Discord, and now provides an agent-operated Zotero -> NotebookLM workflow for paper briefings and audio/video overviews.
+DailyInfo is an automated research intelligence **collector** for AI for Science researchers. It collects papers, AI news, code trends, and institutional updates from FreshRSS feeds, scraped pages, and APIs, writes local Markdown briefings, and pushes them to Discord.
+
+> **Scope**: DailyInfo is a pure intelligence collector — collection, summarization, and push. **It does not handle Zotero.** All Zotero-related work (PDF download, ingestion, deep literature analysis, analysis cards, themed reviews, WeChat articles, podcasts, Bilibili publishing) lives in the sibling repo [`OuyangWenyu/mylibrary`](https://github.com/OuyangWenyu/mylibrary).
 
 ## Overview
 
@@ -16,22 +18,11 @@ FreshRSS / scrape / API sources
   -> Discord channels + local archive
 ```
 
-Agent-operated paper workflow:
-
-```text
-Zotero today's additions
-  -> dailyinfo zotero-brief
-  -> PDFs + source_index.md
-  -> NotebookLM briefing
-  -> Audio Overview / Video Overview
-```
-
 Design principles:
 
 - Configuration-driven sources in `config/sources.json`.
 - Idempotent CLI commands that can be safely rerun.
 - External scheduling through cron, myopenclaw, openclaw, or other agent runtimes.
-- Clear capability/operator split: DailyInfo provides stable commands; Claude Code, Codex, or openclaw operate the workflow.
 
 ## Screenshots
 
@@ -59,10 +50,6 @@ Put screenshots in `pictures/` with these names and they will render here.
 
 ![Discord code trending briefing](pictures/discord-code-trending.png)
 
-### NotebookLM Audio Overview
-
-![NotebookLM audio overview](pictures/notebooklm-audio-overview.png)
-
 ## Data Layout
 
 Default data root: `~/.myagentdata/dailyinfo/`. Override it with `DAILYINFO_DATA_ROOT`.
@@ -75,19 +62,11 @@ Default data root: `~/.myagentdata/dailyinfo/`. Override it with `DAILYINFO_DATA
 │   ├── ai_news/
 │   ├── code/
 │   └── resource/
-├── pushed/              # Successfully pushed archive
-│   ├── papers/
-│   ├── ai_news/
-│   ├── code/
-│   └── resource/
-└── zotero/              # Zotero -> NotebookLM run packages
-    └── YYYY-MM-DD[-collection]/
-        ├── source_index.md
-        ├── briefing_prompt.md
-        ├── pdfs/
-        ├── briefing.md
-        ├── notebooklm.json
-        └── MANUAL_NOTEBOOKLM_STEPS.md
+└── pushed/              # Successfully pushed archive
+    ├── papers/
+    ├── ai_news/
+    ├── code/
+    └── resource/
 ```
 
 ## Quick Start
@@ -97,14 +76,11 @@ git clone <repo-url>
 cd dailyinfo
 
 cp .env.example .env
-# Fill OPENROUTER_API_KEY and DISCORD_BOT_TOKEN if you use the RSS/Discord pipeline.
+# Fill DEEPSEEK_API_KEY and DISCORD_BOT_TOKEN.
 
 uv sync --python python3
 uv pip install -e .
 dailyinfo install
-
-# Optional: enable Zotero -> NotebookLM automation.
-uv pip install -e ".[notebooklm]"
 
 dailyinfo start
 dailyinfo run
@@ -128,54 +104,18 @@ dailyinfo push
 | `dailyinfo run -f all` | Force regeneration for all sources |
 | `dailyinfo push` | Push pending briefings to Discord and archive them |
 | `dailyinfo push -d 2026-04-22` | Push briefings for a specific date |
+| `dailyinfo weekly` | Generate a weekly AI news recap from recent briefings |
 | `dailyinfo status` | Show today's briefing/archive counts |
-| `dailyinfo zotero-brief` | Prepare a Zotero -> NotebookLM paper briefing package |
-| `dailyinfo zotero-brief --collection water --artifact audio` | Process the `water` collection and request Audio Overview |
-| `dailyinfo zotero-brief --artifact video` | Request NotebookLM Video Overview |
-| `dailyinfo zotero-brief --manual-only` | Prepare local materials without calling NotebookLM |
-| `dailyinfo download-pdf <doi>` | PDF download via Claude Code (see [docs](download-pdf.md)) |
-| `uv run python scripts/zotero_sync.py <pdf> <doi>` | Zotero linked_file sync (see [docs](zotero-sync.md)) |
+| `dailyinfo logs` | Tail the execution log |
+| `dailyinfo cache-clear` | Clear a source's FreshRSS cache (default `arxiv_cs_ai`) |
+| `dailyinfo clean-cache` | Delete FreshRSS cache files older than N hours (default 24h) |
 
-## Download PDF → Zotero Sync
+## Zotero / Deep Literature — moved to mylibrary
 
-> **Requires Claude Code + Playwright MCP plugin.** For setup, supported publishers, and failure handling, see [PDF Download](download-pdf.md) and [Zotero Sync](zotero-sync.md).
+DailyInfo is now a pure collector. **All Zotero-related work lives in the sibling repository:**
 
-Quick reference:
-```bash
-# One-time setup
-npx playwright install chromium
-uv pip install pyzotero
-
-# Then in Claude Code:
-/download-pdf 10.1038/s41586-026-10704-3
-```
-
-## Zotero -> NotebookLM Agent Workflow
-
-`dailyinfo zotero-brief` is a capability command, not the preferred daily user interface. The recommended daily interface is a local agent:
-
-- Claude Code slash command: `.claude/commands/zotero-notebooklm.md`
-- Codex skill: `skills/zotero-notebooklm/SKILL.md`
-- Future openclaw or other local runners can call the same CLI.
-
-The workflow:
-
-1. Reads Zotero papers by `dateAdded`.
-2. Optionally restricts to a collection such as `water`.
-3. Copies Zotero PDF attachments when available.
-4. Opens Zotero attachment URIs to trigger cloud-drive hydration when PDFs are placeholders.
-5. Uploads PDFs plus `source_index.md` to NotebookLM through `notebooklm-py`.
-6. Asks NotebookLM to generate a Chinese paper briefing.
-7. Optionally requests Audio Overview, Video Overview, or both.
-8. Falls back to a local material package and manual steps if NotebookLM automation fails.
-
-NotebookLM login is intentionally human-in-the-loop. The agent can open or prompt for the browser login, but the human completes Google authentication. The same `NOTEBOOKLM_HOME` must be used for login and later runs.
-
-See:
-
-- [Zotero NotebookLM Workflow](docs/zotero-notebooklm.md)
-- [Zotero NotebookLM 工作流](docs/zotero-notebooklm.zh.md)
-- [CLI Reference](docs/cli.md)
+- **Repository**: [`OuyangWenyu/mylibrary`](https://github.com/OuyangWenyu/mylibrary) (local: `D:\code\mylibrary`)
+- **Handles**: PDF download & Zotero ingestion (`download-pdf`, `zotero_sync`), weekly reviews, analysis cards, themed clustering, WeChat articles, NotebookLM podcasts, Bilibili publishing.
 
 ## Environment Variables
 
@@ -190,11 +130,6 @@ See:
 | `OPENROUTER_API_KEY` | OpenRouter API key (optional, used for fallback model) |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback model when DeepSeek returns empty (default `moonshotai/kimi-k2.5`) |
-| `ZOTERO_LOCAL_BASE_URL` | Zotero local API base URL, default `http://127.0.0.1:23119` |
-| `ZOTERO_API_KEY` | Zotero Web API key (for `zotero_sync.py` linked_file sync) |
-| `ZOTERO_LIBRARY_ID` | Numeric Zotero user library ID (for `zotero_sync.py` linked_file sync) |
-| `GDRIVE_PAPERS_PATH` | Local path to Google Drive papers folder (ZotMoov / Linked Attachment Base Directory) |
-| `NOTEBOOKLM_HOME` | NotebookLM profile/auth directory used by `notebooklm-py` |
 
 ## Scheduling and Agents
 
@@ -206,19 +141,14 @@ DailyInfo intentionally avoids owning the scheduler. Recommended ownership:
 | Markdown generation via `dailyinfo run` | DailyInfo |
 | Discord push/archive via `dailyinfo push` | DailyInfo |
 | Timed execution | cron, myopenclaw, openclaw, or agent runtime |
-| Zotero/NotebookLM orchestration | Claude Code, Codex skill, or local agent |
-| Browser login and sensitive prompts | Human |
+| Zotero / deep literature | mylibrary |
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [CLI Reference](docs/cli.md)
-- [Agent Config](docs/agent-config.md)
-- [PDF Download (Institutional Access)](docs/download-pdf.md)
-- [Zotero Sync (linked_file)](docs/zotero-sync.md)
-- [Zotero NotebookLM Workflow](docs/zotero-notebooklm.md)
-- [Zotero NotebookLM 工作流](docs/zotero-notebooklm.zh.md)
-- [Information Sources](docs/sources.md)
+- [Architecture](architecture.md)
+- [CLI Reference](cli.md)
+- [Agent Config](agent-config.md)
+- [Information Sources](sources.md)
 
 ## License
 

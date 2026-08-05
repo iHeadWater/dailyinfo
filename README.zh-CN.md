@@ -2,7 +2,9 @@
 
 中文 | [English](README.md)
 
-DailyInfo 是面向 AI for Science 研究者的自动化科研情报系统。它可以聚合论文、AI 新闻、代码趋势和院所资讯，生成本地 Markdown 简报，推送到 Discord，并提供一套由 agent 操作的 Zotero → NotebookLM 论文简报、音频概览和视频概览流程。
+DailyInfo 是面向 AI for Science 研究者的自动化科研情报**收集器**。它从 FreshRSS 源、网页抓取和 API 聚合论文、AI 新闻、代码趋势和院所资讯，生成本地 Markdown 简报，并推送到 Discord。
+
+> **定位**：DailyInfo 是纯情报收集器——采集、简单归纳、推送。**不处理 Zotero**。所有 Zotero 相关工作（PDF 下载、入库、深度文献分析、分析卡、主题综述、公众号文章、播客、B 站发布）都在姊妹仓库 [`OuyangWenyu/mylibrary`](https://github.com/OuyangWenyu/mylibrary) 中。
 
 ## 项目概览
 
@@ -16,22 +18,11 @@ FreshRSS / 网页抓取 / API 数据源
   -> Discord 频道 + 本地归档
 ```
 
-Agent 操作的论文流程：
-
-```text
-Zotero 当天新增论文
-  -> dailyinfo zotero-brief
-  -> PDFs + source_index.md
-  -> NotebookLM 简报
-  -> Audio Overview / Video Overview
-```
-
 设计原则：
 
 - 数据源配置化，集中在 `config/sources.json`。
 - CLI 幂等，可以安全重跑。
 - 调度交给 cron、myopenclaw、openclaw 或其他 agent runtime。
-- 明确区分能力层和执行层：DailyInfo 提供稳定命令，Claude Code、Codex 或 openclaw 负责执行工作流。
 
 ## 效果展示
 
@@ -59,10 +50,6 @@ Zotero 当天新增论文
 
 ![Discord Code Trending 简报](pictures/discord-code-trending.png)
 
-### NotebookLM 音频概览
-
-![NotebookLM 音频概览](pictures/notebooklm-audio-overview.png)
-
 ## 数据目录
 
 默认数据根目录是 `~/.myagentdata/dailyinfo/`，可通过 `DAILYINFO_DATA_ROOT` 覆盖。
@@ -75,19 +62,11 @@ Zotero 当天新增论文
 │   ├── ai_news/
 │   ├── code/
 │   └── resource/
-├── pushed/              # 已推送归档
-│   ├── papers/
-│   ├── ai_news/
-│   ├── code/
-│   └── resource/
-└── zotero/              # Zotero -> NotebookLM 素材包和简报
-    └── YYYY-MM-DD[-collection]/
-        ├── source_index.md
-        ├── briefing_prompt.md
-        ├── pdfs/
-        ├── briefing.md
-        ├── notebooklm.json
-        └── MANUAL_NOTEBOOKLM_STEPS.md
+└── pushed/              # 已推送归档
+    ├── papers/
+    ├── ai_news/
+    ├── code/
+    └── resource/
 ```
 
 ## 快速开始
@@ -97,14 +76,11 @@ git clone <repo-url>
 cd dailyinfo
 
 cp .env.example .env
-# 如果使用 RSS/Discord 流程，填写 OPENROUTER_API_KEY 和 DISCORD_BOT_TOKEN。
+# 填写 DEEPSEEK_API_KEY 和 DISCORD_BOT_TOKEN。
 
 uv sync --python python3
 uv pip install -e .
 dailyinfo install
-
-# 可选：启用 Zotero -> NotebookLM 自动化。
-uv pip install -e ".[notebooklm]"
 
 dailyinfo start
 dailyinfo run
@@ -120,79 +96,40 @@ dailyinfo push
 | `dailyinfo install` | 校验环境并创建数据目录 |
 | `dailyinfo start` / `stop` / `restart` | 管理 FreshRSS 容器 |
 | `dailyinfo run` | 运行全部简报流水线 |
-| `dailyinfo run -p 1` | 运行 RSS 论文/新闻流水线 |
-| `dailyinfo run -p 2` | 运行代码趋势流水线 |
-| `dailyinfo run -p 3` | 运行院所资讯流水线 |
+| `dailyinfo run -p 1` | 流水线 1：期刊论文 |
+| `dailyinfo run -p 2` | 流水线 2：AI 资讯 |
+| `dailyinfo run -p 3` | 流水线 3：arXiv CS.AI |
+| `dailyinfo run -p 4` | 流水线 4：代码趋势 |
+| `dailyinfo run -p 5` | 流水线 5：院所资讯 |
 | `dailyinfo run -f all` | 强制重生全部数据源 |
 | `dailyinfo push` | 推送待处理简报到 Discord 并归档 |
 | `dailyinfo push -d 2026-04-22` | 推送指定日期简报 |
+| `dailyinfo weekly` | 从近期简报生成每周 AI 资讯回顾 |
 | `dailyinfo status` | 查看当天简报和归档数量 |
-| `dailyinfo zotero-brief` | 生成 Zotero -> NotebookLM 论文素材包 |
-| `dailyinfo zotero-brief --collection water --artifact audio` | 处理 `water` collection 并请求音频概览 |
-| `dailyinfo zotero-brief --artifact video` | 请求 NotebookLM 视频概览 |
-| `dailyinfo zotero-brief --manual-only` | 只生成本地素材，不调用 NotebookLM |
-| `dailyinfo download-pdf <doi>` | PDF 下载（依赖 Claude Code，见[文档](docs/download-pdf.md)） |
-| `uv run python scripts/zotero_sync.py <pdf> <doi>` | Zotero linked_file 同步（见[文档](docs/zotero-sync.md)） |
+| `dailyinfo logs` | 查看执行日志 |
+| `dailyinfo cache-clear` | 清除指定源的 FreshRSS 缓存（默认 `arxiv_cs_ai`） |
+| `dailyinfo clean-cache` | 删除超过 N 小时的 FreshRSS 缓存文件（默认 24h） |
 
-## 下载 PDF → Zotero 同步
+## Zotero / 深度文献 —— 已迁移至 mylibrary
 
-> **依赖 Claude Code + Playwright MCP 插件。** 完整配置、支持的出版商和故障处理见 [PDF 下载](docs/download-pdf.md) 和 [Zotero 同步](docs/zotero-sync.md)。
+DailyInfo 现在是纯收集器。**所有 Zotero 相关工作都在姊妹仓库：**
 
-快速参考：
-```bash
-# 一次性配置
-npx playwright install chromium
-uv pip install pyzotero
-
-# 在 Claude Code 中输入：
-/download-pdf 10.1038/s41586-026-10704-3
-```
-
-## Zotero -> NotebookLM Agent 工作流
-
-## Zotero -> NotebookLM Agent 工作流
-
-`dailyinfo zotero-brief` 是能力命令，不是推荐的每日人工入口。推荐的日常入口是本地 agent：
-
-- Claude Code slash command：`.claude/commands/zotero-notebooklm.md`
-- Codex skill：`skills/zotero-notebooklm/SKILL.md`
-- 未来 openclaw 或其他本地 runner 也可以调用同一套 CLI。
-
-工作流会：
-
-1. 按 Zotero `dateAdded` 读取论文。
-2. 可限定 collection，例如 `water`。
-3. 复制 Zotero PDF 附件。
-4. PDF 是云盘占位文件时，打开 Zotero 附件 URI 触发 Google Drive 等同步客户端下载。
-5. 通过 `notebooklm-py` 上传 PDF 和 `source_index.md` 到 NotebookLM。
-6. 让 NotebookLM 生成中文论文简报。
-7. 可选生成 Audio Overview、Video Overview 或两者。
-8. NotebookLM 自动化失败时，保留本地素材包和手动兜底步骤。
-
-NotebookLM 登录有意保留人工参与。Agent 可以打开浏览器或提示登录，但 Google 认证由人完成。登录和后续运行必须使用同一个 `NOTEBOOKLM_HOME`。
-
-详见：
-
-- [Zotero NotebookLM Workflow](docs/zotero-notebooklm.md)
-- [Zotero NotebookLM 工作流](docs/zotero-notebooklm.zh.md)
-- [CLI 参考](docs/cli.md)
+- **仓库**：[`OuyangWenyu/mylibrary`](https://github.com/OuyangWenyu/mylibrary)（本地：`D:\code\mylibrary`）
+- **负责**：PDF 下载与 Zotero 入库（`download-pdf`、`zotero_sync`）、每周综述、分析卡、主题聚类、公众号文章、NotebookLM 播客、B 站发布。
 
 ## 环境变量
 
 | 变量 | 用途 |
 |------|------|
-| `OPENROUTER_API_KEY` | `dailyinfo run` 使用的 OpenRouter API key |
+| `DEEPSEEK_API_KEY` | `dailyinfo run` 使用的 DeepSeek API key（主模型） |
 | `DISCORD_BOT_TOKEN` | `dailyinfo push` 使用的 Discord bot token |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` | 可选分类频道 ID |
 | `FRESHRSS_USER` | FreshRSS 用户名 |
 | `FRESHRSS_PASSWORD` | FreshRSS 初始密码 |
 | `DAILYINFO_DATA_ROOT` | 覆盖默认数据根目录 |
-| `DAILYINFO_FALLBACK_MODEL` | 主模型空响应时的备用模型 |
-| `ZOTERO_LOCAL_BASE_URL` | Zotero 本地 API 地址，默认 `http://127.0.0.1:23119` |
-| `ZOTERO_API_KEY` | Zotero Web API 密钥（`zotero_sync.py` linked_file 同步用） |
-| `ZOTERO_LIBRARY_ID` | 数字型 Zotero 用户库 ID（`zotero_sync.py` linked_file 同步用） |
-| `GDRIVE_PAPERS_PATH` | Google Drive 论文文件夹本地路径（ZotMoov / 链接附件根目录） |
-| `NOTEBOOKLM_HOME` | `notebooklm-py` 使用的 NotebookLM profile/auth 目录 |
+| `OPENROUTER_API_KEY` | OpenRouter API key（可选，用于备用模型） |
+| `DAILYINFO_ENV` | 环境：`prod` / `dev` / `staging`（默认 `prod`） |
+| `DAILYINFO_FALLBACK_MODEL` | 主模型空响应时的备用模型（默认 `moonshotai/kimi-k2.5`） |
 
 ## 调度和 Agent 分工
 
@@ -204,19 +141,14 @@ DailyInfo 不负责调度。推荐分工如下：
 | `dailyinfo run` 生成 Markdown | DailyInfo |
 | `dailyinfo push` 推送和归档 | DailyInfo |
 | 定时执行 | cron、myopenclaw、openclaw 或 agent runtime |
-| Zotero/NotebookLM 编排 | Claude Code、Codex skill 或本地 agent |
-| 浏览器登录和敏感提示 | 人 |
+| Zotero / 深度文献 | mylibrary |
 
 ## 文档
 
-- [系统架构](docs/architecture.md)
-- [CLI 参考](docs/cli.md)
-- [Agent 配置](docs/agent-config.md)
-- [PDF 下载（机构访问）](docs/download-pdf.md)
-- [Zotero 同步（linked_file）](docs/zotero-sync.md)
-- [Zotero NotebookLM Workflow](docs/zotero-notebooklm.md)
-- [Zotero NotebookLM 工作流](docs/zotero-notebooklm.zh.md)
-- [数据源说明](docs/sources.md)
+- [系统架构](architecture.md)
+- [CLI 参考](cli.md)
+- [Agent 配置](agent-config.md)
+- [数据源说明](sources.md)
 
 ## License
 

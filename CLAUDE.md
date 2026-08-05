@@ -48,26 +48,9 @@ dailyinfo logs                   # Tail execution log
 dailyinfo clean-cache            # Delete FreshRSS cache files older than 24h
 dailyinfo clean-cache --dry-run  # Preview what would be deleted
 
-# Download PDFs (agent-operated, requires Playwright MCP `mcp__plugin_playwright_playwright__*`)
-# Deterministic patterns per publisher — see skills/download-pdf/SKILL.md for full flow:
-#   Nature (OA):       navigate → click "Download PDF" → Chrome native download
-#   Nature (inst):      navigate → WAYF login (user does SSO) → click "Download PDF"
-#   Wiley/AGU (all):    navigate to pdfdirect?download=true → Chrome native download
-#   Cloudflare blocks:  pause, tell user to pass challenge, wait for "done"
-dailyinfo download-pdf 10.1016/j.jhydrol.2024.132471           # Print download instructions for the skill
-python scripts/download_pdf.py verify <pdf>                    # Verify PDF and extract metadata
-python scripts/download_pdf.py detect <url>                    # Detect publisher from URL
-
-# Sync downloaded PDF to Zotero (linked_file, zero cloud quota)
-# ⚠️ MUST use `uv run python` — conda Python lacks pyzotero
-uv run python scripts/zotero_sync.py <pdf> <doi> --json        # Copy to GDrive + create Zotero item
-uv run python scripts/zotero_sync.py <pdf> <doi> --dry-run     # Preview without creating
-
-# Zotero -> NotebookLM (agent-operated)
-# Prefer the Claude Code slash command:
-# /zotero-notebooklm water 2026-05-28 audio
-# New-machine setup: docs/zotero-notebooklm.md
-uv run --extra notebooklm dailyinfo zotero-brief --collection water --artifact audio --open-missing-pdfs
+# ⚠️ PDF 下载、Zotero 入库、NotebookLM 简报 已迁移至 mylibrary (D:\code\mylibrary)
+# dailyinfo 不再提供 download-pdf / zotero_sync / zotero-notebooklm 命令。
+# 相关能力在 mylibrary 仓库: skills/download-pdf, hydrolitagent/literature/{download_pdf,zotero_sync,zotero_notebooklm}.py
 
 # Direct script execution (no install needed)
 python3 scripts/run_pipelines.py [--pipeline N] [--force SOURCE|all]
@@ -139,7 +122,7 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`
 Optional: `OPENROUTER_API_KEY` (fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`
 
-Zotero sync optional: `ZOTERO_API_KEY`, `ZOTERO_LIBRARY_ID`, `GDRIVE_PAPERS_PATH` (for `zotero_sync.py` linked_file attachment)
+Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPERS_PATH`)已随 zotero_sync 迁移至 mylibrary,本仓库不再需要。
 
 ## Testing Conventions
 
@@ -152,81 +135,25 @@ Zotero sync optional: `ZOTERO_API_KEY`, `ZOTERO_LIBRARY_ID`, `GDRIVE_PAPERS_PATH
 
 ## Agent skills
 
-### Issue tracker
+### 已迁移至 mylibrary (⚠️ 勿在此仓库使用)
 
-Issues are tracked as GitHub issues on `iHeadWater/dailyinfo`. See `docs/agents/issue-tracker.md`.
+以下深度文献处理 skill 已迁往 **`D:\code\mylibrary`**(`OuyangWenyu/mylibrary`)。dailyinfo 是**纯信息情报收集器**(采集 → 简报 → Discord 推送);涉及 **Zotero/PDF 下载/深度文献分析**(读库/精读/卡片/主题/公众号/播客/B站发布)的工作全部在 mylibrary 仓库执行:
 
-### Triage labels
+| Skill | 迁移去向 |
+|-------|---------|
+| `weekly-review`(文献综述/精读/主题) | `D:\code\mylibrary/skills/weekly-review/` |
+| `zotero-notebooklm`(NotebookLM 简报/音频) | `D:\code\mylibrary/skills/zotero-notebooklm/` |
+| `weekly-report-skill`(公众号周报) | `D:\code\mylibrary/skills/weekly-report-skill/` |
+| `figure-skill-v2`(配图/封面) | `D:\code\mylibrary/skills/figure-skill-v2/` |
+| `bilibili-upload`(B 站发布) | `D:\code\mylibrary/skills/bilibili-upload/` |
 
-Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+> 本仓库 `skills/` 下若仍有同名目录,是迁移前的历史副本,请勿使用。`ai-news-weekly-polish` **保留在本仓库**(它是 dailyinfo pipeline 的直接产物)。
 
-### Download PDF (download-pdf)
+### Bilibili Upload (bilibili-upload) — 已迁移
 
-Download academic PDFs through institutional access (DUT SSO) using Playwright browser automation. Zotero sync via linked_file attachment. See `skills/download-pdf/SKILL.md`.
-
-**New-machine Playwright setup** (one-time, ~5 min):
-
-```bash
-# 1. Enable the official Playwright plugin (provides mcp__plugin_playwright_playwright__* tools)
-#    In ~/.claude/settings.json → enabledPlugins → "playwright@claude-plugins-official": true
-
-# 2. Install Chromium (if plugin auto-download fails)
-npx playwright install chromium
-
-# 3. Install @playwright/mcp globally (provides the CLI that the plugin wraps)
-npm install -g @playwright/mcp@latest
-```
-
-The plugin provides `mcp__plugin_playwright_playwright__*` tools (standalone Chromium, NOT the user's personal Chrome).
-Browser profile (cookies, WAYF/SSO sessions) persists in `.playwright-mcp/` under the project directory.
-Nature login survives across Claude Code restarts; Wiley/AGU Cloudflare challenge must be passed once per session.
-
-**MCP tools to use:**
-- `mcp__plugin_playwright_playwright__browser_navigate` — navigate to URL
-- `mcp__plugin_playwright_playwright__browser_click` — click element (use ref from snapshot)
-- `mcp__plugin_playwright_playwright__browser_snapshot` — get page accessibility tree
-- `mcp__plugin_playwright_playwright__browser_type` — type text into field
-- `mcp__plugin_playwright_playwright__browser_press_key` — press keyboard key
-- `mcp__plugin_playwright_playwright__browser_wait_for` — wait for text or time
-- `mcp__plugin_playwright_playwright__browser_run_code_unsafe` — run arbitrary Playwright code
-- `mcp__plugin_playwright_playwright__browser_tabs` — manage browser tabs
-
-**DO NOT use:**
-- `mcp__plugin_ecc_playwright__*` — requires Chrome extension bridge, needs separate setup
-- `browser_evaluate` + `readAsDataURL()` — crashes MCP on PDFs >1MB
-- `browser_run_code` + `require('fs')` — `require` is not defined in the MCP runtime
-
-### Bilibili Upload (bilibili-upload)
-
-Upload podcast audio to Bilibili as video (audio + auto-generated cover → MP4 via ffmpeg → biliup upload). See `skills/bilibili-upload/SKILL.md`.
-
-**One-time setup:**
-
-```bash
-winget install --id=ForgQi.biliup-rs -e
-biliup -u ~/.bilibili/cookies.json login   # scan QR code, valid ~2 years
-```
-
-**Usage:**
-
-```bash
-# Upload audio (cover auto-generated)
-dailyinfo bilibili-upload "output/weekly-review/2026-06-28/podcast/audio_hydrology.mp3" \
-  --title "水文AI周报 2026-W26" \
-  --tags "AI,水文,科研"
-
-# Preview only (no upload)
-dailyinfo bilibili-upload audio.mp3 --title "Test" --dry-run
-
-# In Claude Code, just say: "上传这周的水文周报音频到B站"
-```
-
-biliup cookie at `~/.bilibili/cookies.json` persists for ~2 years.
-If upload fails with code 601, wait a few minutes and retry (rate limit).
-
-### Domain docs
-
-Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Upload podcast audio to Bilibili. **该 skill 已迁移至 `D:\code\mylibrary/skills/bilibili-upload/`**。此处仅保留 biliup cookie 约定供参考:
+- cookie at `~/.bilibili/cookies.json`(约 2 年有效)
+- 上传失败 code 601 = 限流,等几分钟重试
 
 ## Language
 

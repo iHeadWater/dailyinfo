@@ -410,11 +410,11 @@ class RSSDataSource(DataSource):
 class ScrapeDataSource(DataSource):
     def fetch(self) -> list[Item]:
         if self.name == "github_trending":
-            return self._fetch_github()
+            return self._filter_seen(self._fetch_github())
         if self.name == "chinawater":
-            return self._fetch_chinawater_journal()
+            return self._filter_seen(self._fetch_chinawater_journal())
         if self.name == "skxjz":
-            return self._fetch_skxjz_journal()
+            return self._filter_seen(self._fetch_skxjz_journal())
         resp = requests.get(
             self.config["url"],
             timeout=20,
@@ -424,8 +424,8 @@ class ScrapeDataSource(DataSource):
         )
         resp.encoding = resp.apparent_encoding or "utf-8"
         if self.name == "skxjz":
-            return self._parse_skxjz(resp.text)
-        return self._parse_dlut_html(resp.text)
+            return self._filter_seen(self._parse_skxjz(resp.text))
+        return self._filter_seen(self._parse_dlut_html(resp.text))
 
     # --- GitHub Trending ---
     def _fetch_github(self) -> list[Item]:
@@ -769,7 +769,7 @@ class APIDataSource(DataSource):
         params = self.config.get("params", {})
         if method == "POST":
             if self.config.get("paginate"):
-                return self._fetch_dlut_paginated(params)
+                return self._filter_seen(self._fetch_dlut_paginated(params))
             resp = requests.post(self.config["url"], data=params, timeout=20)
         else:
             params_str = {k: str(v) for k, v in params.items()}
@@ -782,10 +782,10 @@ class APIDataSource(DataSource):
         data = resp.json()
 
         if self.name.startswith("huggingface_"):
-            return self._parse_huggingface(data)
+            return self._filter_seen(self._parse_huggingface(data))
         if self.config.get("parser") == "crossref":
-            return self._parse_crossref(data)
-        return self._parse_dlut_api(data)
+            return self._filter_seen(self._parse_crossref(data))
+        return self._filter_seen(self._parse_dlut_api(data))
 
     def _fetch_dlut_paginated(self, base_params: dict) -> list[Item]:
         """Paginate DLUT POST API.
@@ -829,6 +829,31 @@ class APIDataSource(DataSource):
 
         return result
 
+    @staticmethod
+    def _crossref_date(row: dict) -> Optional[datetime.datetime]:
+        """Return the best date for deciding whether a Crossref item is new."""
+        for key in (
+            "published-online",
+            "created",
+            "deposited",
+            "indexed",
+            "published",
+            "published-print",
+            "issued",
+        ):
+            value = row.get(key) or {}
+            parts = (value.get("date-parts") or [[]])[0]
+            try:
+                if len(parts) >= 3:
+                    return datetime.datetime(parts[0], parts[1], parts[2])
+                if len(parts) >= 2:
+                    return datetime.datetime(parts[0], parts[1], 1)
+                if len(parts) >= 1:
+                    return datetime.datetime(parts[0], 1, 1)
+            except (ValueError, TypeError):
+                continue
+        return None
+
     def _parse_crossref(self, api_data: dict) -> list[Item]:
         """Crossref REST API (/works) — returns English titles with publication dates."""
         rows = api_data.get("message", {}).get("items", [])
@@ -839,22 +864,7 @@ class APIDataSource(DataSource):
             title = titles[0] if titles else ""
             if not title:
                 continue
-            pub = (
-                row.get("published")
-                or row.get("published-print")
-                or row.get("published-online")
-                or {}
-            )
-            parts = (pub.get("date-parts") or [[]])[0]
-            try:
-                if len(parts) >= 3:
-                    dt: Optional[datetime.datetime] = datetime.datetime(parts[0], parts[1], parts[2])
-                elif len(parts) >= 2:
-                    dt = datetime.datetime(parts[0], parts[1], 1)
-                else:
-                    dt = None
-            except (ValueError, TypeError):
-                dt = None
+            dt = self._crossref_date(row)
             if dt and dt < self._cutoff_dt:
                 continue
             items.append(Item(

@@ -33,7 +33,6 @@ if str(SCRIPTS_DIR) not in sys.path:
 # because the others do ``from paths import ...``.
 _RELOAD_ORDER = (
     "paths",
-    "zotero_notebooklm",
     "datasource",
     "run_pipelines",
     "push_to_discord",
