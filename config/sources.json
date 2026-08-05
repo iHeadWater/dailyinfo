@@ -294,7 +294,7 @@
       "display_name": "水利学报",
       "category": "papers",
       "enabled": true,
-      "url": "https://api.crossref.org/works?filter=issn:0559-9350&sort=published&order=desc&rows=20",
+      "url": "https://api.crossref.org/works?filter=issn:0559-9350&sort=updated&order=desc&rows=20",
       "type": "api",
       "parser": "crossref",
       "lookback_hours": 720,
