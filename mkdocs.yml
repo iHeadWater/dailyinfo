@@ -15,8 +15,6 @@ nav:
   - Home: index.md
   - System Architecture: architecture.md
   - CLI Reference: cli.md
-  - Zotero NotebookLM Workflow: zotero-notebooklm.md
-  - Zotero NotebookLM 工作流: zotero-notebooklm.zh.md
   - Agent Config: agent-config.md
   - Information Sources: sources.md
 
