@@ -19,6 +19,7 @@ DISCORD_CHUNK_LIMIT = 1950
 _ARXIV_MARKER = STATE_DIR / ".arxiv_generating"
 _ARXIV_POLL_INTERVAL = 30   # seconds between checks
 _ARXIV_MAX_WAIT = 1800      # 30 minutes total timeout
+_DISCORD_RETRY_DELAYS = (2, 5, 10)
 
 
 def _wait_for_arxiv_generation(date: str) -> None:
@@ -68,7 +69,7 @@ def _load_env_value(key):
         return dotenv_values(env_path).get(key, "") or ""
     except ImportError:
         prefix = f"{key}="
-        with open(env_path) as f:
+        with open(env_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("#") or not line.startswith(prefix):
@@ -165,8 +166,52 @@ def split_discord_messages(content):
     return split_message(content, max_body_length)
 
 
+def _post_single_message(channel_id, headers, data, chunk_index):
+    """向 Discord 发送一条消息，网络失败时指数退避重试。
+
+    Returns:
+        True: 发送成功
+        False: 重试耗尽或收到不可重试的 HTTP 错误
+    """
+    last_err = None
+    for attempt, delay in enumerate(_DISCORD_RETRY_DELAYS + (None,), start=1):
+        try:
+            resp = requests.post(
+                f"{DISCORD_API}/channels/{channel_id}/messages",
+                headers=headers,
+                json=data,
+                timeout=10,
+            )
+            if resp.status_code in (200, 201):
+                log(f"  ✅ 第 {chunk_index} 部分发送成功")
+                time.sleep(0.5)
+                return True
+            # 429 Rate limit — honour Retry-After
+            if resp.status_code == 429:
+                wait = float(resp.json().get(
+                    "retry_after",
+                    delay if delay is not None else _DISCORD_RETRY_DELAYS[-1],
+                ))
+                log(f"  ⏳ 触发限速，等待 {wait:.1f}s 后重试 (第 {attempt} 次)")
+                time.sleep(wait)
+                last_err = "429 rate limit"
+                continue
+            log(f"  ❌ 第 {chunk_index} 部分发送失败: {resp.status_code} - {resp.text}")
+            return False
+        except Exception as e:
+            last_err = str(e)
+            if delay is None:
+                log(f"  ❌ 发送错误（已重试 {len(_DISCORD_RETRY_DELAYS)} 次）: {last_err}")
+                return False
+            log(f"  ⚠️  网络错误，{delay}s 后重试 (第 {attempt} 次): {last_err}")
+            time.sleep(delay)
+    # Exhausted all retries (pure 429 exhaustion — unlikely but safe)
+    log(f"  ❌ 第 {chunk_index} 部分重试耗尽: {last_err}")
+    return False
+
+
 def send_to_discord(channel_id, content):
-    """发送消息到 Discord 频道"""
+    """发送消息到 Discord 频道，网络失败时最多重试 3 次（指数退避）"""
     messages = split_discord_messages(content)
 
     headers = {
@@ -176,28 +221,11 @@ def send_to_discord(channel_id, content):
     }
 
     for i, msg in enumerate(messages):
-        try:
-            # Add a human-readable chunk marker when a briefing spans messages.
-            if len(messages) > 1:
-                msg = f"{_chunk_prefix(i + 1, len(messages))}{msg}"
+        if len(messages) > 1:
+            msg = f"{_chunk_prefix(i + 1, len(messages))}{msg}"
+        data = {"content": msg}
 
-            data = {"content": msg}
-
-            resp = requests.post(
-                f"{DISCORD_API}/channels/{channel_id}/messages",
-                headers=headers,
-                json=data,
-                timeout=10,
-            )
-
-            if resp.status_code in (200, 201):
-                log(f"  ✅ 第 {i+1} 部分发送成功")
-                time.sleep(0.5)
-            else:
-                log(f"  ❌ 第 {i+1} 部分发送失败: {resp.status_code} - {resp.text}")
-                return False
-        except Exception as e:
-            log(f"  ❌ 发送错误: {e}")
+        if not _post_single_message(channel_id, headers, data, i + 1):
             return False
 
     return True
@@ -388,7 +416,7 @@ def push_category(category, channel_id, date=None):
         log(
             f"  有效文件: {len(valid_files)} 份，空内容: {placeholder_count} 份，低质量: {low_quality_count} 份"
         )
-        log(f"  开始推送...")
+        log("  开始推送...")
     else:
         total_filtered = placeholder_count + low_quality_count
         log(

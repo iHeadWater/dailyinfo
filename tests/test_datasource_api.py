@@ -307,3 +307,141 @@ def test_shuili_xuebao_config_sorts_by_updated():
     source = next(s for s in cfg["sources"] if s["name"] == "shuili_xuebao")
 
     assert "sort=updated" in source["url"]
+
+
+def test_dlut_recruitment_filters_expired_deadlines(monkeypatch):
+    import datetime
+
+    import datasource
+    from datasource import APIDataSource
+
+    monkeypatch.setattr(
+        datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0)
+    )
+    api_data = {
+        "object": {
+            "list": [
+                {
+                    "id": "old",
+                    "title": "Expired internship",
+                    "startTime": "2026-05-27 01:00:00",
+                    "endTime": "2026-05-26 00:00:00",
+                },
+                {
+                    "id": "today",
+                    "title": "Today deadline internship",
+                    "startTime": "2026-05-27 01:00:00",
+                    "endTime": "2026-05-27 00:00:00",
+                },
+                {
+                    "id": "future",
+                    "title": "Future internship",
+                    "startTime": "2026-05-27 01:00:00",
+                    "endTime": "2026-05-28 00:00:00",
+                },
+            ]
+        }
+    }
+    ds = APIDataSource(
+        {
+            "name": "dlut_internship",
+            "category": "resource",
+            "url": "https://x.test/",
+            "list_url": "https://x.test/list",
+            "extract": {
+                "fields": {
+                    "title": "title",
+                    "date": "startTime",
+                    "deadline": "endTime",
+                }
+            },
+            "max_items": 10,
+        },
+        DEFAULTS,
+    )
+
+    items = ds._parse_dlut_api(api_data)
+
+    assert [item.title for item in items] == [
+        "Today deadline internship",
+        "Future internship",
+    ]
+    assert [item.extra["deadline"] for item in items] == [
+        "2026-05-27",
+        "2026-05-28",
+    ]
+
+
+def test_dlut_recruitment_expired_cursor_item_stops_pagination(monkeypatch):
+    import datetime
+
+    import datasource
+    from datasource import APIDataSource
+
+    monkeypatch.setattr(
+        datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0)
+    )
+    ds = APIDataSource(
+        {
+            "name": "dlut_internship",
+            "category": "resource",
+            "url": "https://x.test/",
+            "list_url": "https://x.test/list",
+            "extract": {
+                "fields": {
+                    "title": "title",
+                    "date": "startTime",
+                    "deadline": "endTime",
+                }
+            },
+        },
+        DEFAULTS,
+    )
+    rows = [
+        {
+            "id": "new",
+            "title": "New internship",
+            "startTime": "2026-05-27 02:00:00",
+            "endTime": "2026-05-28 00:00:00",
+        },
+        {
+            "id": "cursor",
+            "title": "Previously seen expired internship",
+            "startTime": "2026-05-27 01:00:00",
+            "endTime": "2026-05-26 00:00:00",
+        },
+        {
+            "id": "older",
+            "title": "Older internship",
+            "startTime": "2026-05-27 00:00:00",
+            "endTime": "2026-05-28 00:00:00",
+        },
+    ]
+
+    items, should_stop = ds._parse_dlut_api_rows(
+        rows,
+        cursor={"last_id": "cursor", "last_time": "2026-05-27 01:00:00"},
+    )
+
+    assert [item.title for item in items] == ["New internship"]
+    assert should_stop is True
+
+
+def test_dlut_recruitment_format_items_includes_deadline():
+    from datasource import APIDataSource, Item
+
+    ds = APIDataSource(
+        {"name": "dlut_internship", "url": "x", "category": "resource"},
+        DEFAULTS,
+    )
+    out = ds.format_items(
+        [
+            Item(
+                title="Internship",
+                date="2026-05-27",
+                extra={"deadline": "2026-05-28"},
+            )
+        ]
+    )
+
+    assert "截止: 2026-05-28" in out

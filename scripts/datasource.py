@@ -11,8 +11,23 @@ import re
 import requests
 import time
 from typing import Optional
+from zoneinfo import ZoneInfo
 
-NOW = datetime.datetime.now()
+
+_BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
+
+def _now_beijing() -> datetime.datetime:
+    """Return the current Beijing wall-clock time as a naive datetime.
+
+    Source dates are parsed as naive datetimes representing local Beijing
+    time, so keeping the current time naive avoids mixing aware and naive
+    values while making the intended timezone independent of the host.
+    """
+    return datetime.datetime.now(_BEIJING_TZ).replace(tzinfo=None)
+
+
+NOW = _now_beijing()
 
 
 def _resolve_state_dir() -> pathlib.Path:
@@ -185,6 +200,21 @@ def _parse_date_dlut_recruitment(date_val) -> Optional[datetime.datetime]:
     return None
 
 
+def _is_expired_deadline(deadline_dt: Optional[datetime.datetime]) -> bool:
+    """Return True when a recruitment deadline has passed in Beijing-date terms.
+
+    The DLUT API represents many deadlines as ``YYYY-MM-DD 00:00:00`` even
+    though users understand that as an all-day deadline. Treat midnight
+    deadlines as valid through that calendar date, and expired starting the
+    next day.
+    """
+    if not deadline_dt:
+        return False
+    if deadline_dt.time() == datetime.time(0, 0):
+        return deadline_dt.date() < NOW.date()
+    return deadline_dt <= NOW
+
+
 _DATE_PARSERS = {
     "dlut_news": _parse_date_dlut_news,
     "standard": _parse_date_standard,
@@ -244,11 +274,6 @@ class DataSource(ABC):
                 self._seen[it.url] = today
         self._save_seen()
 
-    def cleanup_seen(self, max_age_days: int = 30) -> None:
-        """Remove seen records older than max_age_days."""
-        cutoff = (datetime.date.today() - datetime.timedelta(days=max_age_days)).isoformat()
-        self._seen = {k: v for k, v in self._seen.items() if v >= cutoff}
-        self._save_seen()
 
     @abstractmethod
     def fetch(self) -> list[Item]:
@@ -934,6 +959,7 @@ class APIDataSource(DataSource):
                 continue
             title = row.get(field_map.get("title", "title"), "").strip()
             date_val = row.get(field_map.get("date", "date"), "")
+            deadline_val = row.get(field_map.get("deadline", "deadline"), "")
             item_id = row.get("id", "")
             if not title:
                 continue
@@ -945,7 +971,6 @@ class APIDataSource(DataSource):
                         break
                     except ValueError:
                         pass
-
             if cursor:
                 # Cursor mode: stop at the previously-seen item
                 if cursor_id and item_id == cursor_id:
@@ -961,12 +986,24 @@ class APIDataSource(DataSource):
                     should_stop = True
                     continue
 
+            deadline_dt = _parse_date_dlut_recruitment(deadline_val)
+            if _is_expired_deadline(deadline_dt):
+                continue
+
             items.append(
                 Item(
                     title=title[:100],
                     date=(dt.strftime("%Y-%m-%d") if dt else (date_val[:10] if date_val else "unknown")),
                     url=list_url,
-                    extra={"item_id": item_id, "item_time": date_val},
+                    extra={
+                        "item_id": item_id,
+                        "item_time": date_val,
+                        "deadline": (
+                            deadline_dt.strftime("%Y-%m-%d")
+                            if deadline_dt
+                            else (deadline_val[:10] if deadline_val else "")
+                        ),
+                    },
                 )
             )
 
@@ -1005,6 +1042,14 @@ class APIDataSource(DataSource):
                 f'{i+1}. **{item.extra.get("name","")}**'
                 f'{" ["+item.extra["sdk"]+"]" if item.extra.get("sdk") else ""}'
                 f' - likes {item.extra.get("likes",0)}'
+                for i, item in enumerate(items)
+            )
+        if self.name.startswith("dlut_") and any(
+            item.extra.get("deadline") for item in items
+        ):
+            return "\n".join(
+                f"{i+1}. [{item.date}] {item.title}"
+                f"{' | 截止: ' + item.extra['deadline'] if item.extra.get('deadline') else ''}"
                 for i, item in enumerate(items)
             )
         return super().format_items(items)

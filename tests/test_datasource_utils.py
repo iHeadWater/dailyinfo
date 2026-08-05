@@ -96,6 +96,62 @@ def test_date_parser_dlut_recruitment_accepts_string_datetime():
     assert dt.strftime("%Y-%m-%d") == "2024-05-20"
 
 
+def test_beijing_now_ignores_utc_host_timezone(monkeypatch):
+    import datetime
+    import os
+    import time
+
+    import datasource
+
+    real_datetime = datetime.datetime
+    instant = real_datetime(2026, 5, 26, 23, 44, tzinfo=datetime.timezone.utc)
+
+    class FrozenDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is not None
+            return instant.astimezone(tz)
+
+    previous_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "UTC")
+    if hasattr(time, "tzset"):
+        time.tzset()
+    try:
+        monkeypatch.setattr(datasource.datetime, "datetime", FrozenDateTime)
+
+        now = datasource._now_beijing()
+        monkeypatch.setattr(datasource, "NOW", now)
+
+        assert now == real_datetime(2026, 5, 27, 7, 44)
+        assert now.tzinfo is None
+        assert datasource._is_expired_deadline(
+            real_datetime(2026, 5, 26, 0, 0)
+        ) is True
+    finally:
+        if previous_tz is None:
+            monkeypatch.delenv("TZ")
+        else:
+            monkeypatch.setenv("TZ", previous_tz)
+        if hasattr(time, "tzset"):
+            time.tzset()
+
+
+def test_dlut_recruitment_deadline_expiry_rules(monkeypatch):
+    import datetime
+
+    import datasource
+    from datasource import _is_expired_deadline
+
+    monkeypatch.setattr(
+        datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0)
+    )
+
+    assert _is_expired_deadline(datetime.datetime(2026, 5, 26, 0, 0, 0)) is True
+    assert _is_expired_deadline(datetime.datetime(2026, 5, 27, 0, 0, 0)) is False
+    assert _is_expired_deadline(datetime.datetime(2026, 5, 27, 7, 43, 0)) is True
+    assert _is_expired_deadline(datetime.datetime(2026, 5, 27, 7, 45, 0)) is False
+
+
 def test_item_dataclass_defaults():
     from datasource import Item
 

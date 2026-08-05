@@ -591,7 +591,8 @@
       "extract": {
         "fields": {
           "title": "title",
-          "date": "startTime"
+          "date": "startTime",
+          "deadline": "endTime"
         }
       },
       "paginate": true,
@@ -616,7 +617,8 @@
       "extract": {
         "fields": {
           "title": "title",
-          "date": "startTime"
+          "date": "startTime",
+          "deadline": "endTime"
         }
       },
       "paginate": true,
@@ -641,7 +643,8 @@
       "extract": {
         "fields": {
           "title": "title",
-          "date": "startTime"
+          "date": "startTime",
+          "deadline": "endTime"
         }
       },
       "paginate": true,

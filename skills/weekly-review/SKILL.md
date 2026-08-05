@@ -16,6 +16,8 @@ This Skill is **decoupled from the dailyinfo Python codebase**. It operates pure
 - Claude Code is the deep analysis engine. Do not call external AI APIs for analysis.
 - **Per-paper sub-agent rule**: EVERY paper gets its own dedicated sub-agent for reading and analysis. The main agent does NOT read full papers directly — it only orchestrates. For each paper, launch a sub-agent that (a) reads the full text in sequential chunks until 100% coverage, (b) writes the analysis card following the 8-section template, and (c) returns a brief summary. The main agent then verifies the card's structure and spot-checks 2-3 claims. This isolates each paper's context, prevents pollution across papers, and lets the sub-agent's reading technique be optimized independently.
 - **Sub-agent reading technique**: The sub-agent MUST read the full paper completely — no skimming, no abstract-only analysis. Read the file in small sequential chunks (limit=50-80 lines each) until the entire content is consumed. Before writing any card, the sub-agent MUST state what percentage of the paper it has read. If the paper is too large to fit in a single chunk, the sub-agent reads across multiple turns, accumulating understanding before writing the card.
+- **No card, no article.** Do not proceed to Phase 3 (article writing) for any paper that lacks a completed analysis card in `cards/`. The card is the fact layer; the article is the narrative layer. Writing an article without cards means all claims are unverifiable — the audit found this is the strongest predictor of factual errors. Papers without cards may be listed in a brief "also added this week" note, but not analyzed in depth.
+- **Card-article sync.** If an article is substantially rewritten after initial creation (Phase 3.5 evaluation feedback, user revision requests), the corresponding analysis cards must be re-audited before the next evaluation pass. After any rewrite that changes factual claims, numbers, terminology, or limitation coverage, the main agent must read each card alongside the revised article and verify: (a) all numbers cited in the article still match the card, (b) no new factual claims were added that the card doesn't support, (c) no card-documented limitations or frameworks were dropped from the article. Run this sync check before re-invoking the Phase 3.5 evaluator.
 - Output directory convention: `output/weekly-review/{YYYY-MM-DD}/` with subdirectories `cards/`, `article/`, `podcast/`. Create all directories before starting analysis.
 - For NotebookLM: call the `notebooklm` CLI directly via Bash. Do not use dailyinfo's `NotebookLMAutomation` wrapper class. If the CLI is unavailable, provide manual fallback steps.
 - **Evaluation is NOT optional**: Phase 3.5 (independent evaluation agent) is a hard gate. Every article must pass evaluation before delivery. The main agent MUST NOT skip or shortcut this phase. If an evaluation finds issues, fix them and re-evaluate until the verdict is "通过".
@@ -26,10 +28,16 @@ These rules govern ALL article output from this Skill:
 
 - **No exaggerated claims.** Do not call something "第一个 GPT 时刻", "革命性的", or "颠覆性的" unless the paper's own authors make that claim with evidence. Prefer the paper's own framing: if they say "a new dataset", don't upgrade it to "历史性突破".
 - **Fact-check every superlative.** Before writing any claim that a paper is "first", "best", "largest", or "SOTA", verify that claim against the analysis card. If the card doesn't support it, don't write it.
+- **No forced connections.** Only link papers when they share a genuine intellectual thread — a shared method, problem, dataset, or finding. Do NOT use phrases like "两篇论文放在一起读，恰好构成了...", "三篇合在一起恰好...", "一体两面", or any other rhetorical device that invents a relationship the papers themselves don't establish. If papers represent genuinely different topics, write them as separate sections or separate articles. A reader can handle honest separation better than an invented connection. **The default is separation; grouping requires proof, not vice versa.**
+- **No group qualitative framing.** Do not apply a collective label to a group of papers unless every paper explicitly contributes to that label. Bad: "三篇论文共同描绘了一幅水文过程再发现的知识图景" (invented group narrative). Bad: "本周的两篇论文恰好指明了两个方向的下一块拼图" (forced teleology). If the papers share a real theme, name the theme specifically ("这三篇论文都关注洪水模拟中的尺度效应"). If they don't, don't invent one.
+- **No absolute/overconfident qualifiers.** Avoid language that implies certainty or finality: "一劳永逸地解决", "最大的工程障碍", "最不同寻常的一篇", "从根本上颠覆了". Use the paper's own level of confidence. A "potential approach" is not "the solution". A "common challenge" is not "the biggest barrier". Prefer restrained framing: "试图解决", "旨在提供", "提供了一种可能的方案".
+- **Acronym expansion on first use.** Every abbreviation must be spelled out in Chinese (and parenthetical English) on its first occurrence in each article. Example: "平衡当局（Balancing Authority, BA）". Bad: "BPA、PACW、PJM 三个平衡当局贡献 59%" — these are undefined acronyms. Good: "邦纳维尔电力管理局（Bonneville Power Administration, BPA）、太平洋公司西部地区（PACW）和 PJM 互联电网（PJM Interconnection）三个平衡当局". This applies to ALL technical abbreviations: QARTOD, NDWI, SWE, PET, KGE, NSE, GCM, SSP, DEM, etc.
 - **Lead with the concrete.** Start sections with a specific finding, number, method, or result — not with "本周" or "近期" or "随着...的发展".
 - **Proof before adjectives.** A number (KGE=0.66) beats an adjective ("impressive accuracy"). A mechanism description beats a label ("创新性的").
 - **Earned transitions.** No "值得注意的是", "此外", "另一个重要进展是" as standalone bridges. If two topics connect, show the connection with a specific shared method, dataset, or problem.
 - **Story over list.** If papers fall into genuinely different domains, split into separate articles rather than forcing a disjointed list. Each article must have one clear narrative thread.
+- **Respect the source's own emphasis. Do NOT cherry-pick.** When reporting on a broad document (survey, annual report, multi-topic review), do not amplify a minor mention into the appearance of a major focus just because it aligns with the reader's domain. If a report devotes 2% of its Science chapter to hydrology, the article must reflect that proportion — not restructure the narrative as if the chapter were about hydrology. Always preserve: (a) the source's chapter structure and relative weight, (b) which claims are the source's own framing vs. your extraction, (c) what broader context surrounds any specific data point you highlight. **The reader should finish the article understanding what the source actually emphasizes, not just what is relevant to them.**
+- **For AI/ML methods papers: present the paper first, connect to domain second.** The default ratio should be ~80% faithful presentation of what the paper says and ~20% brief pointers on domain relevance. Do not over-translate — don't reframe every concept through a hydrology lens. Trust the reader to make their own connections. The domain guidance should be a short paragraph at the end, clearly signaled as our extrapolation (e.g., "从水文建模的角度看，这篇论文的三个思想值得关注：…"), not woven into the main exposition as if the paper itself addresses hydrology. A hydrologist reading an AI methods paper wants to understand the method on its own terms first.
 
 ### Banned AI Patterns
 
@@ -76,6 +84,12 @@ Every article should follow a natural arc, not a paper list. The default tone is
 3. Verify Zotero MCP connectivity with a lightweight call such as listing collections. If the MCP server returns a connection error, stop and tell the user:
    > Zotero MCP 无法连接。请确认 Zotero Desktop 7 已启动，且在 Settings → Advanced → Allow other applications to communicate with Zotero（允许其他程序通过 API 访问 Zotero）已勾选。
 
+4. Verify NotebookLM CLI auth with `NOTEBOOKLM_HOME="D:/code/dailyinfo/.tmp/notebooklm" uv run notebooklm doctor`. If auth fails:
+   - Run `NOTEBOOKLM_HOME="D:/code/dailyinfo/.tmp/notebooklm" uv run notebooklm login --browser chrome`
+   - The CLI reads Chrome's existing Google login session — if already logged into Google in Chrome, auth completes in seconds without any OAuth prompt
+   - Verify with `notebooklm doctor` again
+   - Do NOT attempt to inject cookies from Playwright — Playwright's Chromium and the notebooklm CLI's browser profile are incompatible
+
 ### Phase 1: Fetch Papers
 
 4. Search for papers added in the last 7 days using `zotero_advanced_search`:
@@ -99,7 +113,7 @@ Every article should follow a natural arc, not a paper list. The default tone is
 The main agent NEVER reads full papers directly. Every paper gets its own **dedicated sub-agent**. The main agent's role is pure orchestration: launch sub-agents, verify card output, keep context clean for Phase 3 synthesis.
 
 7. For each confirmed paper, the main agent:
-   a. First calls `zotero_get_item_fulltext` to retrieve the full text. If the result is inline, pass it directly to the sub-agent. If it's a persisted-output file path, pass the file path to the sub-agent — the sub-agent will read the file in chunks.
+   a. First calls `zotero_get_item_fulltext` to retrieve the full text. If the result is inline, pass it directly to the sub-agent. If it's a persisted-output file path, pass the file path to the sub-agent — the sub-agent will read the file in chunks. **If the paper is extremely large (>100K chars, e.g. a multi-hundred-page annual report), pre-split it first:** run `python scripts/chunk_fulltext.py <saved_json> --output-dir output/weekly-review/{date}/chunks/ [--markers markers.json]` to split the fulltext into manageable files by section markers (or fixed-size chunks as fallback). Then pass individual chunk file paths to sub-agents.
    b. Launches a sub-agent with:
       - The paper's full text (inline) OR the file path to read (persisted output)
       - The **analysis card template** (8 sections below)
@@ -225,18 +239,33 @@ The main agent NEVER reads full papers directly. Every paper gets its own **dedi
     - [ ] No paper-by-paper listing in the setup section
     - [ ] Story thread is traceable from hook to CTA
 
-### Phase 3.5: Evaluation (mandatory — dedicated agent, DO NOT SKIP)
+### Phase 3.5: Evaluation & Revision Loop (mandatory — DO NOT SKIP)
 
-The article must be evaluated by a **separate agent** — not the same agent that wrote it. This prevents lazy self-review. **This phase is a hard gate: do not proceed to Phase 4 until every article passes evaluation.**
+The article must be evaluated by a **separate agent** — not the same agent that wrote it. Phase 3 and Phase 3.5 form a **mandatory loop**: Write → Evaluate → Score → Fix → Re-Evaluate → repeat until passing score. **This phase is a hard gate: do not proceed to Phase 4 until every article passes.** The main agent MUST NOT ask the user whether to run evaluation — it runs automatically after Phase 3.
+
+#### Scoring Rubric
+
+The evaluation agent scores each article on **4 dimensions**, each 0–10:
+
+| Dimension | 0–3 (FAIL) | 4–6 (BORDERLINE) | 7–8 (GOOD) | 9–10 (EXCELLENT) |
+|-----------|-----------|-------------------|------------|-------------------|
+| **D1. 事实准确性** | Multiple factual errors vs. cards | Minor numeric discrepancies | All claims verifiable against cards | Every number cross-checked, source context preserved |
+| **D2. 术语精确性** | Bare acronyms, misused domain terms | Most acronyms expanded, 1-2 missed | All acronyms expanded, terms used correctly | All jargon accessible to grad student, domain terms precise |
+| **D3. 叙事克制** | Forced connections, overconfident qualifiers, AI patterns present | 1-2 weak rhetorical devices, minor qualifier issues | No forced connections, restrained language, no AI patterns | Every connection earned, language matches source confidence |
+| **D4. 结构质量** | Weak hook, listing feel, generic section titles | Hook is concrete but soft, some listing | Concrete hook, natural flow, descriptive section titles | Hook grabs, flow is seamless, every section earns its place |
+
+**Pass threshold**: All four dimensions ≥ 7. If any dimension is < 7, the article must be revised and re-evaluated.
+
+**Revision loop rule**: Each revision round must target the specific issues flagged in the evaluation. After fixing, re-run the evaluation agent on the full article. Maximum 3 revision rounds per article — if still not passing after 3 rounds, flag to the user with a summary of remaining issues and ask whether to proceed or abandon that article.
 
 14. For EACH article, launch an independent **evaluation agent** with:
     - The article text
     - All analysis cards from `cards/`
-    - The evaluation checklist below
+    - The scoring rubric and checklist below
 
     The evaluation agent's job:
 
-    #### Accuracy Check
+    #### D1: Factual Accuracy Check
     | Check | Method |
     |-------|--------|
     | Factual claims match cards | For every quantitative claim (numbers, percentages, rankings), verify the card supports it. Flag any mismatch. |
@@ -244,41 +273,73 @@ The article must be evaluated by a **separate agent** — not the same agent tha
     | Paper attribution correct | Every paper mention maps to exactly one card. No phantom papers. |
     | Method descriptions accurate | Spot-check 2-3 method descriptions against their cards. |
 
-    #### Narrative Coherence Check
+    #### D2: Terminology Precision Check
     | Check | Method |
     |-------|--------|
-    | Single story thread | Can you trace one intellectual thread from hook to CTA? If the article jumps between unrelated topics, flag as **MEDIUM — narrative break**. |
-    | Hook effectiveness | Does the first paragraph name something concrete? If it starts with "本周" or "随着", flag as **HIGH — weak hook**. |
-    | Section flow | Does each section logically follow from the previous? If a section could be moved to a different position without loss, flag as **MEDIUM — weak connection**. |
+    | Domain term accuracy | For every domain-specific term (e.g., "流域属性", "产流机制", "同化"), verify it's used with its accepted disciplinary meaning. "流域属性" must refer to static catchment characteristics, not time series. Flag misuse as **HIGH — term misuse**. |
+    | Jargon accessibility | If a technical term is essential to understanding the sentence and is NOT common knowledge for a hydrology graduate student (e.g., "C 波段散射计", "Budyko 框架", "求积权重"), it should be briefly explained on first use. Flag unexplained niche jargon as **MEDIUM — accessibility gap**. |
+    | Acronym expansion | Every abbreviation (BPA, QARTOD, NDWI, SWE, PET, KGE, NSE, GCM, SSP, DEM, etc.) must be spelled out in Chinese (with parenthetical English) on first use in each article. Flag any bare acronym as **HIGH — undefined acronym**. |
+    | Concept conflation | Check whether distinct concepts are conflated under one term (e.g., calling both time series and static attributes "流域属性"). Flag as **HIGH — concept conflation**. |
+    | Title-to-content alignment | Does the section title match what the section actually discusses? A title promising "属性增强" but describing time series upgrades is a mismatch. Flag as **MEDIUM — title-content mismatch**. |
+
+    #### D3: Narrative Restraint Check
+    | Check | Method |
+    |-------|--------|
+    | Forced connection | Look for phrases that invent relationships between papers: "恰好构成了...一体两面", "三篇合在一起恰好...", "共同描绘了...知识图景", "恰好指明了...拼图", or any other rhetorical device that imposes a narrative the papers themselves don't support. If papers don't share a specific method, problem, or dataset, they should be presented separately. Flag as **HIGH — forced connection**. |
+    | Overconfident qualifier scan | Scan for absolute/overconfident language: "最大的工程障碍", "一劳永逸地解决", "最不同寻常的一篇", "从根本上颠覆了", "恰好指明", "完美解释". If the paper itself doesn't use this level of certainty, flag as **MEDIUM — overconfident qualifier**. |
     | AI flavor scan | Check for banned patterns from the Contract. Flag each instance with signal strength (强/中/弱). |
+    | Source framing preserved | If the source says "AI is beginning to show promise in X" and the article says "AI is transforming X", that's framing inflation. Flag as **HIGH — source distortion**. |
+    | AI methods paper: domain-application ratio | For articles on AI/ML methods papers (not application papers), domain application should be ≤30% of total content, and clearly separated from method exposition. Flag as **MEDIUM — over-translation**. |
+
+    #### D4: Structural Quality Check
+    | Check | Method |
+    |-------|--------|
+    | Hook effectiveness | Does the first paragraph name something concrete (a number, finding, contradiction, or specific problem)? If it starts with "本周" or "随着", flag as **HIGH — weak hook**. |
+    | Section flow | Does each section logically follow from the previous? If a section could be moved to a different position without loss, flag as **MEDIUM — weak connection**. |
     | Listing feel | If any section reads as "Paper A did X. Paper B did Y. Paper C did Z." without connecting tissue, flag as **HIGH — list mode**. |
+    | Section titles | Do section titles describe content (not function)? Flag "重点论文深度解读", "本周研究概览", "总结与展望" as **MEDIUM — generic title**. |
 
     #### Output Format
     ```
     ## Evaluation Report: {article_title}
 
-    ### Accuracy
-    - ✅/⚠️/❌ {finding} — {specific reference to card}
+    ### Scoring
+    | Dimension | Score | Notes |
+    |-----------|-------|-------|
+    | D1. 事实准确性 | X/10 | {brief} |
+    | D2. 术语精确性 | X/10 | {brief} |
+    | D3. 叙事克制 | X/10 | {brief} |
+    | D4. 结构质量 | X/10 | {brief} |
+    | **OVERALL** | **{pass/fail}** | {all ≥7 = PASS} |
 
-    ### Narrative Coherence
-    - ✅/⚠️/❌ {finding} — {specific reference to article section}
+    ### Issue Details
+    #### ❌ HIGH (must fix)
+    - {issue} — {location}
 
-    ### AI Flavor Scan
-    - 强/中/弱 — {pattern} at {location}
+    #### ⚠️ MEDIUM (should fix)
+    - {issue} — {location}
+
+    #### 💡 LOW (optional)
+    - {suggestion} — {location}
 
     ### Verdict
-    - 通过 / 需修改 (N issues)
+    **{PASS (all ≥7) / REVISE (N dimensions below 7)}**
     ```
 
-15. **Address evaluation findings** before proceeding. If the evaluation returns ❌ on accuracy or HIGH on narrative:
-    - Fix the issues in the article immediately
-    - Re-run the evaluation agent on the changed article
-    - **Repeat until the verdict is "通过" (pass). Do not proceed to Phase 4 with unresolved issues.**
-    - For LOW/MEDIUM issues, fix them but re-evaluation is at the main agent's discretion based on the number and severity of changes.
+15. **Revision loop** (the main agent executes this, not the evaluator):
+    a. If verdict is **PASS**: proceed to Phase 4 for this article.
+    b. If verdict is **REVISE**: fix every HIGH and MEDIUM issue identified. Do not touch sections that scored well. Then re-launch the evaluation agent on the updated article.
+    c. **Repeat until PASS**. Do not proceed to Phase 4 with any REVISE verdict.
+    d. If an article fails 3 consecutive evaluation rounds, stop and present the user with the remaining issues. Ask whether to manually fix, abandon this article, or lower the threshold.
+    e. **LOW issues** are optional — fix at discretion, do not block passing.
 
 ### Phase 4: Per-Direction Podcasts
 
 Each article/direction gets its own independent podcast. One podcast covers 2-4 papers on a single theme. This keeps each episode focused, prevents forced connections between unrelated topics, and produces digestible ~15-20 minute episodes.
+
+#### Language Requirement (MANDATORY)
+
+**All podcasts MUST be in Chinese (Mandarin).** The audience is Chinese researchers. Always pass `--language zh_Hans` to `notebooklm generate audio`. Without this flag, NotebookLM defaults to English. Verify this flag is present before every `generate audio` call. Run `notebooklm language list` to confirm `zh_Hans` is available.
 
 #### Factual Grounding Principle
 
@@ -335,6 +396,41 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
     - Cover only the papers in this direction (2-4 papers)
     - Be under 5,000 characters (~500 words in Chinese, much shorter since only 2-4 papers)
 
+17.5 **Pre-Generation Source Checklist (HARD GATE — CANNOT BE SKIPPED OR SHORTCUT):**
+
+    **Why this gate exists**: In a past run, Phase 4 generated audio with only the article and podcast prompt uploaded. Analysis cards and original PDFs were omitted. On re-run, PDFs were again omitted because "local paths unresolved." On a third attempt, PDFs were collected from Zotero storage and arXiv — proving that PDFs are almost always obtainable if you actually try. The lesson: **"PDF unavailable" must be the result of documented effort, not passive acceptance.**
+
+    **Rule — no exceptions without evidence**:
+
+    > For EVERY paper, a PDF MUST be uploaded as a source. The only acceptable reason for a missing PDF is a documented, named failure (404 from publisher, Zotero attachment not found after searching G:/ drive, etc.). A generic "unresolved local path" from `zotero_get_attachment_path` is NOT sufficient — many Zotero PDFs have unresolved paths but ARE present as files in `G:/我的云端硬盘/Documents/Papers/Zotero_Papers/`. Always search the Zotero storage directory before concluding a PDF is unavailable. For arXiv preprints, always download from `https://arxiv.org/pdf/{id}`. The bar for "unavailable" is: you tried curl, you searched G:/ drive, you checked the DOI redirect — and ALL three failed.
+
+    **Verification procedure (execute for EACH direction BEFORE calling `generate audio`)**:
+
+    1. Run `notebooklm source list --json` for the active notebook
+    2. Count sources: cards (title ends with "— Analysis Card"), PDFs (file type), article (title starts with "Article:"), prompt (title is "Podcast Instructions")
+    3. **Hard requirement**: ALL four categories MUST have ≥1 source. Cards MUST equal the number of papers in this direction. PDFs MUST equal the number of papers (minus any with documented unobtainable status).
+    4. If any category is short: **STOP everything. Do not pass go. Do not call `generate audio`.** Upload the missing sources first, then re-verify.
+    5. If a PDF cannot be obtained after documented effort (curl + Zotero storage search + DOI redirect ALL failed): report the specific paper to the user before proceeding. Do not silently skip.
+
+    **No-chained-execution rule**: The `create → source add → generate → download` chain is forbidden. The correct sequence is:
+
+    ```
+    create → source add (all 4 categories) → source list (verify) → generate → download
+    ```
+
+    The `source list` step MUST be a separate, visible step — not absorbed into a Bash `&&` chain. This forces the executor to see the source counts before generating.
+
+    **For each direction, confirm before generate**:
+
+    | # | Source Type | Required | Status |
+    |---|-----------|----------|--------|
+    | 16a | Analysis Cards | N papers | ☐ Verified (count = N) |
+    | 16b | Original PDFs | N papers (minus documented misses) | ☐ Verified (count ≥ N - documented) |
+    | 16c | Article | 1 | ☐ Verified |
+    | 16d | Podcast Prompt | 1 | ☐ Verified |
+
+    If any ☐ is unchecked: do NOT proceed to `generate audio`.
+
 18. Generate audio for each direction independently:
 
     ```bash
@@ -342,7 +438,32 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
     NOTEBOOKLM_HOME="${NOTEBOOKLM_HOME:-D:/code/dailyinfo/.tmp/notebooklm}" \
       notebooklm create "{Theme} {YYYY-MM-DD}" --use --json
 
-    # Upload direction-specific sources (Steps 16a-16d)
+    # Step 16a: Upload analysis cards (one per paper in this direction)
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add output/weekly-review/{date}/cards/{paper1_slug}.md \
+        --type text --title "{Paper1 Title} — Analysis Card" --json
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add output/weekly-review/{date}/cards/{paper2_slug}.md \
+        --type text --title "{Paper2 Title} — Analysis Card" --json
+
+    # Step 16b: Upload original PDFs (one per paper; skip if genuinely unavailable)
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add "podcast/pdfs/{paper1_slug}.pdf" \
+        --type file --title "{Paper1 Title} (Original PDF)" --json
+
+    # Step 16c: Upload article (narrative structure)
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add output/weekly-review/{date}/article/article_{date}_{theme}.md \
+        --type text --title "Article: {theme}" --json
+
+    # Step 16d: Upload podcast prompt
+    NOTEBOOKLM_HOME="..." \
+      notebooklm source add output/weekly-review/{date}/podcast/podcast_{theme}.md \
+        --type text --title "Podcast Instructions" --json
+
+    # Step 17.5: Verify all 4 source categories present (HARD GATE)
+    # Run: notebooklm source list --json | check: cards(16a)✓ PDFs(16b)✓ article(16c)✓ prompt(16d)✓
+    # If any category missing: STOP, upload it, re-verify. Do NOT proceed to generate.
 
     NOTEBOOKLM_HOME="..." \
       notebooklm generate audio \
@@ -356,6 +477,43 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
 
     Audio files: `podcast/audio_{theme}.mp3` — one per direction. If any step fails, write `podcast/MANUAL_NOTEBOOKLM_STEPS_{theme}.md`.
 
+18.5 **Post-Download Audio Verification (HARD GATE — CANNOT BE SKIPPED):**
+
+    **Why this gate exists**: In a past run, four audio files were downloaded but three had identical MD5 hashes — the download step had cross-wired: multiple `download audio` commands all pointed at (or fell back to) the same notebook, and no one verified afterward. The sources, prompts, and generations were all correct — the error was purely in the download step.
+
+    **Verification procedure (execute AFTER all downloads complete):**
+
+    ```bash
+    # Step 1: Compute MD5 hashes of all downloaded audio files
+    cd output/weekly-review/{date}/podcast
+    md5sum audio_*.mp3  # macOS: md5 audio_*.mp3
+
+    # Step 2: Verify ALL hashes are UNIQUE
+    # If any two files share the same MD5 → CROSS-WIRED DOWNLOAD DETECTED
+    # → Delete the duplicates, re-download from the correct notebooks, re-verify.
+    ```
+
+    **Step 3: Verify each audio file's artifact title matches its intended direction.**
+
+    For each downloaded audio, the `notebooklm download audio` command prints a line like:
+    `Artifact: {auto-generated title} (latest of N artifacts)`
+
+    Record these titles and cross-reference against the intended direction:
+
+    | Audio File | Intended Direction | Downloaded Artifact Title | Match? |
+    |-----------|-------------------|--------------------------|--------|
+    | audio_1.mp3 | {direction_1_theme} | {title from download} | ☐ |
+    | audio_2.mp3 | {direction_2_theme} | {title from download} | ☐ |
+    | ... | ... | ... | ☐ |
+
+    **Match criteria** (not exact title match — NotebookLM auto-generates creative titles):
+    - The artifact title should be TOPICALLY RELATED to the notebook's intended theme
+    - If the same artifact title appears for two different notebooks → CROSS-WIRED → re-download
+    - If an artifact title clearly belongs to a different direction (e.g., an audio for the "flood error structures" direction has a title about "AI compressing weather data") → CROSS-WIRED → re-download
+    - **When in doubt**: play the first 30 seconds of the audio to verify the topic
+
+    **Hard rule**: ALL audio files must have UNIQUE MD5 hashes AND topically-matching artifact titles. If either check fails, fix the downloads and re-verify. Do NOT deliver audio files to the user without passing this gate.
+
 ## Failure Handling
 
 | Scenario | Resolution |
@@ -364,6 +522,7 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
 | No papers found in 7-day range | Offer to expand to 14 days, or check if the user has the correct Zotero collection selected |
 | Full text unavailable (scanned/OCR-failed PDF) | Use `zotero_get_item_metadata` for abstract-based analysis. Mark card clearly: "⚠️ 全文不可用，仅基于摘要分析". Still use a sub-agent — it works from metadata instead of full text. |
 | Sub-agent fails to read paper completely | Check if the sub-agent reported <100% coverage. If so, re-launch with a smaller chunk size (limit=30-40) and explicit instruction to continue until end-of-file. If the file is fundamentally unreadable (corrupted JSON, encoding error), fall back to abstract-based analysis with clear marking. |
+| Full text too large for single sub-agent (>100K chars) | Use `python scripts/chunk_fulltext.py <fulltext.json> --output-dir output/weekly-review/{date}/chunks/ --markers markers.json` to pre-split the fulltext. Create a `markers.json` with `{"section": {"start": "...", "end": "..."}}` entries using the paper's section headers. Then launch one sub-agent per chunk file. For a 1M+ character document, this can produce ~10 manageable chunks. |
 | Sub-agent fails to write analysis card | Retry once with a tighter prompt. If it still fails, the main agent writes the card directly from metadata and flags it for extra scrutiny in evaluation. |
 | Sub-agent writes card but factual claims are unverifiable | If the card lacks specific section/page references, ask the sub-agent (via SendMessage) to add them. If the sub-agent is gone, spot-verify 3-5 claims directly and annotate the card with verification notes. |
 | Sub-agent accumulation of mediocre cards | If multiple sub-agents return shallow or generic analysis, pause. The reading technique may need adjustment — try adding more specific extraction instructions (e.g., "quote the paper's own research question from Section 1", "extract exact numbers from results tables"). |
@@ -371,7 +530,7 @@ Each article/direction gets its own independent podcast. One podcast covers 2-4 
 | Evaluation phase skipped or bypassed | This is a Contract violation. Stop, launch evaluation agents for all articles, and do not deliver articles until all evaluations pass. |
 | Stories cannot form single narrative | Propose split to user. Wait for confirmation, then write separate articles. |
 | `notebooklm` CLI not installed | `pip install notebooklm-py[browser]` into the project environment |
-| `notebooklm doctor` reports no auth | Give exact command: `NOTEBOOKLM_HOME="D:/code/dailyinfo/.tmp/notebooklm" notebooklm login --browser chrome`. Explain that the user must complete browser login, then you can continue. |
+| `notebooklm doctor` reports no auth | Run `NOTEBOOKLM_HOME="D:/code/dailyinfo/.tmp/notebooklm" uv run notebooklm login --browser chrome`. The CLI opens Chrome and reads the existing Google login session — if you're already logged into Google in Chrome (most users), it detects this automatically and saves auth in under 5 seconds without any OAuth prompt. No need for Playwright or manual browser interaction. Verify with `notebooklm doctor`. |
 | NotebookLM generation times out | The `--timeout 900` flag gives 15 minutes. If it still times out, the podcast may be very long. Write `MANUAL_NOTEBOOKLM_STEPS.md` and tell user to generate in the web UI. |
 | Article too long for single NotebookLM source | Split into multiple text sources: `article_part1.md`, `article_part2.md`. NotebookLM limit is ~500K words per source. |
 
