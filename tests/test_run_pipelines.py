@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from datetime import datetime
 
@@ -20,6 +21,140 @@ def test_save_writes_under_briefings_dir(monkeypatch):
     assert path.exists()
     assert path.read_text(encoding="utf-8") == "hello world"
     assert full == str(path)
+
+
+def test_pipeline6_main_treats_empty_result_as_success(monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py", "--pipeline", "6"])
+    monkeypatch.setattr(rp, "load_api_key", lambda: "test-key")
+    monkeypatch.setattr(rp, "run_pipeline_conference", lambda: 0)
+    monkeypatch.setattr(rp, "CONFERENCE_RUN_FAILED", False)
+
+    assert rp.main() == 0
+
+
+def test_pipeline6_main_reports_uncaught_failure(monkeypatch):
+    import run_pipelines as rp
+
+    def fail():
+        raise RuntimeError("unexpected failure")
+
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py", "--pipeline", "6"])
+    monkeypatch.setattr(rp, "load_api_key", lambda: "test-key")
+    monkeypatch.setattr(rp, "run_pipeline_conference", fail)
+    monkeypatch.setattr(rp, "CONFERENCE_RUN_FAILED", False)
+
+    assert rp.main() == 1
+
+
+def test_pipeline_conference_reuses_one_openreview_runtime(monkeypatch):
+    import run_pipelines as rp
+    from conference import ConferenceRunResult
+
+    sources = [
+        {
+            "name": "openreview_iclr_2026",
+            "display_name": "ICLR 2026",
+            "category": "conference",
+            "type": "api",
+            "provider": "openreview",
+            "venue_id": "ICLR.cc/2026/Conference",
+            "enabled": True,
+        },
+        {
+            "name": "openreview_icml_2026",
+            "display_name": "ICML 2026",
+            "category": "conference",
+            "type": "api",
+            "provider": "openreview",
+            "venue_id": "ICML.cc/2026/Conference",
+            "enabled": True,
+        },
+    ]
+    runtime_calls = []
+    provider_calls = []
+
+    class FakeRuntime:
+        def __init__(self, config):
+            runtime_calls.append(config["venue_id"])
+
+        def provider(self, config):
+            provider_calls.append(config["venue_id"])
+            return object()
+
+        def close(self):
+            runtime_calls.append("closed")
+
+    monkeypatch.setattr(rp, "_load_sources", lambda: ({"sources": sources}, {}, {}))
+    monkeypatch.setattr(rp, "OpenReviewRuntime", FakeRuntime)
+    monkeypatch.setattr(
+        rp,
+        "run_conference_source",
+        lambda config, *_args, provider=None, **_kwargs: ConferenceRunResult(
+            config["name"], "SUCCESS", files_saved=0
+        ),
+    )
+    monkeypatch.setattr(rp, "FORCE_SOURCES", set())
+    monkeypatch.setattr(rp, "FORCE_ALL", False)
+    monkeypatch.setattr(rp, "SOURCE_FILTER", set())
+
+    assert rp.run_pipeline_conference() == 0
+    assert runtime_calls == ["ICLR.cc/2026/Conference", "closed"]
+    assert provider_calls == [
+        "ICLR.cc/2026/Conference",
+        "ICML.cc/2026/Conference",
+    ]
+
+
+def test_pipeline_conference_accepts_acl_and_cvf_without_openreview_runtime(monkeypatch):
+    import run_pipelines as rp
+    from conference import ConferenceRunResult
+
+    sources = [
+        {
+            "name": "acl_anthology_acl_2026",
+            "display_name": "ACL 2026",
+            "category": "conference",
+            "type": "api",
+            "provider": "acl",
+            "venue_id": "ACL2026",
+            "url": "https://aclanthology.org/events/acl-2026/",
+            "enabled": True,
+        },
+        {
+            "name": "cvf_cvpr_2026",
+            "display_name": "CVPR 2026",
+            "category": "conference",
+            "type": "api",
+            "provider": "cvf",
+            "venue_id": "CVPR2026",
+            "url": "https://openaccess.thecvf.com/CVPR2026?day=all",
+            "enabled": True,
+        },
+    ]
+    calls = []
+
+    monkeypatch.setattr(rp, "_load_sources", lambda: ({"sources": sources}, {}, {}))
+    monkeypatch.setattr(rp, "FORCE_SOURCES", set())
+    monkeypatch.setattr(rp, "FORCE_ALL", False)
+    monkeypatch.setattr(rp, "SOURCE_FILTER", set())
+    monkeypatch.setattr(
+        rp,
+        "run_conference_source",
+        lambda config, *_args, provider=None, **_kwargs: (
+            calls.append((config["provider"], provider))
+            or ConferenceRunResult(config["name"], "SUCCESS")
+        ),
+    )
+    monkeypatch.setattr(
+        rp,
+        "OpenReviewRuntime",
+        lambda *_args, **_kwargs: pytest.fail("web sources must not initialize OpenReview"),
+    )
+
+    assert rp.run_pipeline_conference() == 0
+    assert calls == [("acl", None), ("cvf", None)]
 
 
 def test_already_pushed_within_detects_recent_file():
@@ -297,7 +432,7 @@ def test_process_regular_source_records_zero_state_for_empty_rss(rss_db, monkeyp
     saved = rp._process_regular_source(
         ds,
         ds.config,
-        "deepseek-v4-flash",
+        "deepseek-v4-pro",
         {"one_line_summary": "summarize {article_list}"},
         "one_line_summary",
     )
@@ -352,7 +487,7 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
     saved = rp._process_regular_source(
         ds,
         ds.config,
-        "deepseek-v4-flash",
+        "deepseek-v4-pro",
         {"one_line_summary": "summarize {article_list}"},
         "one_line_summary",
     )
@@ -895,7 +1030,7 @@ def test_pipeline_resource_unified_news_saves_single_file(
     fake_requests.register("https://news.dlut.test/zhxw.htm", FakeResponse(200, html))
     fake_requests.register("https://news.dlut.test/xsky.htm", FakeResponse(200, html))
 
-    saved = rp.run_pipeline_resource()
+    rp.run_pipeline_resource()
 
     today = datetime.now().strftime("%Y-%m-%d")
     unified = BRIEFINGS_DIR / "resource" / f"dlut_news_briefing_{today}.md"
@@ -946,8 +1081,6 @@ def test_pipeline_resource_url_dedup_across_sections(
     """Same URL appearing in two sections should only appear once in prompt."""
     import json
     import run_pipelines as rp
-    from paths import BRIEFINGS_DIR
-
     from datetime import datetime
 
     now = datetime.now()
@@ -1205,3 +1338,46 @@ def test_call_ai_uses_deepseek_primary_openrouter_fallback(monkeypatch):
     assert len(deepseek_calls) == 3, f"expected 3 deepseek attempts, got {call_urls}"
     assert len(openrouter_calls) == 1, f"expected 1 openrouter attempt, got {call_urls}"
     assert "switching to fallback" in "\n".join(logs)
+
+
+def test_call_vision_ai_encodes_png_as_data_url(monkeypatch):
+    import run_pipelines as rp
+
+    captured = {}
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-test-ds")
+
+    def fake_post(url, api_key, model, prompt, max_tokens):
+        captured.update(
+            {
+                "url": url,
+                "api_key": api_key,
+                "model": model,
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+            }
+        )
+        return {
+            "choices": [
+                {
+                    "message": {"content": '{"decisions": []}'},
+                    "finish_reason": "stop",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(rp, "_post_ai", fake_post)
+    assert (
+        rp.call_vision_ai(
+            "classify",
+            [b"png-bytes"],
+            model="deepseek-v4-flash-vision-exp",
+            max_tokens=128,
+        )
+        == '{"decisions": []}'
+    )
+    assert captured["model"] == "deepseek-v4-flash-vision-exp"
+    assert captured["max_tokens"] == 128
+    assert captured["prompt"][1]["type"] == "image_url"
+    assert captured["prompt"][1]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )

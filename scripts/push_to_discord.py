@@ -4,9 +4,11 @@
 import os
 import requests
 import json
+import hashlib
 from datetime import datetime
 import time
 import shutil
+import re
 
 from paths import BRIEFINGS_DIR, CURRENT_ENV, PUSHED_DIR, STATE_DIR, get_channel_id
 
@@ -88,7 +90,15 @@ if not DISCORD_BOT_TOKEN:
 # Missing entries cause that category to be skipped at push time, not a fatal error.
 DISCORD_CHANNELS = {
     category: get_channel_id(category)
-    for category in ("papers", "ai_news", "code", "resource", "arxiv", "weekly")
+    for category in (
+        "papers",
+        "ai_news",
+        "code",
+        "resource",
+        "arxiv",
+        "conference",
+        "weekly",
+    )
 }
 # arxiv shares the ai_news Discord channel
 if not DISCORD_CHANNELS.get("arxiv"):
@@ -210,7 +220,7 @@ def _post_single_message(channel_id, headers, data, chunk_index):
     return False
 
 
-def send_to_discord(channel_id, content):
+def send_to_discord(channel_id, content, nonce_prefix=None):
     """发送消息到 Discord 频道，网络失败时最多重试 3 次（指数退避）"""
     messages = split_discord_messages(content)
 
@@ -224,11 +234,94 @@ def send_to_discord(channel_id, content):
         if len(messages) > 1:
             msg = f"{_chunk_prefix(i + 1, len(messages))}{msg}"
         data = {"content": msg}
+        if nonce_prefix:
+            nonce = hashlib.sha256(
+                f"{nonce_prefix}:text:{i}".encode("utf-8")
+            ).hexdigest()[:25]
+            data.update(nonce=nonce, enforce_nonce=True)
 
         if not _post_single_message(channel_id, headers, data, i + 1):
             return False
 
     return True
+
+
+def send_figure_to_discord(
+    channel_id, image_path, *, title="", caption="", nonce_prefix=None
+):
+    """Upload one cached architecture image as a Discord embed.
+
+    Discord requires multipart/form-data for files; deliberately do not set a
+    Content-Type header here so ``requests`` can provide the boundary.
+    """
+
+    image_path = os.fspath(image_path)
+    if not os.path.isfile(image_path):
+        log(f"  ❌ 架构图不存在: {image_path}")
+        return False
+    filename = os.path.basename(image_path)
+    description = "\n".join(
+        part.strip() for part in (title, caption) if str(part or "").strip()
+    )[:1024]
+    payload = {
+        "content": "🧩 模型架构图",
+        "allowed_mentions": {"parse": []},
+        "embeds": [
+            {
+                "title": "模型架构图" if not title else f"模型架构图｜{title[:200]}",
+                "description": description,
+                "image": {"url": f"attachment://{filename}"},
+            }
+        ],
+        "attachments": [{"id": 0, "filename": filename, "description": description}],
+    }
+    if nonce_prefix:
+        payload.update(
+            nonce=hashlib.sha256(
+                f"{nonce_prefix}:figure:{filename}".encode("utf-8")
+            ).hexdigest()[:25],
+            enforce_nonce=True,
+        )
+    headers = {
+        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
+        "User-Agent": "DiscordBot (https://github.com/dailyinfo, 1.0)",
+    }
+    last_err = None
+    for attempt, delay in enumerate(_DISCORD_RETRY_DELAYS + (None,), start=1):
+        try:
+            with open(image_path, "rb") as handle:
+                response = requests.post(
+                    f"{DISCORD_API}/channels/{channel_id}/messages",
+                    headers=headers,
+                    data={"payload_json": json.dumps(payload, ensure_ascii=False)},
+                    files={"files[0]": (filename, handle, "image/png")},
+                    timeout=30,
+                )
+            if response.status_code in (200, 201):
+                log(f"  ✅ 架构图发送成功: {filename}")
+                time.sleep(0.5)
+                return True
+            if response.status_code == 429:
+                wait = float(
+                    response.json().get(
+                        "retry_after",
+                        delay if delay is not None else _DISCORD_RETRY_DELAYS[-1],
+                    )
+                )
+                log(f"  ⏳ 架构图触发限速，等待 {wait:.1f}s 后重试 (第 {attempt} 次)")
+                time.sleep(wait)
+                last_err = "429 rate limit"
+                continue
+            log(f"  ❌ 架构图发送失败: {response.status_code} - {response.text}")
+            return False
+        except Exception as exc:
+            last_err = str(exc)
+            if delay is None:
+                log(f"  ❌ 架构图发送错误（已重试）: {last_err}")
+                return False
+            log(f"  ⚠️ 架构图网络错误，{delay}s 后重试 (第 {attempt} 次): {last_err}")
+            time.sleep(delay)
+    return False
 
 
 def is_placeholder(content):
@@ -352,6 +445,177 @@ def _cleanup_placeholder_files(filepaths):
             log(f"  ⚠️  清理 {os.path.basename(filepath)} 出错: {e}")
 
 
+def _receipt_path(filename):
+    receipt_dir = STATE_DIR / "discord_receipts"
+    receipt_dir.mkdir(parents=True, exist_ok=True)
+    return receipt_dir / f"{filename}.json"
+
+
+def _load_receipt(filename):
+    path = _receipt_path(filename)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_receipt(filename, receipt):
+    path = _receipt_path(filename)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _load_figure_sidecar(filepath):
+    sidecar = os.path.splitext(filepath)[0] + ".assets.json"
+    try:
+        with open(sidecar, encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else {}, sidecar
+    except (OSError, ValueError):
+        return {}, sidecar
+
+
+def _conference_sections(content):
+    """Split a conference briefing into the intro and ``###`` paper sections."""
+
+    matches = list(re.finditer(r"(?m)^###\s+(.+?)\s*$", content))
+    if not matches:
+        return [("briefing", "", content)]
+    sections = []
+    if matches[0].start():
+        sections.append(("intro", "", content[: matches[0].start()].strip()))
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        sections.append(
+            (f"paper:{index}", match.group(1).strip(), content[match.start() : end].strip())
+        )
+    return [(key, title, text) for key, title, text in sections if text]
+
+
+def _title_key(value):
+    """Normalize a paper title for matching sidecar metadata to Markdown."""
+
+    value = re.sub(r"\([^)]*状态[^)]*\)", "", str(value or ""), flags=re.I)
+    value = re.sub(r"（[^）]*状态[^）]*）", "", value)
+    return re.sub(r"[^\w\u3400-\u9fff]", "", value.casefold())
+
+
+def _match_conference_attachments(sections, attachments):
+    """Map each figure attachment to the paper section containing its title."""
+
+    matched = {}
+    unused = []
+    for attachment in attachments:
+        title = str(attachment.get("title") or "")
+        forum_id = str(attachment.get("forum_id") or "")
+        title_key = _title_key(title)
+        found = None
+        for index, (_key, section_title, section_text) in enumerate(sections):
+            section_key = _title_key(section_title)
+            if title_key and section_key and (
+                title_key in section_key or section_key in title_key
+            ):
+                found = index
+                break
+            if forum_id and forum_id in section_text:
+                found = index
+                break
+        if found is None:
+            unused.append(attachment)
+        else:
+            matched.setdefault(found, []).append(attachment)
+    return matched, unused
+
+
+def send_conference_briefing(
+    channel_id,
+    content,
+    sidecar,
+    receipt,
+    *,
+    filename="",
+    nonce_prefix="conference",
+):
+    """Send each paper section followed immediately by its figure attachment."""
+
+    sections = _conference_sections(content)
+    attachments = [
+        item for item in (sidecar or {}).get("attachments", [])
+        if isinstance(item, dict)
+    ]
+    matched, unmatched = _match_conference_attachments(sections, attachments)
+    sent_segments = {str(value) for value in receipt.get("text_segments_sent", [])}
+    sent_figures = {str(value) for value in receipt.get("figures_sent", [])}
+    legacy_text_sent = bool(receipt.get("text_sent"))
+
+    def save():
+        if filename:
+            _save_receipt(filename, receipt)
+
+    for section_index, (segment_key, _title, text) in enumerate(sections):
+        if not legacy_text_sent and segment_key not in sent_segments:
+            if not send_to_discord(
+                channel_id,
+                text,
+                nonce_prefix=f"{nonce_prefix}:segment:{segment_key}",
+            ):
+                return False
+            sent_segments.add(segment_key)
+            receipt["text_segments_sent"] = sorted(sent_segments)
+            save()
+
+        for attachment in matched.get(section_index, []):
+            manifest = attachment.get("manifest") or {}
+            image_path = manifest.get("path")
+            if not image_path:
+                continue
+            figure_key = str(attachment.get("event_id") or image_path)
+            if figure_key in sent_figures:
+                continue
+            if not send_figure_to_discord(
+                channel_id,
+                image_path,
+                title=attachment.get("title", ""),
+                caption=manifest.get("caption", ""),
+                nonce_prefix=f"{nonce_prefix}:{figure_key}",
+            ):
+                return False
+            sent_figures.add(figure_key)
+            receipt["figures_sent"] = sorted(sent_figures)
+            save()
+
+    # Preserve useful images even when a malformed/legacy briefing title did
+    # not match a section; they are sent after the text as a safe fallback.
+    for attachment in unmatched:
+        manifest = attachment.get("manifest") or {}
+        image_path = manifest.get("path")
+        if not image_path:
+            continue
+        figure_key = str(attachment.get("event_id") or image_path)
+        if figure_key in sent_figures:
+            continue
+        if not send_figure_to_discord(
+            channel_id,
+            image_path,
+            title=attachment.get("title", ""),
+            caption=manifest.get("caption", ""),
+            nonce_prefix=f"{nonce_prefix}:{figure_key}:unmatched",
+        ):
+            return False
+        sent_figures.add(figure_key)
+        receipt["figures_sent"] = sorted(sent_figures)
+        save()
+
+    receipt["text_segments_sent"] = sorted(sent_segments)
+    receipt["figures_sent"] = sorted(sent_figures)
+    receipt["text_sent"] = True
+    save()
+    return True
+
+
 def push_category(category, channel_id, date=None):
     """Push every briefing for ``category`` whose filename contains ``date``.
 
@@ -371,7 +635,10 @@ def push_category(category, channel_id, date=None):
     if category == "arxiv":
         _wait_for_arxiv_generation(date)
 
-    files = [f for f in sorted(os.listdir(category_dir)) if date in f]
+    files = [
+        f for f in sorted(os.listdir(category_dir))
+        if date in f and f.endswith(".md")
+    ]
 
     if not files:
         log(f"  ℹ️  {category} 中没有 {date} 的文件，发送无内容提醒")
@@ -439,13 +706,47 @@ def push_category(category, channel_id, date=None):
     for filename, filepath, content in valid_files:
         try:
             # Send the real briefing before archiving it.
-            if send_to_discord(channel_id, content):
+            receipt = _load_receipt(filename)
+            nonce_prefix = f"{category}:{filename}"
+            text_sent = bool(receipt.get("text_sent"))
+            if category == "conference":
+                sidecar, _sidecar_path = _load_figure_sidecar(filepath)
+                text_result = send_conference_briefing(
+                    channel_id,
+                    content,
+                    sidecar,
+                    receipt,
+                    filename=filename,
+                    nonce_prefix=nonce_prefix,
+                )
+                text_sent = bool(receipt.get("text_sent")) and text_result
+            elif text_sent:
+                text_result = True
+            else:
+                # Keep the legacy two-argument call for non-conference
+                # categories and their existing integrations/tests.
+                text_result = send_to_discord(channel_id, content)
+            if not text_sent and text_result:
+                receipt["text_sent"] = True
+                _save_receipt(filename, receipt)
+                text_sent = True
+            if category == "conference" and not text_sent:
+                pending_names.append(_source_name_from_filename(filename, sources))
+                log(f"    ✗ {filename} 会议简报/架构图推送失败，保留原位")
+                continue
+            if text_sent:
                 # Move only successfully sent files to the pushed archive.
                 pushed_category_dir = os.path.join(PUSHED_DIR, category)
                 os.makedirs(pushed_category_dir, exist_ok=True)
 
                 dest_path = os.path.join(pushed_category_dir, filename)
                 shutil.move(filepath, dest_path)
+                sidecar_path = os.path.splitext(filepath)[0] + ".assets.json"
+                if os.path.exists(sidecar_path):
+                    shutil.move(
+                        sidecar_path,
+                        os.path.join(pushed_category_dir, os.path.basename(sidecar_path)),
+                    )
 
                 log(f"    ✓ {filename} 推送完成")
                 pushed_count += 1
@@ -480,8 +781,16 @@ def _parse_date(value):
         ) from exc
 
 
-ALL_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv", "weekly"]
-DAILY_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
+ALL_CATEGORIES = [
+    "papers",
+    "ai_news",
+    "code",
+    "resource",
+    "arxiv",
+    "conference",
+    "weekly",
+]
+DAILY_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv", "conference"]
 
 
 def main(date=None, categories=None):
@@ -494,7 +803,15 @@ def main(date=None, categories=None):
 
     total_pushed = 0
 
-    PUSH_ORDER = ["papers", "code", "resource", "ai_news", "arxiv", "weekly"]
+    PUSH_ORDER = [
+        "papers",
+        "conference",
+        "code",
+        "resource",
+        "ai_news",
+        "arxiv",
+        "weekly",
+    ]
     for category in PUSH_ORDER:
         if category not in active:
             continue

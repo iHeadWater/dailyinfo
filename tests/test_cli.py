@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -46,10 +45,12 @@ def _write_valid_env(path):
         "DISCORD_CHANNEL_AI_NEWS=2\n"
         "DISCORD_CHANNEL_CODE=3\n"
         "DISCORD_CHANNEL_RESOURCE=4\n"
+        "DISCORD_CHANNEL_CONFERENCE=6\n"
         "DISCORD_CHANNEL_PAPERS_DEV=101\n"
         "DISCORD_CHANNEL_AI_NEWS_DEV=102\n"
         "DISCORD_CHANNEL_CODE_DEV=103\n"
         "DISCORD_CHANNEL_RESOURCE_DEV=104\n"
+        "DISCORD_CHANNEL_CONFERENCE_DEV=106\n"
         "DISCORD_CHANNEL_ARXIV=5\n"
         "DISCORD_CHANNEL_ARXIV_DEV=105\n",
         encoding="utf-8",
@@ -113,7 +114,7 @@ def test_install_creates_workspace_dirs(cli_mod, tmp_path, monkeypatch):
     from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR
 
     assert FRESHRSS_DATA.exists()
-    for cat in ("papers", "ai_news", "code", "resource", "arxiv"):
+    for cat in ("papers", "ai_news", "code", "resource", "arxiv", "conference"):
         assert (BRIEFINGS_DIR / cat).is_dir()
         assert (PUSHED_DIR / cat).is_dir()
 
@@ -139,6 +140,26 @@ def test_status_reports_file_counts(cli_mod):
     assert "Total pending: 2" in result.output
 
 
+def test_status_reports_openreview_checkpoint_progress(cli_mod):
+    from paths import STATE_DIR
+    from conference import ConferenceState
+
+    ConferenceState(STATE_DIR / "openreview.sqlite3").start_run(
+        "openreview_iclr_2026",
+        "ICLR.cc/2026/Conference",
+        "full",
+        "config-v1",
+        "ICLR.cc/2026/Conference/-/Submission",
+        None,
+    )
+
+    result = CliRunner().invoke(cli_mod.cli, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert "run RUNNING" in result.output
+    assert "phase=DISCOVERY" in result.output
+
+
 def test_run_forwards_pipeline_arg(cli_mod):
     result = CliRunner().invoke(cli_mod.cli, ["run", "-p", "2"])
     assert result.exit_code == 0, result.output
@@ -148,6 +169,25 @@ def test_run_forwards_pipeline_arg(cli_mod):
     pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
     assert pipeline_calls
     assert pipeline_calls[0][-2:] == ["--pipeline", "2"]
+
+
+def test_run_forwards_conference_source_filter(cli_mod):
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        ["run", "-p", "6", "--source", "openreview_iclr_2026"],
+    )
+    assert result.exit_code == 0, result.output
+    pipeline_calls = [
+        c
+        for c in cli_mod.__test_calls__
+        if any("run_pipelines.py" in part for part in c)
+    ]
+    assert pipeline_calls[-1][-4:] == [
+        "--pipeline",
+        "6",
+        "--source",
+        "openreview_iclr_2026",
+    ]
 
 
 def test_run_without_pipeline_runs_all(cli_mod):

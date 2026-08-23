@@ -1,10 +1,88 @@
 {
   "version": 2,
   "defaults": {
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-v4-pro",
     "lookback_hours": 24,
     "max_articles_per_batch": 10,
-    "freshrss_user": ""
+    "freshrss_user": "",
+    "conference_defaults": {
+      "public_only": true,
+      "api_connect_timeout_seconds": 10,
+      "api_read_timeout_seconds": 30,
+      "api_rate_limit_retries": 1,
+      "api_rate_limit_max_wait_seconds": 90,
+      "poll_interval_hours": 24,
+      "full_rescan_interval_days": 7,
+      "max_events_per_briefing": 10,
+      "filters": {
+        "version": 2,
+        "exclude_phrases": [
+          "watermark",
+          "watermarking"
+        ]
+      },
+      "retrieval": {
+        "strategy": "lexical_embedding_union",
+        "backend": "llama_cpp",
+        "endpoint": "http://127.0.0.1:8765",
+        "model": "Qwen3-Embedding-0.6B-GGUF-Q8_0",
+        "query_instruction": "Retrieve conference papers relevant to AI for hydrology and water resources.",
+        "query_text": "AI for hydrology and water resources research, including rainfall-runoff and streamflow forecasting, flood prediction, watershed and river modelling, precipitation, hydroclimate, remote sensing of water, physics-informed machine learning, and foundation models for Earth-system prediction.",
+        "text_mode": "title_abstract",
+        "dimension": 512,
+        "threshold": 0.45,
+        "batch_size": 2,
+        "max_length": 1024
+      },
+      "reviews": {
+        "enabled": true,
+        "min_reviews_for_signal": 2
+      },
+      "figures": {
+        "enabled": true,
+        "allowed_hosts": [
+          "openreview.net",
+          "api2.openreview.net",
+          "arxiv.org",
+          "export.arxiv.org",
+          "aclanthology.org",
+          "www.aclanthology.org",
+          "openaccess.thecvf.com",
+          "www.ecva.net",
+          "papers.nips.cc",
+          "proceedings.neurips.cc",
+          "dblp.org",
+          "doi.org",
+          "ojs.aaai.org",
+          "dl.acm.org",
+          "ijcai.org",
+          "www.ijcai.org"
+        ],
+        "max_per_paper": 1,
+        "max_pdf_mb": 50,
+        "max_image_mb": 8,
+        "max_pages": 15,
+        "render_dpi": 360,
+        "min_caption_score": 4,
+        "extractor_version": "caption-v4",
+        "caption_review": {
+          "enabled": true,
+          "model": "deepseek-chat",
+          "low_confidence_score": 7,
+          "max_candidates": 5,
+          "max_tokens": 256,
+          "min_confidence": 0.55
+        },
+        "vision_review": {
+          "enabled": true,
+          "model": "deepseek-v4-flash-vision-exp",
+          "max_tokens": 256,
+          "min_confidence": 0.55
+        },
+        "max_attempts": 2,
+        "refresh_batch_size": 50
+      }
+    }
   },
   "prompt_templates": {
     "one_line_summary": "请为以下 {count} 篇 {display_name} 最新文章各生成一句话中文摘要，突出核心发现或贡献：\n\n{article_list}\n\n请严格按以下 Markdown 格式返回：\n\n## 📚 {display_name} 今日简报 ({date}) - {count}篇文章\n\n1. **文章标题**\n   > 一句话中文摘要\n\n2. **文章标题**\n   > 一句话中文摘要\n\n...\n\n最后添加一段 **🔭 Today's Highlight** 总结今日最值得关注的研究方向。",
@@ -652,6 +730,324 @@
       "max_articles_per_batch": 20,
       "prompt_template": "recruitment",
       "type": "api"
+    },
+    {
+      "name": "openreview_iclr_2026",
+      "display_name": "ICLR 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "ICLR.cc/2026/Conference",
+      "url": "https://openreview.net/group?id=ICLR.cc%2F2026%2FConference",
+      "enabled": true,
+      "public_only": true,
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "max_events_per_briefing": 10,
+      "filters": {
+        "version": 2,
+        "exclude_phrases": [
+          "watermark",
+          "watermarking"
+        ]
+      },
+      "retrieval": {
+        "strategy": "lexical_embedding_union",
+        "backend": "llama_cpp",
+        "endpoint": "http://127.0.0.1:8765",
+        "model": "Qwen3-Embedding-0.6B-GGUF-Q8_0",
+        "query_instruction": "Retrieve conference papers relevant to AI for hydrology and water resources.",
+        "query_text": "AI for hydrology and water resources research, including rainfall-runoff and streamflow forecasting, flood prediction, watershed and river modelling, precipitation, hydroclimate, remote sensing of water, physics-informed machine learning, and foundation models for Earth-system prediction.",
+        "text_mode": "title_abstract",
+        "dimension": 512,
+        "threshold": 0.45,
+        "batch_size": 2,
+        "max_length": 1024
+      },
+      "reviews": {
+        "enabled": true,
+        "min_reviews_for_signal": 2
+      }
+    },
+    {
+      "name": "openreview_icml_2026",
+      "display_name": "ICML 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "ICML.cc/2026/Conference",
+      "url": "https://openreview.net/group?id=ICML.cc%2F2026%2FConference",
+      "enabled": true,
+      "public_only": true,
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "max_events_per_briefing": 10,
+      "filters": {
+        "version": 2,
+        "exclude_phrases": [
+          "watermark",
+          "watermarking"
+        ]
+      },
+      "retrieval": {
+        "strategy": "lexical_embedding_union",
+        "backend": "llama_cpp",
+        "endpoint": "http://127.0.0.1:8765",
+        "model": "Qwen3-Embedding-0.6B-GGUF-Q8_0",
+        "query_instruction": "Retrieve conference papers relevant to AI for hydrology and water resources.",
+        "query_text": "AI for hydrology and water resources research, including rainfall-runoff and streamflow forecasting, flood prediction, watershed and river modelling, precipitation, hydroclimate, remote sensing of water, physics-informed machine learning, and foundation models for Earth-system prediction.",
+        "text_mode": "title_abstract",
+        "dimension": 512,
+        "threshold": 0.45,
+        "batch_size": 2,
+        "max_length": 1024
+      },
+      "reviews": {
+        "enabled": true,
+        "min_reviews_for_signal": 2
+      }
+    },
+    {
+      "name": "openreview_neurips_2026",
+      "display_name": "NeurIPS 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "NeurIPS.cc/2026/Conference",
+      "url": "https://openreview.net/group?id=NeurIPS.cc%2F2026%2FConference",
+      "enabled": true,
+      "public_only": true,
+      "poll_interval_hours": 24,
+      "full_rescan_interval_days": 7,
+      "max_events_per_briefing": 10,
+      "filters": {
+        "version": 2,
+        "exclude_phrases": [
+          "watermark",
+          "watermarking"
+        ]
+      },
+      "retrieval": {
+        "strategy": "lexical_embedding_union",
+        "backend": "llama_cpp",
+        "endpoint": "http://127.0.0.1:8765",
+        "model": "Qwen3-Embedding-0.6B-GGUF-Q8_0",
+        "query_instruction": "Retrieve conference papers relevant to AI for hydrology and water resources.",
+        "query_text": "AI for hydrology and water resources research, including rainfall-runoff and streamflow forecasting, flood prediction, watershed and river modelling, precipitation, hydroclimate, remote sensing of water, physics-informed machine learning, and foundation models for Earth-system prediction.",
+        "text_mode": "title_abstract",
+        "dimension": 512,
+        "threshold": 0.45,
+        "batch_size": 2,
+        "max_length": 1024
+      },
+      "reviews": {
+        "enabled": true,
+        "min_reviews_for_signal": 2
+      }
+    },
+    {
+      "name": "openreview_aaai_2026",
+      "display_name": "AAAI 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "AAAI.org/2026/Conference",
+      "url": "https://openreview.net/group?id=AAAI.org%2F2026%2FConference",
+      "enabled": false
+    },
+    {
+      "name": "openreview_kdd_2026",
+      "display_name": "KDD 2026 Research Track (August)",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "KDD.org/2026/Research_Track_August",
+      "url": "https://openreview.net/group?id=KDD.org%2F2026%2FResearch_Track_August",
+      "enabled": false
+    },
+    {
+      "name": "openreview_kdd_2026_cycle2",
+      "display_name": "KDD 2026 Research Track (Cycle 2)",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "KDD.org/2026/Research_Track_Cycle_2",
+      "url": "https://openreview.net/group?id=KDD.org%2F2026%2FResearch_Track_Cycle_2",
+      "enabled": false
+    },
+    {
+      "name": "openreview_cvpr_2026",
+      "display_name": "CVPR 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "thecvf.com/CVPR/2026/Conference",
+      "url": "https://openreview.net/group?id=thecvf.com%2FCVPR%2F2026%2FConference",
+      "enabled": false
+    },
+    {
+      "name": "openreview_acl_2026",
+      "display_name": "ACL 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "aclweb.org/ACL/2026/Conference",
+      "url": "https://openreview.net/group?id=aclweb.org%2FACL%2F2026%2FConference",
+      "enabled": false
+    },
+    {
+      "name": "openreview_emnlp_2026",
+      "display_name": "EMNLP 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "EMNLP/2026/Conference",
+      "url": "https://openreview.net/group?id=EMNLP%2F2026%2FConference",
+      "enabled": false
+    },
+    {
+      "name": "openreview_iccv_2025",
+      "display_name": "ICCV 2025 (latest main conference)",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "thecvf.com/ICCV/2025/Conference",
+      "url": "https://openreview.net/group?id=thecvf.com%2FICCV%2F2025%2FConference",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": false
+    },
+    {
+      "name": "openreview_naacl_2025",
+      "display_name": "NAACL 2025 (latest main conference)",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "aclweb.org/NAACL/2025/Conference",
+      "url": "https://openreview.net/group?id=aclweb.org%2FNAACL%2F2025%2FConference",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": false
+    },
+    {
+      "name": "acl_anthology_acl_2026",
+      "display_name": "ACL 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "acl",
+      "venue_id": "ACL2026",
+      "url": "https://aclanthology.org/events/acl-2026/",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "acl_anthology_emnlp_2025",
+      "display_name": "EMNLP 2025",
+      "category": "conference",
+      "type": "api",
+      "provider": "acl",
+      "venue_id": "EMNLP2025",
+      "url": "https://aclanthology.org/events/emnlp-2025/",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "acl_anthology_naacl_2025",
+      "display_name": "NAACL 2025",
+      "category": "conference",
+      "type": "api",
+      "provider": "acl",
+      "venue_id": "NAACL2025",
+      "url": "https://aclanthology.org/events/naacl-2025/",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "cvf_cvpr_2026",
+      "display_name": "CVPR 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "cvf",
+      "venue_id": "CVPR2026",
+      "url": "https://openaccess.thecvf.com/CVPR2026?day=all",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "cvf_iccv_2025",
+      "display_name": "ICCV 2025",
+      "category": "conference",
+      "type": "api",
+      "provider": "cvf",
+      "venue_id": "ICCV2025",
+      "url": "https://openaccess.thecvf.com/ICCV2025?day=all",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "cvf_eccv_2024",
+      "display_name": "ECCV 2024",
+      "category": "conference",
+      "type": "api",
+      "provider": "cvf",
+      "venue_id": "ECCV2024",
+      "url": "https://www.ecva.net/papers.php",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "dblp_aaai_2026",
+      "display_name": "AAAI 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "dblp",
+      "venue_id": "AAAI2026",
+      "url": "https://dblp.org/db/conf/aaai/aaai2026.html",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "dblp_kdd_2026",
+      "display_name": "KDD 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "dblp",
+      "venue_id": "KDD2026",
+      "url": "https://dblp.org/db/conf/kdd/kdd2026.html",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "dblp_ijcai_2026",
+      "display_name": "IJCAI 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "dblp",
+      "venue_id": "IJCAI2026",
+      "url": "https://dblp.org/db/conf/ijcai/ijcai2026.html",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
+    },
+    {
+      "name": "neurips_proceedings_2025",
+      "display_name": "NeurIPS 2025 Proceedings",
+      "category": "conference",
+      "type": "api",
+      "provider": "neurips",
+      "venue_id": "NeurIPS2025",
+      "url": "https://proceedings.neurips.cc/paper_files/paper/2025/vol38-main-conference",
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30,
+      "enabled": true
     }
   ],
   "discord_channels": {

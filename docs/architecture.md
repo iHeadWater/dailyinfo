@@ -39,6 +39,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 │  │  • Pipeline 3: arXiv CS.AI → AI summary → briefings/arxiv    │   │
 │  │  • Pipeline 4: Code trending → AI summary → briefings/code   │   │
 │  │  • Pipeline 5: University news → AI summary → briefings/res. │   │
+│  │  • Pipeline 6: Conference sources → briefings/conference    │   │
 │  │                                                              │   │
 │  │  DeepSeek V4 Pro API (primary); OpenRouter fallback (kimi-k2.5)    │   │
 │  └──────────────────────────────────────────────────────────────┘   │
@@ -111,6 +112,26 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 - **Input**: DLUT 网站（HTML + API）
 - **Output**: `briefings/resource/`
 
+### Pipeline 6: Conference Papers and OpenReview Events
+- **Input**: OpenReview API v2 + ACL Anthology + CVF/ECVA + DBLP + NeurIPS Proceedings
+- **Output**: `briefings/conference/`
+- **OpenReview 生命周期源（默认启用）**：ICLR 2026、ICML 2026、NeurIPS 2026；支持公开 review、rebuttal、decision/status 事件
+- **ACL Anthology**：ACL 2026、EMNLP 2025、NAACL 2025；仅公开论文元数据
+- **CVF Open Access / ECVA**：CVPR 2026、ICCV 2025、ECCV 2024；仅公开论文元数据
+- **DBLP**：AAAI 2026、KDD 2026、IJCAI 2026；仅书目元数据
+- **NeurIPS Proceedings**：NeurIPS 2025；仅公开论文元数据
+- **禁用候选**：AAAI、KDD、CVPR、ACL、EMNLP、ICCV、NAACL 的 OpenReview 配置默认不运行，仅在确认公开 venue 可用后手动启用
+- **状态**：`state/openreview.sqlite3` 保存 venue 水位线、相关论文快照和确定性事件
+- **增量**：OpenReview 新投稿创建时间水位线 + 已相关论文 forum 轮询 + 周期性全量校准；静态论文集来源按周期重新扫描
+- **轮询**：由外部调度器重复调用 `dailyinfo run`；`poll_interval_hours` 决定本次是否到期，`full_rescan_interval_days` 决定何时重新遍历整个 venue
+- **相关度**：关键词与 Qwen3 Embedding（llama.cpp `/v1/embeddings`）取并集；DeepSeek 只负责最终摘要
+- **事件**：新论文、decision/status 变化、评审新增/修改、rebuttal 更新分别形成可去重事件
+- **可恢复处理**：显式 API 分页，每页提交 `after` cursor；`sync_runs`/`sync_items` 保存 discovery、相关度、forum 阶段和 heartbeat，Ctrl-C 或网络失败后可续跑
+- **架构图增强**：相关论文在渲染前按公开 PDF 的 Figure caption 进行词法召回，用 PyMuPDF 将候选区域栅格化为 PNG；下载按 Note PDF 字段、OpenReview attachment API、`/pdf?id=` 依次回退，并复用可选认证会话；PDF 只临时下载，派生图按 PDF SHA-256 缓存到 `assets/conference/`，失败时文字简报仍可推送，后续运行可只重试失败的图附件
+- **Discord 展示**：会议简报按论文标题分段发送，按 `.assets.json` sidecar 将对应架构图紧跟在论文文字后；推送 receipt 支持中断后跳过已成功的文本/图片部分
+- **进度**：日志输出 discovery/retrieval/forum/rendering 阶段、当前数量、候选数、错误数和 run ID；`dailyinfo status` 显示活跃/中断 run
+- **认证**：默认 guest；可选用户名/密码认证，但 `public_only` 默认过滤非公开 note/字段；认证头只发送到 OpenReview 自有域，不转发给外部 PDF/论文集主机
+
 ## Discord Channel Mapping
 
 频道 ID 由 `.env` 配置（不在代码里硬编码）：
@@ -122,6 +143,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 | arxiv    | `DISCORD_CHANNEL_ARXIV` (falls back to `DISCORD_CHANNEL_AI_NEWS`) | `_ARXIV_DEV` | `_ARXIV_STAGING` |
 | code     | `DISCORD_CHANNEL_CODE` | `_CODE_DEV` | `_CODE_STAGING` |
 | resource | `DISCORD_CHANNEL_RESOURCE` | `_RESOURCE_DEV` | `_RESOURCE_STAGING` |
+| conference | `DISCORD_CHANNEL_CONFERENCE` | `_CONFERENCE_DEV` | `_CONFERENCE_STAGING` |
 
 Set `DAILYINFO_ENV=dev` or `staging` to use the suffixed keys. If the suffixed
 key is empty, dev/staging falls back to the prod channel with a warning.

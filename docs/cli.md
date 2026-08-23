@@ -50,12 +50,15 @@ dailyinfo restart    # Restart FreshRSS
 ### Pipeline Execution
 
 ```bash
-dailyinfo run                      # Run all 5 pipelines
+dailyinfo run                      # Run all 6 pipelines
 dailyinfo run -p 1                 # Pipeline 1 (papers)
 dailyinfo run -p 2                 # Pipeline 2 (AI news)
 dailyinfo run -p 3                 # Pipeline 3 (arXiv CS.AI)
 dailyinfo run -p 4                 # Pipeline 4 (code trending)
 dailyinfo run -p 5                 # Pipeline 5 (university news)
+dailyinfo run -p 6                 # Pipeline 6 (configured conference sources)
+dailyinfo run -p 6 --source openreview_iclr_2026  # ICLR 2026 via OpenReview
+dailyinfo run -p 6 --source cvf_cvpr_2026         # CVPR 2026 via CVF Open Access
 dailyinfo run -f all               # Force regenerate every source today
 dailyinfo run -p 1 -f arxiv_cs_ai  # Force regenerate one source only
 ```
@@ -66,7 +69,46 @@ for today (either in `briefings/` waiting to be pushed, or already archived in
 to override — pass `all` to refresh everything, or repeat the flag with
 specific source names (matches `config/sources.json`).
 
-If the primary model (`deepseek-v4-flash` via DeepSeek API) returns empty responses after 3
+`--source` may be repeated to restrict a run to named configured sources.
+
+### Conference sources, checkpoints, and polling
+
+Pipeline 6 is not a resident daemon. Run it from cron, launchd, or another
+external scheduler. Enabled OpenReview sources are ICLR 2026, ICML 2026, and
+NeurIPS 2026; they provide public review/rebuttal/decision lifecycle events.
+ACL Anthology, CVF/ECVA, DBLP, and NeurIPS Proceedings provide publication
+metadata only. Each source checks its configured `poll_interval_hours`.
+`full_rescan_interval_days` controls when the entire venue is scanned again to
+find updates to older papers and public reviews; it does not delete old state.
+
+The disabled `openreview_aaai_*`, `openreview_kdd_*`, `openreview_cvpr_*`,
+`openreview_acl_*`, `openreview_emnlp_*`, `openreview_iccv_*`, and
+`openreview_naacl_*` entries are retained as future candidates; selecting a
+disabled entry does not make it an active source. Use the enabled canonical
+proceedings provider for those conferences.
+
+For a one-off refresh:
+
+```bash
+dailyinfo run -p 6 --source openreview_iclr_2026 -f openreview_iclr_2026
+```
+
+Use `dailyinfo status` to inspect the active run. Discovery is checkpointed by
+page cursor, and a process interrupted during discovery, forum retrieval, or
+rendering can resume on the next invocation. Keep the local llama.cpp Qwen3
+Embedding server available at `http://127.0.0.1:8765` when the configured
+retrieval strategy includes Embedding.
+For Pipeline 6, `--force` bypasses the poll interval but does not clear
+lifecycle state or emit an already-rendered deterministic event again. If a
+conference run was interrupted, the next invocation resumes its saved page
+cursor and work queue.
+
+`dailyinfo status` shows the active OpenReview phase (`DISCOVERY`, `RETRIEVAL`,
+`FORUM_POLL`, or `RENDERING`) and its checkpoint counters. A run interrupted by
+Ctrl-C or a stale process can be resumed with the same `dailyinfo run -p 6`
+command.
+
+If the primary model (`deepseek-v4-pro` via DeepSeek API) returns empty responses after 3
 retries with exponential backoff (2s / 5s / 10s), `run` automatically falls
 back to the model in `DAILYINFO_FALLBACK_MODEL` (default
 `moonshotai/kimi-k2.5` via OpenRouter) for 2 more attempts before giving up.
@@ -114,10 +156,11 @@ FRESHRSS_PASSWORD=freshrss123
 
 | Key | Purpose |
 |-----|---------|
-| `DEEPSEEK_API_KEY` | DeepSeek API key (required — primary model: `deepseek-v4-flash`) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (required — primary model: `deepseek-v4-pro`) |
 | `OPENROUTER_API_KEY` | OpenRouter API key (optional, only needed for fallback) |
 | `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
-| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` | Per-category channel IDs (missing ones are skipped, not fatal) |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` / `_CONFERENCE` | Per-category channel IDs (missing ones are skipped, not fatal) |
+| `OPENREVIEW_USERNAME` / `OPENREVIEW_PASSWORD` | Optional OpenReview authentication; both must be set and `public_only` remains enabled by default |
 | `DISCORD_CHANNEL_*_DEV` / `_STAGING` | Env-specific channel IDs when `DAILYINFO_ENV=dev` or `staging` |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) — controls data dir and channel suffix |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`; env-suffixed for dev/staging) |
@@ -136,6 +179,7 @@ dailyinfo 提供幂等的 CLI 命令，由任意外部 cron 触发即可。推�
 | `dailyinfo run -p 4` | 03:45 | code trending |
 | `dailyinfo run -p 1` | 04:00 | papers |
 | `dailyinfo run -p 2` | 04:30 | AI news |
+| `dailyinfo run -p 6` | 05:00 | Conference papers and OpenReview lifecycle events |
 | `dailyinfo push` | 05:30-07:00 | push to Discord |
 
 系统 crontab 示例：
