@@ -1,7 +1,7 @@
 {
   "version": 2,
   "defaults": {
-    "model": "deepseek-v4-pro",
+    "model": "deepseek-v4-flash",
     "lookback_hours": 24,
     "max_articles_per_batch": 10,
     "freshrss_user": ""

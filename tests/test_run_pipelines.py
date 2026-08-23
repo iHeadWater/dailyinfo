@@ -297,7 +297,7 @@ def test_process_regular_source_records_zero_state_for_empty_rss(rss_db, monkeyp
     saved = rp._process_regular_source(
         ds,
         ds.config,
-        "deepseek-v4-pro",
+        "deepseek-v4-flash",
         {"one_line_summary": "summarize {article_list}"},
         "one_line_summary",
     )
@@ -352,7 +352,7 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
     saved = rp._process_regular_source(
         ds,
         ds.config,
-        "deepseek-v4-pro",
+        "deepseek-v4-flash",
         {"one_line_summary": "summarize {article_list}"},
         "one_line_summary",
     )

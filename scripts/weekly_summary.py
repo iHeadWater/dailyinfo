@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from paths import BRIEFINGS_DIR, PUSHED_DIR
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEEPSEEK_MODEL = "deepseek-v4-flash"
 _BACKOFF_SECONDS = [2, 5, 10]
 
 # ── Data structures ──────────────────────────────────────────────────────────

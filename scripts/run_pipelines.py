@@ -189,7 +189,7 @@ _DEEPSEEK_KEY_CACHE: str | None = None
 
 def call_ai(
     prompt: str,
-    model: str = "deepseek-v4-pro",
+    model: str = "deepseek-v4-flash",
     max_tokens: int = 1200,
     *,
     fallback_model: str | None = None,
@@ -720,7 +720,7 @@ def _run_category_pipeline(category: str, *,
     path is used instead of the regular batched path.
     """
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-pro")
+    model_default = defaults.get("model", "deepseek-v4-flash")
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
 
     # --- RSS sources ---
@@ -813,7 +813,7 @@ def run_pipeline_arxiv() -> int:
 def run_pipeline_code() -> int:
     log("=== Pipeline 4: Code Trending ===")
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-pro")
+    model_default = defaults.get("model", "deepseek-v4-flash")
     code_tmpl = templates.get("code_trending", "")
     saved = 0
 
@@ -973,7 +973,7 @@ def _generate_unified_news(
 def run_pipeline_resource() -> int:
     log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-pro")
+    model_default = defaults.get("model", "deepseek-v4-flash")
     saved = 0
 
     # --- Part A: unified news briefing (8 news sources -> 1 file) ---

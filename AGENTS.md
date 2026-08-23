@@ -78,7 +78,7 @@ python3 -c "import json; json.load(open('config/sources.json'))"
 {
   "version": 2,
   "defaults": {
-    "model": "deepseek-v4-pro",
+    "model": "deepseek-v4-flash",
     "lookback_hours": 24
   },
   "sources": [
