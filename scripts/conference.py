@@ -1183,11 +1183,18 @@ class ConferenceState:
 
     def pending_events(self, source: str, limit: int) -> list[dict]:
         with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT * FROM events WHERE source=? AND status='pending'
-                   ORDER BY created_ms,event_id LIMIT ?""",
-                (source, limit),
-            ).fetchall()
+            if limit > 0:
+                rows = conn.execute(
+                    """SELECT * FROM events WHERE source=? AND status='pending'
+                       ORDER BY created_ms,event_id LIMIT ?""",
+                    (source, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT * FROM events WHERE source=? AND status='pending'
+                       ORDER BY created_ms,event_id""",
+                    (source,),
+                ).fetchall()
         result = []
         for row in rows:
             item = dict(row)
@@ -1212,9 +1219,7 @@ class ConferenceState:
         without regenerating the AI briefing.
         """
 
-        with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT DISTINCT e.*,
+        query = """SELECT DISTINCT e.*,
                           f.extractor_version AS figure_extractor_version,
                           f.revision_key AS figure_revision_key,
                           f.status AS figure_status,
@@ -1224,9 +1229,13 @@ class ConferenceState:
                      ON f.source=e.source AND f.forum_id=e.forum_id
                    WHERE e.source=? AND e.status='rendered'
                      AND f.status IN ('READY','RETRY','NO_FIGURE')
-                   ORDER BY e.created_ms,e.event_id LIMIT ?""",
-                (source, limit),
-            ).fetchall()
+                   ORDER BY e.created_ms,e.event_id"""
+        params: tuple[Any, ...] = (source,)
+        if limit > 0:
+            query += " LIMIT ?"
+            params += (limit,)
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
         result = []
         seen_event_ids = set()
         for row in rows:
@@ -2019,7 +2028,11 @@ def _retry_rendered_figure_assets(
             int(
                 figure_cfg.get(
                     "refresh_batch_size",
-                    max(100, int(config.get("max_events_per_briefing", 10))),
+                    (
+                        max(100, int(config.get("max_events_per_briefing", 0)))
+                        if int(config.get("max_events_per_briefing", 0)) > 0
+                        else 0
+                    ),
                 )
             ),
         ),
@@ -2116,7 +2129,7 @@ def _render_pending_events(
         logger=logger,
     )
     pending = state.pending_events(
-        source, int(config.get("max_events_per_briefing", 10))
+        source, int(config.get("max_events_per_briefing", 0))
     )
     if not pending:
         if logger:

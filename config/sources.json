@@ -13,7 +13,7 @@
       "api_rate_limit_max_wait_seconds": 90,
       "poll_interval_hours": 24,
       "full_rescan_interval_days": 7,
-      "max_events_per_briefing": 10,
+      "max_events_per_briefing": 0,
       "filters": {
         "version": 2,
         "exclude_phrases": [
@@ -743,7 +743,7 @@
       "public_only": true,
       "poll_interval_hours": 168,
       "full_rescan_interval_days": 30,
-      "max_events_per_briefing": 10,
+      "max_events_per_briefing": 0,
       "filters": {
         "version": 2,
         "exclude_phrases": [
@@ -781,7 +781,7 @@
       "public_only": true,
       "poll_interval_hours": 168,
       "full_rescan_interval_days": 30,
-      "max_events_per_briefing": 10,
+      "max_events_per_briefing": 0,
       "filters": {
         "version": 2,
         "exclude_phrases": [
@@ -819,7 +819,7 @@
       "public_only": true,
       "poll_interval_hours": 24,
       "full_rescan_interval_days": 7,
-      "max_events_per_briefing": 10,
+      "max_events_per_briefing": 0,
       "filters": {
         "version": 2,
         "exclude_phrases": [
