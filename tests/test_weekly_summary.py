@@ -6,14 +6,12 @@ import datetime
 import sys
 from pathlib import Path
 
-import pytest
-
 # Ensure scripts/ is on path so flat imports work
 SCRIPTS_DIR = Path(__file__).parent.parent / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from weekly_summary import (
+from weekly_summary import (  # noqa: E402
     NewsItem,
     EventCard,
     parse_briefing,
@@ -277,8 +275,6 @@ class TestBuildWeeklyPrompt:
 class TestEndToEnd:
     def test_run_with_fake_ai(self, tmp_path, monkeypatch):
         """Full pipeline with a stubbed AI call writes expected output file."""
-        from pathlib import Path as P
-
         # Set up isolated data dir
         data_root = tmp_path / "data"
         pushed_dir = data_root / "pushed" / "ai_news"
