@@ -585,6 +585,7 @@ def extract_architecture_figure(
                         }
 
         review_indices = {entry["index"] for entry in review_entries}
+        selected_indices = {entry["index"] for entry in selected_entries}
         render_entries = list(selected_entries)
         if vision_reviewer is not None:
             existing_indices = {entry["index"] for entry in render_entries}
@@ -663,6 +664,16 @@ def extract_architecture_figure(
                     for candidate in candidates
                     if candidate.entry_index not in review_indices
                     or candidate.entry_index in accepted_indices
+                ]
+            else:
+                # Vision is an optional second gate for candidates rejected by
+                # the text reviewer.  If it fails, keep the text decision;
+                # never let the temporary render_entries rescue rejected
+                # candidates by failing open.
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if candidate.entry_index in selected_indices
                 ]
     finally:
         document.close()

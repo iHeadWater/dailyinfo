@@ -226,6 +226,23 @@ def test_vision_reviewer_can_reject_text_reviewer_candidate():
     assert seen and seen[0]["image_bytes"].startswith(b"\x89PNG")
 
 
+def test_vision_reviewer_failure_does_not_resurrect_text_rejection():
+    def text_reviewer(_captions):
+        return set()
+
+    def vision_reviewer(_items):
+        # A model outage must preserve the text review decision.
+        return None
+
+    result = extract_architecture_figure(
+        _pdf_with_architecture_caption("Figure 1: Proposed decoder."),
+        caption_reviewer=text_reviewer,
+        vision_reviewer=vision_reviewer,
+    )
+
+    assert result.status == "NO_FIGURE"
+
+
 def test_download_pdf_checks_magic_and_size(monkeypatch):
     class Response:
         url = "https://openreview.net/pdf?id=abc"
