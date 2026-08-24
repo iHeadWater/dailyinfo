@@ -2,58 +2,81 @@
 
 This page is generated from [`config/sources.json`](https://github.com/iHeadWater/dailyinfo/blob/main/config/sources.json).
 
-| Name | Display Name | Category | Type | Enabled | Lookback Hours | URL |
-|------|--------------|----------|------|---------|----------------|-----|
-| nature | Nature | papers | rss | True | 24 | https://www.nature.com/nature.rss |
-| nature_communications | Nature Communications | papers | rss | True | 24 | https://www.nature.com/ncomms.rss |
-| scientific_data | Scientific Data | papers | rss | True | 24 | https://www.nature.com/sdata.rss |
-| science_advances | Science Advances | papers | rss | True | 24 | https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv |
-| science_news | Science News | papers | rss | True | 24 | https://www.science.org/rss/news_current.xml |
-| nature_machine_intelligence | Nature Machine Intelligence | papers | rss | True | 24 | https://www.nature.com/natmachintell.rss |
-| nature_reviews_physics | Nature Reviews Physics | papers | rss | True | 24 | https://www.nature.com/natrevphys.rss |
-| pnas | PNAS | papers | rss | True | 24 | https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=PNAS |
-| science | Science | papers | rss | True | 24 | https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science |
-| nature_sustainability | Nature Sustainability | papers | rss | True | 24 | https://www.nature.com/natsustain.rss |
-| nature_geoscience | Nature Geoscience | papers | rss | True | 24 | https://www.nature.com/ngeo.rss |
-| nature_reviews_earth_environ | Nature Reviews Earth & Environment | papers | rss | True | 24 | https://www.nature.com/natrevearthenviron.rss |
-| nature_climate_change | Nature Climate Change | papers | rss | True | 24 | https://www.nature.com/nclimate.rss |
-| aies | AI in Earth Sciences (AIES) | papers | rss | True | 24 | https://journals.ametsoc.org/journalissuetocrss/journals/aies/aies-overview.xml |
-| bams | Bulletin of the American Meteorological Society | papers | rss | True | 24 | https://journals.ametsoc.org/journalissuetocrss/journals/bams/bams-overview.xml |
-| essd | Earth System Science Data (ESSD) | papers | rss | True | 24 | https://essd.copernicus.org/articles/xml/rss2_0.xml |
-| gmd | Geoscientific Model Development (GMD) | papers | rss | True | 24 | https://gmd.copernicus.org/xml/rss2_0.xml |
-| nhess | Natural Hazards and Earth System Sciences (NHESS) | papers | rss | True | 24 | https://nhess.copernicus.org/articles/xml/rss2_0.xml |
-| james | Journal of Advances in Modeling Earth Systems (JAMES) | papers | rss | True | 24 | https://agupubs.onlinelibrary.wiley.com/feed/19422466/most-recent |
-| earth_space_science | Earth and Space Science | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=23335084&type=etoc&feed=rss |
-| grl | Geophysical Research Letters (GRL) | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=19448007&type=etoc&feed=rss |
-| reviews_geophysics | Reviews of Geophysics | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=19449208&type=etoc&feed=rss |
-| earths_future | Earth's Future | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=23284277&type=etoc&feed=rss |
-| remote_sensing_environ | Remote Sensing of Environment | papers | rss | True | 24 | https://rss.sciencedirect.com/publication/science/00344257 |
-| environ_modelling_software | Environmental Modelling & Software | papers | rss | True | 24 | https://rss.sciencedirect.com/publication/science/13648152 |
-| nature_water | Nature Water | papers | rss | True | 24 | https://www.nature.com/natwater.rss |
-| hess | Hydrology and Earth System Sciences (HESS) | papers | rss | True | 24 | https://hess.copernicus.org/articles/xml/rss2_0.xml |
-| jhm | Journal of Hydrometeorology (JHM) | papers | rss | True | 24 | https://journals.ametsoc.org/journalissuetocrss/journals/hydr/hydr-overview.xml |
-| wrr | Water Resources Research (WRR) | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=19447973&type=etoc&feed=rss |
-| hydrological_processes | Hydrological Processes | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=10991085&type=etoc&feed=rss |
-| water_research | Water Research | papers | rss | True | 24 | https://rss.sciencedirect.com/publication/science/00431354 |
-| advances_water_resources | Advances in Water Resources | papers | rss | True | 24 | https://rss.sciencedirect.com/publication/science/03091708 |
-| journal_hydrology | Journal of Hydrology | papers | rss | True | 24 | https://rss.sciencedirect.com/publication/science/00221694 |
-| skxjz | 水科学进展 | papers | scrape | True | 48 | http://skxjz.nhri.cn/article/current |
-| shuili_xuebao | 水利学报 | papers | api | True | 720 | https://api.crossref.org/works?filter=issn:0559-9350&sort=updated&order=desc&rows=20 |
-| chinawater | 中国水利 | papers | scrape | True | 48 | https://slzg.cbpt.cnki.net/portal/journal/portal/client/index |
-| smolai_news | SmolAI News | ai_news | rss | True | 24 | https://news.smol.ai/rss.xml |
-| arxiv_cs_ai | arXiv CS.AI | arxiv | rss | True | 24 | https://rss.arxiv.org/rss/cs.AI |
-| github_trending | GitHub Trending | code | scrape | True | 24 | https://github.com/trending?since=daily |
-| huggingface_models | HuggingFace Trending Models | code | api | True | 24 | https://huggingface.co/api/models |
-| huggingface_datasets | HuggingFace Trending Datasets | code | api | True | 24 | https://huggingface.co/api/datasets |
-| huggingface_spaces | HuggingFace Trending Spaces | code | api | True | 24 | https://huggingface.co/api/spaces |
-| dlut_zhxw | 大连理工大学 - 综合新闻 | resource | scrape | True | 24 | https://news.dlut.edu.cn/zhxw.htm |
-| dlut_rcpy | 大连理工大学 - 人才培养 | resource | scrape | True | 24 | https://news.dlut.edu.cn/rcpy.htm |
-| dlut_xsky | 大连理工大学 - 学术科研 | resource | scrape | True | 24 | https://news.dlut.edu.cn/xsky.htm |
-| dlut_hzjl | 大连理工大学 - 合作交流 | resource | scrape | True | 24 | https://news.dlut.edu.cn/hzjl.htm |
-| dlut_yxfc | 大连理工大学 - 一线风采 | resource | scrape | True | 24 | https://news.dlut.edu.cn/yxfc.htm |
-| dlut_sche | 大连理工大学 - 建设工程学院 | resource | scrape | True | 24 | http://sche.dlut.edu.cn |
-| dlut_futureschool | 大连理工大学 - 未来技术学院 | resource | scrape | True | 24 | http://futureschool.dlut.edu.cn |
-| dlut_scidep | 大连理工大学 - 科学技术研究院 | resource | scrape | True | 24 | http://scidep.dlut.edu.cn/zytz.htm |
-| dlut_recruitment | 大连理工大学 - 招聘信息 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
-| dlut_internship | 大连理工大学 - 实习信息 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
-| dlut_transfer_recruitment | 大连理工大学 - 选调生 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
+For conference sources, `provider` identifies the actual upstream: OpenReview, ACL Anthology, CVF/ECVA, DBLP, or NeurIPS Proceedings.
+
+| Name | Display Name | Category | Type | Provider | Enabled | Poll/Lookback Hours | URL |
+|------|--------------|----------|------|----------|---------|---------------------|-----|
+| nature | Nature | papers | rss |  | True | 24 | https://www.nature.com/nature.rss |
+| nature_communications | Nature Communications | papers | rss |  | True | 24 | https://www.nature.com/ncomms.rss |
+| scientific_data | Scientific Data | papers | rss |  | True | 24 | https://www.nature.com/sdata.rss |
+| science_advances | Science Advances | papers | rss |  | True | 24 | https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv |
+| science_news | Science News | papers | rss |  | True | 24 | https://www.science.org/rss/news_current.xml |
+| nature_machine_intelligence | Nature Machine Intelligence | papers | rss |  | True | 24 | https://www.nature.com/natmachintell.rss |
+| nature_reviews_physics | Nature Reviews Physics | papers | rss |  | True | 24 | https://www.nature.com/natrevphys.rss |
+| pnas | PNAS | papers | rss |  | True | 24 | https://www.pnas.org/action/showFeed?type=etoc&feed=rss&jc=PNAS |
+| science | Science | papers | rss |  | True | 24 | https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science |
+| nature_sustainability | Nature Sustainability | papers | rss |  | True | 24 | https://www.nature.com/natsustain.rss |
+| nature_geoscience | Nature Geoscience | papers | rss |  | True | 24 | https://www.nature.com/ngeo.rss |
+| nature_reviews_earth_environ | Nature Reviews Earth & Environment | papers | rss |  | True | 24 | https://www.nature.com/natrevearthenviron.rss |
+| nature_climate_change | Nature Climate Change | papers | rss |  | True | 24 | https://www.nature.com/nclimate.rss |
+| aies | AI in Earth Sciences (AIES) | papers | rss |  | True | 24 | https://journals.ametsoc.org/journalissuetocrss/journals/aies/aies-overview.xml |
+| bams | Bulletin of the American Meteorological Society | papers | rss |  | True | 24 | https://journals.ametsoc.org/journalissuetocrss/journals/bams/bams-overview.xml |
+| essd | Earth System Science Data (ESSD) | papers | rss |  | True | 24 | https://essd.copernicus.org/articles/xml/rss2_0.xml |
+| gmd | Geoscientific Model Development (GMD) | papers | rss |  | True | 24 | https://gmd.copernicus.org/xml/rss2_0.xml |
+| nhess | Natural Hazards and Earth System Sciences (NHESS) | papers | rss |  | True | 24 | https://nhess.copernicus.org/articles/xml/rss2_0.xml |
+| james | Journal of Advances in Modeling Earth Systems (JAMES) | papers | rss |  | True | 24 | https://agupubs.onlinelibrary.wiley.com/feed/19422466/most-recent |
+| earth_space_science | Earth and Space Science | papers | rss |  | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=23335084&type=etoc&feed=rss |
+| grl | Geophysical Research Letters (GRL) | papers | rss |  | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=19448007&type=etoc&feed=rss |
+| reviews_geophysics | Reviews of Geophysics | papers | rss |  | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=19449208&type=etoc&feed=rss |
+| earths_future | Earth's Future | papers | rss |  | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=23284277&type=etoc&feed=rss |
+| remote_sensing_environ | Remote Sensing of Environment | papers | rss |  | True | 24 | https://rss.sciencedirect.com/publication/science/00344257 |
+| environ_modelling_software | Environmental Modelling & Software | papers | rss |  | True | 24 | https://rss.sciencedirect.com/publication/science/13648152 |
+| nature_water | Nature Water | papers | rss |  | True | 24 | https://www.nature.com/natwater.rss |
+| hess | Hydrology and Earth System Sciences (HESS) | papers | rss |  | True | 24 | https://hess.copernicus.org/articles/xml/rss2_0.xml |
+| jhm | Journal of Hydrometeorology (JHM) | papers | rss |  | True | 24 | https://journals.ametsoc.org/journalissuetocrss/journals/hydr/hydr-overview.xml |
+| wrr | Water Resources Research (WRR) | papers | rss |  | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=19447973&type=etoc&feed=rss |
+| hydrological_processes | Hydrological Processes | papers | rss |  | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=10991085&type=etoc&feed=rss |
+| water_research | Water Research | papers | rss |  | True | 24 | https://rss.sciencedirect.com/publication/science/00431354 |
+| advances_water_resources | Advances in Water Resources | papers | rss |  | True | 24 | https://rss.sciencedirect.com/publication/science/03091708 |
+| journal_hydrology | Journal of Hydrology | papers | rss |  | True | 24 | https://rss.sciencedirect.com/publication/science/00221694 |
+| skxjz | 水科学进展 | papers | scrape |  | True | 48 | http://skxjz.nhri.cn/article/current |
+| shuili_xuebao | 水利学报 | papers | api |  | True | 720 | https://api.crossref.org/works?filter=issn:0559-9350&sort=updated&order=desc&rows=20 |
+| chinawater | 中国水利 | papers | scrape |  | True | 48 | https://slzg.cbpt.cnki.net/portal/journal/portal/client/index |
+| smolai_news | SmolAI News | ai_news | rss |  | True | 24 | https://news.smol.ai/rss.xml |
+| arxiv_cs_ai | arXiv CS.AI | arxiv | rss |  | True | 24 | https://rss.arxiv.org/rss/cs.AI |
+| github_trending | GitHub Trending | code | scrape |  | True | 24 | https://github.com/trending?since=daily |
+| huggingface_models | HuggingFace Trending Models | code | api |  | True | 24 | https://huggingface.co/api/models |
+| huggingface_datasets | HuggingFace Trending Datasets | code | api |  | True | 24 | https://huggingface.co/api/datasets |
+| huggingface_spaces | HuggingFace Trending Spaces | code | api |  | True | 24 | https://huggingface.co/api/spaces |
+| dlut_zhxw | 大连理工大学 - 综合新闻 | resource | scrape |  | True | 24 | https://news.dlut.edu.cn/zhxw.htm |
+| dlut_rcpy | 大连理工大学 - 人才培养 | resource | scrape |  | True | 24 | https://news.dlut.edu.cn/rcpy.htm |
+| dlut_xsky | 大连理工大学 - 学术科研 | resource | scrape |  | True | 24 | https://news.dlut.edu.cn/xsky.htm |
+| dlut_hzjl | 大连理工大学 - 合作交流 | resource | scrape |  | True | 24 | https://news.dlut.edu.cn/hzjl.htm |
+| dlut_yxfc | 大连理工大学 - 一线风采 | resource | scrape |  | True | 24 | https://news.dlut.edu.cn/yxfc.htm |
+| dlut_sche | 大连理工大学 - 建设工程学院 | resource | scrape |  | True | 24 | http://sche.dlut.edu.cn |
+| dlut_futureschool | 大连理工大学 - 未来技术学院 | resource | scrape |  | True | 24 | http://futureschool.dlut.edu.cn |
+| dlut_scidep | 大连理工大学 - 科学技术研究院 | resource | scrape |  | True | 24 | http://scidep.dlut.edu.cn/zytz.htm |
+| dlut_recruitment | 大连理工大学 - 招聘信息 | resource | api |  | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
+| dlut_internship | 大连理工大学 - 实习信息 | resource | api |  | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
+| dlut_transfer_recruitment | 大连理工大学 - 选调生 | resource | api |  | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
+| openreview_iclr_2026 | ICLR 2026 | conference | api | openreview | True | 168 | https://openreview.net/group?id=ICLR.cc%2F2026%2FConference |
+| openreview_icml_2026 | ICML 2026 | conference | api | openreview | True | 168 | https://openreview.net/group?id=ICML.cc%2F2026%2FConference |
+| openreview_neurips_2026 | NeurIPS 2026 | conference | api | openreview | True | 24 | https://openreview.net/group?id=NeurIPS.cc%2F2026%2FConference |
+| openreview_aaai_2026 | AAAI 2026 | conference | api | openreview | False | 24 | https://openreview.net/group?id=AAAI.org%2F2026%2FConference |
+| openreview_kdd_2026 | KDD 2026 Research Track (August) | conference | api | openreview | False | 24 | https://openreview.net/group?id=KDD.org%2F2026%2FResearch_Track_August |
+| openreview_kdd_2026_cycle2 | KDD 2026 Research Track (Cycle 2) | conference | api | openreview | False | 24 | https://openreview.net/group?id=KDD.org%2F2026%2FResearch_Track_Cycle_2 |
+| openreview_cvpr_2026 | CVPR 2026 | conference | api | openreview | False | 24 | https://openreview.net/group?id=thecvf.com%2FCVPR%2F2026%2FConference |
+| openreview_acl_2026 | ACL 2026 | conference | api | openreview | False | 24 | https://openreview.net/group?id=aclweb.org%2FACL%2F2026%2FConference |
+| openreview_emnlp_2026 | EMNLP 2026 | conference | api | openreview | False | 24 | https://openreview.net/group?id=EMNLP%2F2026%2FConference |
+| openreview_iccv_2025 | ICCV 2025 (latest main conference) | conference | api | openreview | False | 168 | https://openreview.net/group?id=thecvf.com%2FICCV%2F2025%2FConference |
+| openreview_naacl_2025 | NAACL 2025 (latest main conference) | conference | api | openreview | False | 168 | https://openreview.net/group?id=aclweb.org%2FNAACL%2F2025%2FConference |
+| acl_anthology_acl_2026 | ACL 2026 | conference | api | acl | True | 168 | https://aclanthology.org/events/acl-2026/ |
+| acl_anthology_emnlp_2025 | EMNLP 2025 | conference | api | acl | True | 168 | https://aclanthology.org/events/emnlp-2025/ |
+| acl_anthology_naacl_2025 | NAACL 2025 | conference | api | acl | True | 168 | https://aclanthology.org/events/naacl-2025/ |
+| cvf_cvpr_2026 | CVPR 2026 | conference | api | cvf | True | 168 | https://openaccess.thecvf.com/CVPR2026?day=all |
+| cvf_iccv_2025 | ICCV 2025 | conference | api | cvf | True | 168 | https://openaccess.thecvf.com/ICCV2025?day=all |
+| cvf_eccv_2024 | ECCV 2024 | conference | api | cvf | True | 168 | https://www.ecva.net/papers.php |
+| dblp_aaai_2026 | AAAI 2026 | conference | api | dblp | True | 168 | https://dblp.org/db/conf/aaai/aaai2026.html |
+| dblp_kdd_2026 | KDD 2026 | conference | api | dblp | True | 168 | https://dblp.org/db/conf/kdd/kdd2026.html |
+| dblp_ijcai_2026 | IJCAI 2026 | conference | api | dblp | True | 168 | https://dblp.org/db/conf/ijcai/ijcai2026.html |
+| neurips_proceedings_2025 | NeurIPS 2025 Proceedings | conference | api | neurips | True | 168 | https://proceedings.neurips.cc/paper_files/paper/2025/vol38-main-conference |

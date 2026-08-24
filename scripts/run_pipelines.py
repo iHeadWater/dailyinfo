@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import base64
 import datetime
 import json
 import os
@@ -24,6 +25,11 @@ import time
 import requests
 
 from datasource import DataSource, RSSDataSource, build_feed_url_map
+from conference import ConferenceState, run_conference_source
+from openreview_provider import (
+    OpenReviewRuntime,
+    classify_openreview_error,
+)
 from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -157,7 +163,13 @@ def _resolve_fallback_model(explicit: str | None) -> str:
     )
 
 
-def _post_ai(url: str, api_key: str, model: str, prompt: str, max_tokens: int):
+def _post_ai(
+    url: str,
+    api_key: str,
+    model: str,
+    prompt: str | list[dict[str, object]],
+    max_tokens: int,
+):
     """Issue a single AI chat completion call and return the parsed JSON."""
     resp = requests.post(
         url,
@@ -172,8 +184,13 @@ def _post_ai(url: str, api_key: str, model: str, prompt: str, max_tokens: int):
         },
         timeout=120,
     )
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp.raise_for_status()
+        return resp.json()
+    finally:
+        close = getattr(resp, "close", None)
+        if callable(close):
+            close()
 
 
 def _get_deepseek_key() -> str:
@@ -189,7 +206,7 @@ _DEEPSEEK_KEY_CACHE: str | None = None
 
 def call_ai(
     prompt: str,
-    model: str = "deepseek-v4-flash",
+    model: str = "deepseek-v4-pro",
     max_tokens: int = 1200,
     *,
     fallback_model: str | None = None,
@@ -257,6 +274,48 @@ def call_ai(
 
     raise BriefingGenerationError(
         f"call_ai: empty response after retries (model={model}, fallback={fallback})"
+    )
+
+
+def call_vision_ai(
+    prompt: str,
+    images: list[bytes],
+    model: str = "deepseek-v4-flash-vision-exp",
+    max_tokens: int = 256,
+) -> str:
+    """Call the DeepSeek vision endpoint for a small set of figure crops."""
+
+    ds_key = _get_deepseek_key()
+    content: list[dict[str, object]] = [{"type": "text", "text": prompt}]
+    for image in images:
+        encoded = base64.b64encode(image).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+            }
+        )
+    for i in range(3):
+        try:
+            data = _post_ai(
+                DEEPSEEK_API_URL,
+                ds_key,
+                model,
+                content,
+                max_tokens,
+            )
+        except requests.RequestException as exc:
+            log(f"  [call_vision_ai] {model} attempt {i + 1}/3 http_error={exc}")
+            time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
+            continue
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        finish_reason = choice.get("finish_reason") or "unknown"
+        response = (message.get("content") or "").strip()
+        if response and finish_reason != "length":
+            return response
+    raise BriefingGenerationError(
+        f"call_vision_ai: empty response after retries (model={model})"
     )
 
 
@@ -512,6 +571,8 @@ def _already_pushed_within(name: str, category: str, lookback_hours: int) -> boo
 # every source is re-run; names in ``FORCE_SOURCES`` are selectively re-run.
 FORCE_ALL: bool = False
 FORCE_SOURCES: set[str] = set()
+SOURCE_FILTER: set[str] = set()
+CONFERENCE_RUN_FAILED: bool = False
 
 
 def _is_forced(name: str) -> bool:
@@ -563,7 +624,29 @@ def _filter_sources(cfg: dict, category: str, *types: str) -> list[dict]:
         if s.get("category") == category
         and s.get("type") in types
         and s.get("enabled", True)
+        and (not SOURCE_FILTER or s.get("name") in SOURCE_FILTER)
     ]
+
+
+def _resolve_conference_source(source: dict, defaults: dict) -> dict:
+    """Apply shared OpenReview defaults while preserving source overrides.
+
+    Conference entries only need to declare their venue identity. Nested
+    dictionaries are merged so a venue can override one retrieval or review
+    option without copying the complete profile into ``sources.json``.
+    """
+
+    profile = defaults.get("conference_defaults", {})
+    if not isinstance(profile, dict) or not profile:
+        return source
+    resolved = dict(profile)
+    for key, value in source.items():
+        inherited = resolved.get(key)
+        if isinstance(inherited, dict) and isinstance(value, dict):
+            resolved[key] = {**inherited, **value}
+        else:
+            resolved[key] = value
+    return resolved
 
 
 def _process_regular_source(ds, feed_cfg: dict, model_default: str,
@@ -720,7 +803,7 @@ def _run_category_pipeline(category: str, *,
     path is used instead of the regular batched path.
     """
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-v4-pro")
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
 
     # --- RSS sources ---
@@ -813,12 +896,14 @@ def run_pipeline_arxiv() -> int:
 def run_pipeline_code() -> int:
     log("=== Pipeline 4: Code Trending ===")
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-v4-pro")
     code_tmpl = templates.get("code_trending", "")
     saved = 0
 
     for source_cfg in cfg["sources"]:
         if source_cfg.get("category") != "code" or source_cfg.get("enabled") is False:
+            continue
+        if SOURCE_FILTER and source_cfg.get("name") not in SOURCE_FILTER:
             continue
 
         ds = DataSource.create(source_cfg, defaults)
@@ -847,7 +932,7 @@ def run_pipeline_code() -> int:
             continue
 
         if not items:
-            log(f"    no items")
+            log("    no items")
             continue
 
         log(f"    {len(items)} items")
@@ -940,7 +1025,7 @@ def _generate_unified_news(
             f"\U0001f4ed 过去 48 小时无新内容\n"
         )
         save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", placeholder)
-        log(f"    no updates -> placeholder")
+        log("    no updates -> placeholder")
         return 1
 
     section_parts = []
@@ -973,7 +1058,7 @@ def _generate_unified_news(
 def run_pipeline_resource() -> int:
     log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-v4-pro")
     saved = 0
 
     # --- Part A: unified news briefing (8 news sources -> 1 file) ---
@@ -982,6 +1067,7 @@ def run_pipeline_resource() -> int:
         if s.get("category") == "resource"
         and s.get("news_group") == _DLUT_NEWS_GROUP
         and s.get("enabled", True) is not False
+        and (not SOURCE_FILTER or s.get("name") in SOURCE_FILTER)
     ]
     if news_sources:
         if _has_real_briefing_today(_DLUT_NEWS_GROUP, "resource"):
@@ -998,6 +1084,7 @@ def run_pipeline_resource() -> int:
             source_cfg.get("category") != "resource"
             or source_cfg.get("enabled") is False
             or source_cfg.get("news_group") == _DLUT_NEWS_GROUP
+            or (SOURCE_FILTER and source_cfg.get("name") not in SOURCE_FILTER)
         ):
             continue
 
@@ -1025,7 +1112,7 @@ def run_pipeline_resource() -> int:
             )
             save("resource", f"{ds.name}_briefing_{DATE}.md", no_update)
             saved += 1
-            log(f"    no updates -> placeholder")
+            log("    no updates -> placeholder")
             continue
 
         log(f"    {len(items)} items (within {ds.lookback_hours}h)")
@@ -1057,6 +1144,101 @@ def run_pipeline_resource() -> int:
 
 
 # =====================================================================
+# PIPELINE 6: Conference Papers
+# =====================================================================
+def run_pipeline_conference() -> int:
+    global CONFERENCE_RUN_FAILED
+
+    CONFERENCE_RUN_FAILED = False
+    log("=== Pipeline 6: Conference Papers ===")
+    cfg, defaults, _templates = _load_sources()
+    sources = _filter_sources(cfg, "conference", "api")
+    saved = 0
+    runtime: OpenReviewRuntime | None = None
+    runtime_init_error: Exception | None = None
+    for source_cfg in sources:
+        source_cfg = _resolve_conference_source(source_cfg, defaults)
+        provider_kind = str(source_cfg.get("provider") or "").casefold()
+        if provider_kind not in {"openreview", "acl", "cvf", "dblp", "neurips"}:
+            log(
+                f"  {source_cfg.get('name', '?')}: unsupported conference provider "
+                f"{provider_kind or '<empty>'}"
+            )
+            CONFERENCE_RUN_FAILED = True
+            continue
+        name = source_cfg["name"]
+        log(f"  {name}...")
+        try:
+            provider = None
+            if provider_kind == "openreview":
+                if runtime is None:
+                    if runtime_init_error is not None:
+                        raise runtime_init_error
+                    log("  [OpenReview] creating shared authenticated runtime")
+                    try:
+                        runtime = OpenReviewRuntime(source_cfg)
+                    except Exception as exc:
+                        runtime_init_error = exc
+                        raise
+                    log("  [OpenReview] shared runtime ready")
+                provider = runtime.provider(source_cfg)
+            result = run_conference_source(
+                source_cfg,
+                defaults,
+                call_ai,
+                STATE_DIR,
+                BRIEFINGS_DIR,
+                DATE,
+                force=_is_forced(name),
+                provider=provider,
+                logger=log,
+                call_vision_ai=call_vision_ai,
+            )
+            saved += result.files_saved
+            if result.outcome == "DEGRADED":
+                CONFERENCE_RUN_FAILED = True
+            log(
+                f"    {result.outcome}: scanned={result.submissions_scanned} "
+                f"candidates={result.retrieval_candidates} "
+                f"relevant={result.relevant_papers} events={result.events_created} "
+                f"saved={result.files_saved}"
+            )
+        except KeyboardInterrupt:
+            try:
+                active = ConferenceState(STATE_DIR / "openreview.sqlite3").active_run(
+                    name
+                )
+                if active:
+                    ConferenceState(STATE_DIR / "openreview.sqlite3").interrupt_run(
+                        active["run_id"], "received interrupt signal"
+                    )
+            finally:
+                raise
+        except Exception as exc:
+            CONFERENCE_RUN_FAILED = True
+            try:
+                state = ConferenceState(STATE_DIR / "openreview.sqlite3")
+                active = state.active_run(name)
+                if active:
+                    state.interrupt_run(active["run_id"], f"source error: {exc}")
+            except Exception as state_exc:
+                log(f"    STATE_ERROR: {state_exc}")
+            outcome = classify_openreview_error(exc)
+            try:
+                ConferenceState(STATE_DIR / "openreview.sqlite3").record_outcome(
+                    name, source_cfg.get("venue_id", ""), outcome, str(exc)
+                )
+            except Exception as state_exc:
+                log(f"    STATE_ERROR: {state_exc}")
+            log(f"    {outcome}: {exc}")
+    if runtime is not None:
+        runtime.close()
+        log("  [OpenReview] shared runtime closed")
+    log(f"  Pipeline 6 done: {saved} files saved")
+    return saved
+
+
+# =====================================================================
 # Main
 # =====================================================================
 def main() -> int:
@@ -1064,8 +1246,8 @@ def main() -> int:
     parser.add_argument(
         "--pipeline",
         type=int,
-        choices=[1, 2, 3, 4, 5],
-        help="Run specific pipeline: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource. Default: all",
+        choices=[1, 2, 3, 4, 5, 6],
+        help="Run specific pipeline: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource, 6=conference. Default: all",
     )
     parser.add_argument(
         "--force",
@@ -1075,12 +1257,46 @@ def main() -> int:
         help="Force regenerate. Pass 'all' to refresh everything or a source "
         "name to target one source. Repeatable.",
     )
+    parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        metavar="SOURCE",
+        help="Only run the named configured source. Repeatable.",
+    )
     args = parser.parse_args()
 
-    global API_KEY, FORCE_ALL, FORCE_SOURCES
-    API_KEY = load_api_key()
+    global API_KEY, FORCE_ALL, FORCE_SOURCES, SOURCE_FILTER
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
+    SOURCE_FILTER = set(args.source)
+    if SOURCE_FILTER:
+        cfg, _defaults, _templates = _load_sources()
+        configured = {source.get("name"): source for source in cfg.get("sources", [])}
+        unknown = sorted(SOURCE_FILTER - configured.keys())
+        if unknown:
+            parser.error(f"unknown source(s): {', '.join(unknown)}")
+        if args.pipeline:
+            pipeline_categories = {
+                1: "papers",
+                2: "ai_news",
+                3: "arxiv",
+                4: "code",
+                5: "resource",
+                6: "conference",
+            }
+            wrong = sorted(
+                name
+                for name in SOURCE_FILTER
+                if configured[name].get("category")
+                != pipeline_categories[args.pipeline]
+            )
+            if wrong:
+                parser.error(
+                    f"source(s) do not belong to pipeline {args.pipeline}: "
+                    + ", ".join(wrong)
+                )
+    API_KEY = load_api_key()
     if FORCE_ALL or FORCE_SOURCES:
         log(
             "Force mode: "
@@ -1098,26 +1314,55 @@ def main() -> int:
         3: run_pipeline_arxiv,
         4: run_pipeline_code,
         5: run_pipeline_resource,
+        6: run_pipeline_conference,
     }
-    to_run = [args.pipeline] if args.pipeline else [1, 2, 3, 4, 5]
+    if args.pipeline:
+        to_run = [args.pipeline]
+    elif SOURCE_FILTER:
+        category_pipelines = {
+            "papers": 1,
+            "ai_news": 2,
+            "arxiv": 3,
+            "code": 4,
+            "resource": 5,
+            "conference": 6,
+        }
+        to_run = sorted(
+            {
+                category_pipelines[configured[name]["category"]]
+                for name in SOURCE_FILTER
+            }
+        )
+    else:
+        to_run = [1, 2, 3, 4, 5, 6]
     total_saved = 0
+    failed_pipelines: set[int] = set()
 
     for p in to_run:
         try:
             total_saved += pipelines[p]()
         except Exception as e:
+            failed_pipelines.add(p)
             log(f"Pipeline {p} FAILED: {e}")
             import traceback
             traceback.print_exc()
 
     log("=== Summary ===")
-    for d in ["papers", "ai_news", "code", "resource", "arxiv"]:
+    for d in ["papers", "ai_news", "code", "resource", "arxiv", "conference"]:
         path = BRIEFINGS_DIR / d
         if path.exists():
-            files = [f.name for f in sorted(path.iterdir()) if DATE in f.name]
+            try:
+                files = [f.name for f in sorted(path.iterdir()) if DATE in f.name]
+            except OSError as exc:
+                # Do not turn a resource-exhaustion diagnostic into a second
+                # traceback while rendering the summary.
+                log(f"  {d}/: unavailable ({exc})")
+                continue
             log(f'  {d}/: {len(files)} today - {", ".join(files)}')
 
     log(f"Total: {total_saved} files saved")
+    if args.pipeline == 6:
+        return 1 if CONFERENCE_RUN_FAILED or 6 in failed_pipelines else 0
     return 0 if total_saved > 0 else 1
 
 

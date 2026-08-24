@@ -49,9 +49,7 @@ def sync_pictures() -> None:
         return
     # Find `pictures/<name>.png` references in README.md.
     readme_text = README.read_text(encoding="utf-8")
-    referenced = set(
-        re.findall(r"pictures/([A-Za-z0-9_.-]+\.png)", readme_text)
-    )
+    referenced = set(re.findall(r"pictures/([A-Za-z0-9_.-]+\.png)", readme_text))
     target = DOCS_DIR / "pictures"
     target.mkdir(parents=True, exist_ok=True)
     for name in referenced:
@@ -69,21 +67,30 @@ def generate_sources_page() -> None:
         "",
         f"This page is generated from [`config/sources.json`]({SOURCES_URL}).",
         "",
-        "| Name | Display Name | Category | Type | Enabled | Lookback Hours | URL |",
-        "|------|--------------|----------|------|---------|----------------|-----|",
+        "For conference sources, `provider` identifies the actual upstream: "
+        "OpenReview, ACL Anthology, CVF/ECVA, DBLP, or NeurIPS Proceedings.",
+        "",
+        "| Name | Display Name | Category | Type | Provider | Enabled | Poll/Lookback Hours | URL |",
+        "|------|--------------|----------|------|----------|---------|---------------------|-----|",
     ]
     defaults = cfg.get("defaults", {})
     default_lookback = defaults.get("lookback_hours", "")
     for source in sources:
         lines.append(
-            "| {name} | {display_name} | {category} | {type} | {enabled} | "
+            "| {name} | {display_name} | {category} | {type} | {provider} | {enabled} | "
             "{lookback} | {url} |".format(
                 name=_markdown_cell(source.get("name", "")),
                 display_name=_markdown_cell(source.get("display_name", "")),
                 category=_markdown_cell(source.get("category", "")),
                 type=_markdown_cell(source.get("type", "")),
+                provider=_markdown_cell(source.get("provider", "")),
                 enabled=_markdown_cell(source.get("enabled", True)),
-                lookback=_markdown_cell(source.get("lookback_hours", default_lookback)),
+                lookback=_markdown_cell(
+                    source.get(
+                        "poll_interval_hours",
+                        source.get("lookback_hours", default_lookback),
+                    )
+                ),
                 url=_markdown_cell(source.get("url", "")),
             )
         )

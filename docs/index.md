@@ -6,7 +6,7 @@ DailyInfo is an automated research intelligence collector for AI for Science res
 
 ## How It Works
 
-One pipeline, five independent sources of information:
+One pipeline, six independent sources of information:
 
 ```text
 FreshRSS / scrape / API sources
@@ -16,7 +16,7 @@ FreshRSS / scrape / API sources
   -> Discord channels + local archive
 ```
 
-1. **Collect** — five independent pipelines pull from 40+ feeds, pages, and APIs. A failure in one never blocks the others.
+1. **Collect** — six independent pipelines pull from 40+ feeds, pages, and APIs. A failure in one never blocks the others.
 2. **Summarize** — DeepSeek writes a readable Chinese briefing per source, tuned for researchers: what the papers are, why they matter, and what's worth a closer look.
 3. **Deliver** — briefings land in your Discord channels and are archived locally. Nothing is ever sent twice.
 
@@ -26,12 +26,42 @@ You wake up to a curated digest of everything relevant to your field — no feed
 
 | | |
 |---|---|
-| **Five pipelines** | Papers (30+ journals, including Chinese water-resources journals) · AI news · arXiv CS.AI (up to 500 preprints/day) · GitHub trending + HuggingFace models · University updates |
+| **Six pipelines** | Journal papers · AI news · arXiv CS.AI · GitHub + HuggingFace trends · University updates · conference papers and OpenReview lifecycle events |
 | **Chinese-first briefings** | AI summaries in Chinese with automatic fallback to an OpenRouter model when the primary API fails |
 | **Configuration-driven** | Add RSS, scrape, or API sources in `config/sources.json` — no code changes required |
 | **Idempotent & safe to rerun** | Sources with today's briefing are skipped; pushed files are never re-sent |
 | **Resilient** | Retries with exponential backoff, batch splitting on partial AI responses, per-source isolation |
 | **Scheduler-agnostic** | Bring your own cron, systemd timer, or agent runtime — DailyInfo owns the pipeline, not the clock |
+
+### Conference pipeline and actual sources
+
+Pipeline 6 normalizes several public conference sources into one resumable
+SQLite workflow at `~/.myagentdata/dailyinfo/state/openreview.sqlite3`.
+The source determines which information is available:
+
+| Enabled source | Conferences | Available data |
+|---|---|---|
+| OpenReview API v2 | ICLR 2026, ICML 2026, NeurIPS 2026 | Submissions plus public reviews, rebuttals, decisions, and status changes |
+| ACL Anthology | ACL 2026, EMNLP 2025, NAACL 2025 | Published-paper metadata; no review lifecycle |
+| CVF Open Access / ECVA | CVPR 2026, ICCV 2025, ECCV 2024 | Published-paper metadata; no review lifecycle |
+| DBLP | AAAI 2026, KDD 2026, IJCAI 2026 | Bibliographic metadata; no review lifecycle |
+| NeurIPS Proceedings | NeurIPS 2025 | Published-paper metadata; no review lifecycle |
+
+Additional OpenReview venue entries for AAAI, KDD, CVPR, ACL, EMNLP, ICCV,
+and NAACL are retained in `config/sources.json` but disabled. They are not
+polled unless explicitly enabled after a suitable public OpenReview venue is
+verified. Use the enabled canonical proceedings source shown above for those
+conferences.
+
+- New OpenReview submissions are discovered with a creation-time watermark; tracked forums are re-polled, and periodic full rescans catch other changes.
+- Static proceedings sources are periodically rescanned for newly published metadata.
+- Relevance uses the configured keyword/Embedding union; DeepSeek is used only for the final Chinese briefing.
+- `dailyinfo status` exposes run phase, cursor progress, candidates, and errors so interrupted runs can resume safely.
+
+Optional OpenReview authentication can be provided with
+`OPENREVIEW_USERNAME` and `OPENREVIEW_PASSWORD`; public-only filtering remains
+enabled by default, and OpenReview credentials are never forwarded to external
+PDF or proceedings hosts.
 
 ## Screenshots
 
@@ -71,12 +101,14 @@ Default data root: `~/.myagentdata/dailyinfo/`. Override it with `DAILYINFO_DATA
 │   ├── ai_news/
 │   ├── arxiv/
 │   ├── code/
+│   ├── conference/
 │   └── resource/
 └── pushed/              # Successfully pushed archive
     ├── papers/
     ├── ai_news/
     ├── arxiv/
     ├── code/
+    ├── conference/
     └── resource/
 ```
 
@@ -112,6 +144,10 @@ dailyinfo push
 | `dailyinfo run -p 3` | Pipeline 3: arXiv CS.AI |
 | `dailyinfo run -p 4` | Pipeline 4: code trending |
 | `dailyinfo run -p 5` | Pipeline 5: university/resource |
+| `dailyinfo run -p 6` | Pipeline 6: configured conference sources |
+| `dailyinfo run -p 6 --source openreview_iclr_2026` | Run ICLR 2026 from OpenReview |
+| `dailyinfo run -p 6 --source cvf_cvpr_2026` | Run CVPR 2026 from CVF Open Access |
+| `dailyinfo status` | Show conference checkpoint phase and progress |
 | `dailyinfo run -f all` | Force regeneration for all sources |
 | `dailyinfo push` | Push pending briefings to Discord and archive them |
 | `dailyinfo push -d 2026-04-22` | Push briefings for a specific date |
@@ -128,7 +164,8 @@ dailyinfo push
 |----------|---------|
 | `DEEPSEEK_API_KEY` | DeepSeek API key (primary model for `dailyinfo run`) |
 | `DISCORD_BOT_TOKEN` | Discord bot token for `dailyinfo push` |
-| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` | Optional category channel IDs |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` / `_CONFERENCE` | Optional category channel IDs |
+| `OPENREVIEW_USERNAME` / `OPENREVIEW_PASSWORD` | Optional OpenReview authentication; set both (public-only push remains the default) |
 | `FRESHRSS_USER` | FreshRSS username |
 | `FRESHRSS_PASSWORD` | FreshRSS initial password |
 | `DAILYINFO_DATA_ROOT` | Override default data root |

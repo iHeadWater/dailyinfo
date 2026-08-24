@@ -1,0 +1,60 @@
+{
+  "submission": {
+    "id": "forum-hydro-1",
+    "forum_id": "forum-hydro-1",
+    "number": 42,
+    "title": "HydroCast: Foundation Models for Streamflow Forecasting",
+    "abstract": "We forecast streamflow across watersheds with a hydrological foundation model.",
+    "authors": ["Researcher A", "Researcher B"],
+    "keywords": ["hydrology", "streamflow", "forecasting"],
+    "venue": "Submitted to ICLR 2026",
+    "venue_id": "ICLR.cc/2026/Conference/Submission",
+    "status": "under_review",
+    "pdf": "https://openreview.net/pdf?id=forum-hydro-1",
+    "code_url": "https://github.com/example/hydrocast",
+    "cdate": 1750000000000,
+    "mdate": 1750000000000,
+    "invitations": ["ICLR.cc/2026/Conference/-/Submission"],
+    "camera_ready": false
+  },
+  "replies": [
+    {
+      "id": "review-1",
+      "forum_id": "forum-hydro-1",
+      "replyto": "forum-hydro-1",
+      "invitations": ["ICLR.cc/2026/Conference/Submission42/-/Official_Review"],
+      "content": {
+        "rating": {"value": "8: accept"},
+        "confidence": {"value": "4: confident"},
+        "summary": {"value": "A useful cross-basin streamflow forecasting model."},
+        "strengths": {"value": "Strong hydrological evaluation."},
+        "weaknesses": {"value": "Limited extreme-flood analysis."}
+      },
+      "cdate": 1751000000000,
+      "mdate": 1751000000000
+    },
+    {
+      "id": "rebuttal-1",
+      "forum_id": "forum-hydro-1",
+      "replyto": "review-1",
+      "invitations": ["ICLR.cc/2026/Conference/Submission42/-/Rebuttal"],
+      "content": {
+        "rebuttal": {"value": "We add extreme-flood experiments and clarify the evaluation protocol."}
+      },
+      "cdate": 1751500000000,
+      "mdate": 1751500000000
+    },
+    {
+      "id": "decision-1",
+      "forum_id": "forum-hydro-1",
+      "replyto": "forum-hydro-1",
+      "invitations": ["ICLR.cc/2026/Conference/Submission42/-/Decision"],
+      "content": {
+        "decision": {"value": "Accept (Poster)"},
+        "comment": {"value": "The added flood analysis addressed the main concern."}
+      },
+      "cdate": 1752000000000,
+      "mdate": 1752000000000
+    }
+  ]
+}
