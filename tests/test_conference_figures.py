@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 
 from conference_figures import (  # noqa: E402
+    FigureExtractionError,
     FigureDownloadError,
     caption_score,
     download_pdf,
@@ -17,6 +18,7 @@ from conference_figures import (  # noqa: E402
     pdf_url_candidates,
     pdf_sha256,
     write_cached_extraction,
+    _render,
 )
 
 
@@ -241,6 +243,19 @@ def test_vision_reviewer_failure_does_not_resurrect_text_rejection():
     )
 
     assert result.status == "NO_FIGURE"
+
+
+def test_render_rejects_image_that_stays_over_max_bytes():
+    class Pixmap:
+        def tobytes(self, _format):
+            return b"oversized"
+
+    class Page:
+        def get_pixmap(self, **_kwargs):
+            return Pixmap()
+
+    with pytest.raises(FigureExtractionError, match="max_image_bytes"):
+        _render(Page(), None, 360, 4)
 
 
 def test_download_pdf_checks_magic_and_size(monkeypatch):

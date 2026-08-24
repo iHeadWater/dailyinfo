@@ -12,6 +12,56 @@ RATING_OPTIONS = [
 ]
 
 
+def test_figure_refresh_replaces_stale_sidecar_attachment(tmp_path, monkeypatch):
+    import conference as conference_module
+
+    briefings = tmp_path / "briefings"
+    conference_dir = briefings / "conference"
+    conference_dir.mkdir(parents=True)
+    filename = "openreview_briefing_2026-08-24_abcd.md"
+    sidecar = conference_dir / filename.replace(".md", ".assets.json")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "attachments": [
+                    {"event_id": "event-1", "manifest": {"path": "old.png"}},
+                    {"event_id": "event-2", "manifest": {"path": "keep.png"}},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    event = {"event_id": "event-1", "briefing_filename": filename}
+
+    class State:
+        def figure_events_needing_refresh(self, *_args, **_kwargs):
+            return [event]
+
+    refreshed = {
+        "event_id": "event-1",
+        "manifest": {"path": "new.png"},
+    }
+    monkeypatch.setattr(
+        conference_module,
+        "_prepare_figure_assets",
+        lambda *_args, **_kwargs: [refreshed],
+    )
+
+    assert conference_module._retry_rendered_figure_assets(
+        State(),
+        "openreview_test",
+        {"figures": {"enabled": True}},
+        briefings,
+        tmp_path / "assets",
+    ) == 1
+
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert payload["attachments"] == [
+        refreshed,
+        {"event_id": "event-2", "manifest": {"path": "keep.png"}},
+    ]
+
+
 def _fixture():
     path = Path(__file__).parent / "fixtures" / "openreview" / "iclr_public_forum.json"
     return json.loads(path.read_text(encoding="utf-8"))

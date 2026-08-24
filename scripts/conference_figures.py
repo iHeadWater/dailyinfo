@@ -469,12 +469,16 @@ def _tighten_to_graphics(
 
 
 def _render(page: Any, clip: Any, dpi: int, max_bytes: int) -> tuple[bytes, int]:
+    if max_bytes <= 0:
+        raise FigureExtractionError("max_image_bytes must be positive")
     for candidate_dpi in (dpi, 150, 120, 96):
         pixmap = page.get_pixmap(dpi=candidate_dpi, clip=clip, alpha=False)
         data = pixmap.tobytes("png")
-        if len(data) <= max_bytes or candidate_dpi == 96:
+        if len(data) <= max_bytes:
             return data, candidate_dpi
-    raise AssertionError("unreachable")
+    raise FigureExtractionError(
+        f"rendered figure exceeds max_image_bytes={max_bytes}"
+    )
 
 
 def extract_architecture_figure(

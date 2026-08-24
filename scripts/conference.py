@@ -2069,12 +2069,17 @@ def _retry_rendered_figure_assets(
         except (OSError, json.JSONDecodeError):
             continue
         existing = payload.get("attachments", [])
-        existing_ids = {str(item.get("event_id")) for item in existing}
-        existing.extend(
-            item for item in new_attachments
-            if str(item.get("event_id")) not in existing_ids
-        )
-        payload["attachments"] = existing
+        replacements = {
+            str(item.get("event_id")): item for item in new_attachments
+        }
+        merged = []
+        for item in existing:
+            event_id = str(item.get("event_id"))
+            merged.append(replacements.pop(event_id, item))
+        # Preserve newly refreshed attachments whose event was not present in
+        # the old sidecar, while replacing stale entries in place above.
+        merged.extend(replacements.values())
+        payload["attachments"] = merged
         _atomic_write(sidecar, json.dumps(payload, ensure_ascii=False, indent=2))
         updated += len(new_attachments)
     return updated
