@@ -13,9 +13,11 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from hashlib import sha256
 from html import unescape
+from ipaddress import ip_address
 import json
 from pathlib import Path
 import re
+import socket
 import time
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -50,6 +52,64 @@ def _clean_fragment(fragment: str) -> str:
 
 def _absolute(base_url: str, href: str) -> str:
     return urljoin(base_url, str(href or "").strip())
+
+
+def _normalise_host(host: str) -> str:
+    return str(host or "").casefold().rstrip(".")
+
+
+def _public_host(url: str, allowed_hosts: set[str]) -> str:
+    """Validate a provider URL before making a server-side request.
+
+    Conference pages are untrusted input after the initial listing request.
+    Keep requests on an explicit HTTPS host allowlist and reject literal or
+    DNS-resolved private targets, including cloud metadata/link-local ranges.
+    """
+
+    parsed = urlparse(str(url or ""))
+    if parsed.scheme != "https" or parsed.username or parsed.password:
+        raise WebConferenceProviderError(
+            "conference URL must be HTTPS without credentials"
+        )
+    host = _normalise_host(parsed.hostname or "")
+    if not host or host not in allowed_hosts:
+        raise WebConferenceProviderError(
+            f"blocked conference URL host: {host or '<empty>'}"
+        )
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise WebConferenceProviderError("invalid conference URL port") from exc
+    if port not in (None, 443):
+        raise WebConferenceProviderError("non-standard conference URL port is blocked")
+
+    addresses: set[str] = set()
+    try:
+        addresses.add(str(ip_address(host)))
+    except ValueError:
+        try:
+            addresses.update(
+                str(ip_address(item[4][0]))
+                for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+            )
+        except (OSError, ValueError) as exc:
+            raise WebConferenceProviderError(
+                f"could not resolve conference URL host: {host}"
+            ) from exc
+    for address in addresses:
+        resolved = ip_address(address)
+        if (
+            resolved.is_private
+            or resolved.is_loopback
+            or resolved.is_link_local
+            or resolved.is_reserved
+            or resolved.is_multicast
+            or resolved.is_unspecified
+        ):
+            raise WebConferenceProviderError(
+                f"blocked private conference URL target: {host} ({address})"
+            )
+    return parsed._replace(fragment="").geturl()
 
 
 def _stable_id(provider: str, value: str) -> str:
@@ -178,6 +238,7 @@ class WebConferenceProvider:
     """Base provider for one static conference listing."""
 
     provider_name = "web"
+    extra_allowed_hosts: set[str] = set()
 
     def __init__(self, config: dict, *, session: requests.Session | None = None):
         self.config = config
@@ -212,9 +273,24 @@ class WebConferenceProvider:
         self.session.headers.update({"User-Agent": self.options.user_agent})
         cache_dir = config.get("provider_cache_dir")
         self.cache_dir = Path(cache_dir).expanduser() if cache_dir else None
-        self._listing_url = str(config.get("url") or "").strip()
-        if not self._listing_url:
+        listing_url = str(config.get("url") or "").strip()
+        if not listing_url:
             raise ValueError("web conference source requires url")
+        listing_host = _normalise_host(urlparse(listing_url).hostname or "")
+        configured_hosts = {
+            _normalise_host(host)
+            for host in (config.get("allowed_hosts") or [])
+            if _normalise_host(host)
+        }
+        # The configured listing host is always trusted as the source entry
+        # point. Additional hosts must be explicitly configured or provided by
+        # a provider's known public aliases (for example CVF/ECVA).
+        self._allowed_hosts = {
+            listing_host,
+            *configured_hosts,
+            *(_normalise_host(host) for host in self.extra_allowed_hosts),
+        }
+        self._listing_url = _public_host(listing_url, self._allowed_hosts)
         self._papers: dict[str, dict] = {}
         self._memory_cache: dict[str, str] = {}
         self._code_url_cache: dict[str, str] = {}
@@ -243,6 +319,34 @@ class WebConferenceProvider:
         digest = sha256(url.encode("utf-8")).hexdigest()[:32]
         return self.cache_dir / self.provider_name / f"{digest}.json"
 
+    def _fetch_response(self, url: str) -> requests.Response | Any:
+        """Fetch one page with bounded, host-validated redirect handling."""
+
+        current_url = url
+        response = None
+        for _redirect in range(4):
+            safe_url = _public_host(current_url, self._allowed_hosts)
+            response = self.session.get(
+                safe_url,
+                allow_redirects=False,
+                timeout=(self.options.connect_timeout, self.options.read_timeout),
+            )
+            status = int(getattr(response, "status_code", 200))
+            if status < 300 or status >= 400:
+                return response
+            location = str(
+                (getattr(response, "headers", {}) or {}).get("Location") or ""
+            )
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+            if not location:
+                raise WebConferenceProviderError(
+                    f"conference redirect has no Location header: {safe_url}"
+                )
+            current_url = _absolute(safe_url, location)
+        raise WebConferenceProviderError("too many conference URL redirects")
+
     def _get_text(self, url: str, *, detail: bool = False) -> str:
         if url in self._memory_cache:
             return self._memory_cache[url]
@@ -259,13 +363,7 @@ class WebConferenceProvider:
         response = None
         for attempt in range(self.options.retries + 1):
             try:
-                response = self.session.get(
-                    url,
-                    timeout=(
-                        self.options.connect_timeout,
-                        self.options.read_timeout,
-                    ),
-                )
+                response = self._fetch_response(url)
                 response.raise_for_status()
                 break
             except requests.RequestException as exc:
@@ -510,6 +608,7 @@ class ACLAnthologyProvider(WebConferenceProvider):
     """Read ACL/EMNLP/NAACL/EACL/COLING event or volume pages."""
 
     provider_name = "acl"
+    extra_allowed_hosts = {"www.aclanthology.org"}
     _paper_href = re.compile(
         r"^/(?:\d{4}\.[A-Za-z0-9-]+\.\d+|[A-Za-z]\d{2}-\d+)/?$"
     )
@@ -598,6 +697,10 @@ class CVFOpenAccessProvider(WebConferenceProvider):
     """Read CVF/ECVA open-access conference indexes."""
 
     provider_name = "cvf"
+    extra_allowed_hosts = {
+        "openaccess.thecvf.com",
+        "www.ecva.net",
+    }
 
     def _parse_listing(self, html: str, listing_url: str) -> list[dict]:
         soup = BeautifulSoup(html, "html.parser")
@@ -715,6 +818,7 @@ class DBLPProvider(WebConferenceProvider):
     """
 
     provider_name = "dblp"
+    extra_allowed_hosts = {"www.dblp.org", "doi.org", "dx.doi.org"}
 
     def _parse_listing(self, html: str, listing_url: str) -> list[dict]:
         records: list[dict] = []
@@ -826,6 +930,7 @@ class NeurIPSProceedingsProvider(WebConferenceProvider):
     """Read the official NeurIPS Proceedings volume and paper pages."""
 
     provider_name = "neurips"
+    extra_allowed_hosts = {"www.proceedings.neurips.cc"}
 
     def _parse_listing(self, html: str, listing_url: str) -> list[dict]:
         soup = BeautifulSoup(html, "html.parser")

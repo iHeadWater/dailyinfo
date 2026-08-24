@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from conference_web_provider import (
     ACLAnthologyProvider,
     CVFOpenAccessProvider,
     DBLPProvider,
     NeurIPSProceedingsProvider,
+    WebConferenceProviderError,
     WebConferenceNotReady,
     _extract_code_url_from_html,
     _extract_code_url_from_pdf,
@@ -217,6 +220,64 @@ def test_web_source_not_ready_has_stable_outcome():
     assert classify_openreview_error(WebConferenceNotReady("not published")) == (
         "SOURCE_NOT_READY"
     )
+
+
+def test_web_provider_rejects_private_listing_url():
+    with pytest.raises(WebConferenceProviderError, match="private"):
+        ACLAnthologyProvider(
+            {
+                "provider": "acl",
+                "venue_id": "ACL2026",
+                "url": "https://127.0.0.1/internal",
+            },
+            session=FakeSession({}),
+        )
+
+
+def test_web_provider_rejects_untrusted_detail_host(tmp_path: Path):
+    listing = "https://aclanthology.org/events/acl-2026/"
+    session = FakeSession({listing: ""})
+    provider = ACLAnthologyProvider(
+        {
+            "provider": "acl",
+            "venue_id": "ACL2026",
+            "url": listing,
+            "provider_cache_dir": str(tmp_path),
+        },
+        session=session,
+    )
+
+    with pytest.raises(WebConferenceProviderError, match="blocked conference URL host"):
+        provider._get_text("https://example.com/private")
+    assert session.calls == []
+
+
+def test_web_provider_validates_redirect_target(tmp_path: Path):
+    listing = "https://aclanthology.org/events/acl-2026/"
+
+    class RedirectResponse(FakeResponse):
+        status_code = 302
+        headers = {"Location": "https://127.0.0.1:8080/metadata"}
+
+    class RedirectSession(FakeSession):
+        def get(self, url, **_kwargs):
+            self.calls.append(url)
+            return RedirectResponse("")
+
+    session = RedirectSession({})
+    provider = ACLAnthologyProvider(
+        {
+            "provider": "acl",
+            "venue_id": "ACL2026",
+            "url": listing,
+            "provider_cache_dir": str(tmp_path),
+        },
+        session=session,
+    )
+
+    with pytest.raises(WebConferenceProviderError, match="blocked conference URL host"):
+        provider._get_text(listing)
+    assert session.calls == [listing]
 
 
 def test_dblp_provider_normalizes_bibliographic_entries():
