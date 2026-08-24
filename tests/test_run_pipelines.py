@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from datetime import datetime
 
@@ -20,6 +21,116 @@ def test_save_writes_under_briefings_dir(monkeypatch):
     assert path.exists()
     assert path.read_text(encoding="utf-8") == "hello world"
     assert full == str(path)
+
+
+def test_pipeline6_main_treats_empty_result_as_success(monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py", "--pipeline", "6"])
+    monkeypatch.setattr(rp, "load_api_key", lambda: "test-key")
+    monkeypatch.setattr(rp, "run_pipeline_conference", lambda: 0)
+    monkeypatch.setattr(rp, "CONFERENCE_RUN_FAILED", False)
+
+    assert rp.main() == 0
+
+
+def test_pipeline6_main_reports_uncaught_failure(monkeypatch):
+    import run_pipelines as rp
+
+    def fail():
+        raise RuntimeError("unexpected failure")
+
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py", "--pipeline", "6"])
+    monkeypatch.setattr(rp, "load_api_key", lambda: "test-key")
+    monkeypatch.setattr(rp, "run_pipeline_conference", fail)
+    monkeypatch.setattr(rp, "CONFERENCE_RUN_FAILED", False)
+
+    assert rp.main() == 1
+
+
+def test_full_run_reports_failure_even_when_other_pipelines_saved(monkeypatch):
+    """A crashed pipeline must not be masked by unrelated successful work."""
+
+    import run_pipelines as rp
+
+    def fail():
+        raise RuntimeError("openreview exploded")
+
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py"])
+    monkeypatch.setattr(rp, "load_api_key", lambda: "test-key")
+    monkeypatch.setattr(rp, "CONFERENCE_RUN_FAILED", False)
+    monkeypatch.setattr(rp, "run_pipeline_papers", lambda: 1)
+    for name in ("run_pipeline_ai_news", "run_pipeline_arxiv",
+                 "run_pipeline_code", "run_pipeline_resource"):
+        monkeypatch.setattr(rp, name, lambda: 0)
+    monkeypatch.setattr(rp, "run_pipeline_conference", fail)
+
+    assert rp.main() == 1
+
+
+def test_prompt_volume_is_tallied_without_capping_batches(monkeypatch):
+    """Cost is observable, never bounded: every batch still gets summarized."""
+
+    import run_pipelines as rp
+    from datasource import Item
+
+    sent: list[int] = []
+    monkeypatch.setattr(rp, "call_ai", lambda prompt, **kw: sent.append(len(prompt)) or "ok")
+    monkeypatch.setattr(rp, "validate_briefing_content", lambda *a, **k: None)
+    monkeypatch.setattr(rp, "log", lambda *a, **k: None)
+    monkeypatch.setattr(rp, "AI_PROMPT_CHARS", 0)
+
+    class Stub:
+        name = display_name = "arxiv_cs_ai"
+        config: dict = {}
+
+        def format_items(self, items):
+            return "\n".join(item.title for item in items)
+
+    items = [Item(title=f"Paper {i}", date="2026-08-24", content="x" * 2000)
+             for i in range(3)]
+    for _ in range(2):
+        rp._generate_regular_briefings(Stub(), items, "{count} {article_list}", "m")
+
+    assert len(sent) == 2, "no batch may be dropped to save tokens"
+    assert rp.AI_PROMPT_CHARS == sum(sent)
+
+
+def test_full_run_reports_degraded_conference_outcome(monkeypatch):
+    """DEGRADED sets no exception, so only the flag surfaces the failure."""
+
+    import run_pipelines as rp
+
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py"])
+    monkeypatch.setattr(rp, "load_api_key", lambda: "test-key")
+    monkeypatch.setattr(rp, "run_pipeline_papers", lambda: 1)
+    for name in ("run_pipeline_ai_news", "run_pipeline_arxiv",
+                 "run_pipeline_code", "run_pipeline_resource"):
+        monkeypatch.setattr(rp, name, lambda: 0)
+
+    def degraded():
+        rp.CONFERENCE_RUN_FAILED = True
+        return 0
+
+    monkeypatch.setattr(rp, "CONFERENCE_RUN_FAILED", False)
+    monkeypatch.setattr(rp, "run_pipeline_conference", degraded)
+
+    assert rp.main() == 1
+
+
+def test_full_run_succeeds_when_every_pipeline_is_healthy(monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py"])
+    monkeypatch.setattr(rp, "load_api_key", lambda: "test-key")
+    monkeypatch.setattr(rp, "CONFERENCE_RUN_FAILED", False)
+    monkeypatch.setattr(rp, "run_pipeline_papers", lambda: 1)
+    for name in ("run_pipeline_ai_news", "run_pipeline_arxiv",
+                 "run_pipeline_code", "run_pipeline_resource",
+                 "run_pipeline_conference"):
+        monkeypatch.setattr(rp, name, lambda: 0)
+
+    assert rp.main() == 0
 
 
 def test_already_pushed_within_detects_recent_file():
@@ -297,7 +408,7 @@ def test_process_regular_source_records_zero_state_for_empty_rss(rss_db, monkeyp
     saved = rp._process_regular_source(
         ds,
         ds.config,
-        "deepseek-v4-flash",
+        "deepseek-v4-pro",
         {"one_line_summary": "summarize {article_list}"},
         "one_line_summary",
     )
@@ -352,13 +463,209 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
     saved = rp._process_regular_source(
         ds,
         ds.config,
-        "deepseek-v4-flash",
+        "deepseek-v4-pro",
         {"one_line_summary": "summarize {article_list}"},
         "one_line_summary",
     )
 
     assert saved == 1
     assert not (STATE_DIR / "arxiv_cs_ai_zero_state.json").exists()
+
+
+def test_process_regular_source_skips_zero_state_when_retrieval_rejected_all(
+    rss_db, monkeypatch
+):
+    """A fully-rejected feed page is not evidence that FreshRSS is stuck."""
+
+    import run_pipelines as rp
+    from datasource import RSSDataSource
+    from paths import STATE_DIR
+
+    ds = RSSDataSource(
+        {
+            "name": "arxiv_cs_ai",
+            "type": "rss",
+            "category": "arxiv",
+            "url": "https://rss.arxiv.org/rss/cs.AI",
+        },
+        {},
+        db=rss_db,
+    )
+
+    saved = rp._process_regular_source(
+        ds,
+        ds.config,
+        "deepseek-v4-pro",
+        {"one_line_summary": "summarize {article_list}"},
+        "one_line_summary",
+        fetched_items=[],
+        commit_items=[],
+        items_are_filtered=True,
+        fetched_before_filter=50,
+    )
+
+    assert saved == 1
+    assert not (STATE_DIR / "arxiv_cs_ai_zero_state.json").exists()
+
+
+def test_process_regular_source_writes_nothing_on_weekend(rss_db, monkeypatch):
+    """A weekdays_only source must not even leave a placeholder on Sat/Sun.
+
+    An empty fetch would land in the placeholder branch, which push relays to
+    Discord as a "no updates" notice -- exactly what must not happen when the
+    source simply has no weekend edition.
+    """
+
+    import run_pipelines as rp
+    from datasource import RSSDataSource
+
+    ds = RSSDataSource(
+        {
+            "name": "hf_daily_papers",
+            "type": "rss",
+            "category": "arxiv",
+            "url": "https://rss.arxiv.org/rss/cs.AI",
+            "weekdays_only": True,
+            "date": "2026-08-22",  # Saturday
+        },
+        {},
+        db=rss_db,
+    )
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("weekend run must not fetch")
+
+    monkeypatch.setattr(ds, "fetch", fail)
+
+    saved = rp._process_regular_source(
+        ds,
+        ds.config,
+        "deepseek-v4-pro",
+        {"one_line_summary": "summarize {article_list}"},
+        "one_line_summary",
+    )
+
+    assert saved == 0
+    assert not list((rp.BRIEFINGS_DIR / "arxiv").glob("hf_daily_papers_*.md"))
+
+
+def test_arxiv_pipeline_deduplicates_hf_and_rss_before_summarizing(
+    tmp_path, monkeypatch
+):
+    import json
+    import run_pipelines as rp
+    from datasource import Item
+
+    config_path = tmp_path / "sources.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "defaults": {"model": "stub", "prompt_template": "one_line_summary"},
+                "prompt_templates": {"one_line_summary": "{article_list}"},
+                "sources": [
+                    {
+                        "name": "arxiv_cs_ai",
+                        "display_name": "arXiv",
+                        "category": "arxiv",
+                        "type": "rss",
+                        "enabled": True,
+                    },
+                    {
+                        "name": "hf_daily_papers",
+                        "display_name": "HF Daily",
+                        "category": "arxiv",
+                        "type": "api",
+                        "enabled": True,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rp, "SOURCES_JSON", str(config_path))
+    monkeypatch.setattr(rp, "build_feed_url_map", lambda _db: ({}, {}))
+
+    class FakeDB:
+        row_factory = None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(rp.sqlite3, "connect", lambda _path: FakeDB())
+
+    class FakeSource:
+        def __init__(self, config):
+            self.config = config
+            self.name = config["name"]
+            self.display_name = config["display_name"]
+            self.category = "arxiv"
+            self.lookback_hours = 24
+            self._items = {
+                "hf_daily_papers": [
+                    Item(
+                        "Popular paper",
+                        rp.DATE,
+                        "https://arxiv.org/abs/2401.12345",
+                    )
+                ],
+                "arxiv_cs_ai": [
+                    Item(
+                        "RSS duplicate",
+                        rp.DATE,
+                        "https://arxiv.org/abs/2401.12345v1",
+                    ),
+                    Item("RSS unique", rp.DATE, "https://arxiv.org/abs/2401.99999"),
+                ],
+            }[self.name]
+            self.committed = []
+
+        # Exercise the real weekday-skip contract, not a divergent copy.
+        target_date = rp.DataSource.target_date
+        skips_today = rp.DataSource.skips_today
+
+        def fetch(self):
+            return list(self._items)
+
+        def commit_seen(self, items):
+            self.committed.extend(items)
+
+        def commit_cursor(self):
+            return None
+
+        def get_batches(self, items):
+            return [items]
+
+        def format_items(self, items):
+            return "\n".join(f"{i + 1}. {item.title}" for i, item in enumerate(items))
+
+    sources = {}
+
+    def fake_create(config, defaults, **ctx):
+        source = FakeSource(config)
+        sources[source.name] = source
+        return source
+
+    monkeypatch.setattr(rp.DataSource, "create", staticmethod(fake_create))
+    monkeypatch.setattr(
+        rp,
+        "call_ai",
+        lambda prompt, **kwargs: "\n".join(
+            f"{i + 1}. **{title}**\n   > 摘要。"
+            for i, title in enumerate(
+                line.split(". ", 1)[1]
+                for line in prompt.splitlines()
+                if line.startswith(tuple(f"{i}. " for i in range(1, 10)))
+            )
+        ),
+    )
+
+    assert rp.run_pipeline_arxiv() == 2
+    hf_file = next((rp.BRIEFINGS_DIR / "arxiv").glob("hf_daily_papers_*.md"))
+    rss_file = next((rp.BRIEFINGS_DIR / "arxiv").glob("arxiv_cs_ai_*.md"))
+    assert "Popular paper" in hf_file.read_text(encoding="utf-8")
+    assert "RSS unique" in rss_file.read_text(encoding="utf-8")
+    assert "RSS duplicate" not in rss_file.read_text(encoding="utf-8")
+    assert len(sources["arxiv_cs_ai"].committed) == 2
 
 
 class _StubAIResponse:
@@ -497,6 +804,54 @@ def test_validate_briefing_content_rejects_cutoff_markdown():
 
     with pytest.raises(rp.BriefingGenerationError):
         rp.validate_briefing_content("1. **A**\n   > 摘要。\n\n2. **N", 2)
+
+
+def test_validate_briefing_content_accepts_closed_bold_mid_sentence():
+    """A Highlight paragraph may close a bold span and keep writing prose.
+
+    Regression: the old ``\\*\\*[^*\\n]{1,160}$`` probe could not tell an unclosed
+    bold from a closed one followed by more text on the same line, so complete
+    briefings (finish_reason=stop, all items present) were rejected as truncated
+    and needlessly re-sent as split batches.
+    """
+    import run_pipelines as rp
+
+    content = (
+        "1. **Paper A**\n   > 摘要。\n\n"
+        "---\n\n🔭 **Today's Highlight**\n\n"
+        "今日最值得关注的是 **物理信息神经算子** 在水文预测中的系统应用，"
+        "该方向将守恒约束与可学习谱核结合，展示了广泛的适用性。"
+    )
+
+    rp.validate_briefing_content(content, 1, ["Paper A"])
+
+
+def test_call_ai_floors_max_tokens_for_reasoning_models(monkeypatch):
+    """Budgets sized for the visible answer must leave room for reasoning.
+
+    ``max_tokens`` covers chain-of-thought plus body on reasoning models, so a
+    caller asking for 2500 truncated mid-briefing. Larger explicit budgets
+    (conference passes 50000) must pass through untouched.
+    """
+    import run_pipelines as rp
+
+    sent: list[int] = []
+
+    def fake_post(url, api_key, model, prompt, max_tokens):
+        sent.append(max_tokens)
+        return {
+            "choices": [
+                {"message": {"content": "1. **A**\n   > 摘要。"}, "finish_reason": "stop"}
+            ]
+        }
+
+    monkeypatch.setattr(rp, "_post_ai", fake_post)
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "k")
+
+    rp.call_ai("p", max_tokens=2500)
+    rp.call_ai("p", max_tokens=50000)
+
+    assert sent == [rp.MIN_COMPLETION_TOKENS, 50000]
 
 
 def test_generate_regular_briefings_splits_incomplete_batch(monkeypatch):
@@ -895,7 +1250,7 @@ def test_pipeline_resource_unified_news_saves_single_file(
     fake_requests.register("https://news.dlut.test/zhxw.htm", FakeResponse(200, html))
     fake_requests.register("https://news.dlut.test/xsky.htm", FakeResponse(200, html))
 
-    saved = rp.run_pipeline_resource()
+    rp.run_pipeline_resource()
 
     today = datetime.now().strftime("%Y-%m-%d")
     unified = BRIEFINGS_DIR / "resource" / f"dlut_news_briefing_{today}.md"
@@ -946,8 +1301,6 @@ def test_pipeline_resource_url_dedup_across_sections(
     """Same URL appearing in two sections should only appear once in prompt."""
     import json
     import run_pipelines as rp
-    from paths import BRIEFINGS_DIR
-
     from datetime import datetime
 
     now = datetime.now()

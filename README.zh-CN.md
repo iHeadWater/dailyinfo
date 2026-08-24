@@ -6,7 +6,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化科研情报收集器。
 
 ## 工作原理
 
-一条流水线,五个相互独立的信息来源:
+一条流水线,六个相互独立的信息来源:
 
 ```text
 FreshRSS / 网页抓取 / API 数据源
@@ -16,7 +16,7 @@ FreshRSS / 网页抓取 / API 数据源
   -> Discord 频道 + 本地归档
 ```
 
-1. **采集** — 五条独立流水线从 40+ 个 feed、页面和 API 拉取信息。一条流水线失败不影响其他。
+1. **采集** — 六条独立流水线从 40+ 个 feed、页面和 API 拉取信息。一条流水线失败不影响其他。
 2. **归纳** — DeepSeek 为每个数据源生成一份可读的中文简报,面向研究者优化:这些论文讲了什么、为什么重要、哪些值得细看。
 3. **推送** — 简报进入你的 Discord 频道并本地归档。同一份内容永远不会重复发送。
 
@@ -26,7 +26,7 @@ FreshRSS / 网页抓取 / API 数据源
 
 | | |
 |---|---|
-| **五条流水线** | 期刊论文(30+ 期刊,含中文水利期刊)· AI 资讯 · arXiv CS.AI(每日最多 500 篇)· GitHub Trending + HuggingFace 模型 · 院所动态 |
+| **六条流水线** | 期刊论文 · AI 资讯 · arXiv CS.AI · GitHub Trending + HuggingFace · 院所动态 · OpenReview 顶会论文与公开评审事件 |
 | **中文优先简报** | AI 生成中文摘要;主模型 API 故障时自动降级到 OpenRouter 备用模型 |
 | **配置驱动** | 在 `config/sources.json` 中添加 RSS、网页或 API 数据源,无需改代码 |
 | **幂等,可安全重跑** | 已有今日简报的数据源自动跳过;已推送文件不会重复发送 |
@@ -71,12 +71,14 @@ FreshRSS / 网页抓取 / API 数据源
 │   ├── ai_news/
 │   ├── arxiv/
 │   ├── code/
+│   ├── conference/
 │   └── resource/
 └── pushed/              # 已推送归档
     ├── papers/
     ├── ai_news/
     ├── arxiv/
     ├── code/
+    ├── conference/
     └── resource/
 ```
 
@@ -112,6 +114,8 @@ dailyinfo push
 | `dailyinfo run -p 3` | 流水线 3：arXiv CS.AI |
 | `dailyinfo run -p 4` | 流水线 4：代码趋势 |
 | `dailyinfo run -p 5` | 流水线 5：院所资讯 |
+| `dailyinfo run -p 6` | 流水线 6：OpenReview 顶会论文 |
+| `dailyinfo run -p 6 --source openreview_iclr_2026` | 只运行指定会议源 |
 | `dailyinfo run -f all` | 强制重生全部数据源 |
 | `dailyinfo push` | 推送待处理简报到 Discord 并归档 |
 | `dailyinfo push -d 2026-04-22` | 推送指定日期简报 |
@@ -128,7 +132,8 @@ dailyinfo push
 |------|------|
 | `DEEPSEEK_API_KEY` | `dailyinfo run` 使用的 DeepSeek API key(主模型) |
 | `DISCORD_BOT_TOKEN` | `dailyinfo push` 使用的 Discord bot token |
-| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` | 可选分类频道 ID |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` / `_CONFERENCE` | 可选分类频道 ID |
+| `OPENREVIEW_USERNAME` / `OPENREVIEW_PASSWORD` | OpenReview 认证（可选，必须同时设置；默认仍只推送公开内容） |
 | `FRESHRSS_USER` | FreshRSS 用户名 |
 | `FRESHRSS_PASSWORD` | FreshRSS 初始密码 |
 | `DAILYINFO_DATA_ROOT` | 覆盖默认数据根目录 |

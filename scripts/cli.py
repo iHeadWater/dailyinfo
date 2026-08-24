@@ -28,11 +28,18 @@ _SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-import click
+import click  # noqa: E402
 
-from paths import BRIEFINGS_DIR, CURRENT_ENV, FRESHRSS_DATA, PUSHED_DIR, WORKSPACE_ROOT
+from paths import (  # noqa: E402
+    BRIEFINGS_DIR,
+    CURRENT_ENV,
+    FRESHRSS_DATA,
+    PUSHED_DIR,
+    STATE_DIR,
+    WORKSPACE_ROOT,
+)
 
-from clean_cache import clean_stale_cache
+from clean_cache import clean_stale_cache  # noqa: E402
 
 SCRIPTS_DIR = Path(__file__).parent.resolve()
 PROJECT_ROOT = SCRIPTS_DIR.parent
@@ -46,7 +53,7 @@ def _env_banner() -> str:
     return f"[env:{CURRENT_ENV}]"
 
 
-CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
+CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv", "conference"]
 
 
 def _python() -> str:
@@ -126,6 +133,7 @@ def install():
         f"DISCORD_CHANNEL_CODE{suffix}",
         f"DISCORD_CHANNEL_RESOURCE{suffix}",
         f"DISCORD_CHANNEL_ARXIV{suffix}",
+        f"DISCORD_CHANNEL_CONFERENCE{suffix}",
     ]
     env = _read_env_keys(required + channel_keys)
 
@@ -233,9 +241,9 @@ def restart():
 @click.option(
     "--pipeline",
     "-p",
-    type=click.Choice(["1", "2", "3", "4", "5", "all"]),
+    type=click.Choice(["1", "2", "3", "4", "5", "6", "all"]),
     default="all",
-    help="Pipeline to run: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource.",
+    help="Pipeline to run: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource, 6=conference.",
 )
 @click.option(
     "-f",
@@ -245,7 +253,13 @@ def restart():
     help="Force regenerate today's briefing. Pass 'all' to refresh everything "
     "or a source name (e.g. 'arxiv_cs_ai'). Repeatable.",
 )
-def run(pipeline, force):
+@click.option(
+    "--source",
+    multiple=True,
+    metavar="SOURCE",
+    help="Only run a named configured source. Repeatable.",
+)
+def run(pipeline, force, source):
     """Scrape sources, generate AI summaries, save briefing files.
 
     By default, sources whose today's briefing already exists are skipped;
@@ -257,6 +271,8 @@ def run(pipeline, force):
         cmd += ["--pipeline", pipeline]
     for src in force:
         cmd += ["--force", src]
+    for src in source:
+        cmd += ["--source", src]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
 
@@ -276,7 +292,7 @@ def run(pipeline, force):
     help=(
         "Comma-separated list of categories to push "
         "(e.g. 'papers,ai_news,code,resource' or 'weekly'). "
-        "Defaults to all five categories."
+        "Defaults to all daily categories."
     ),
 )
 def push(date_str, categories):
@@ -341,6 +357,31 @@ def status():
                 click.echo(f"  {cat:15s}: {len(files):3d} files")
 
     click.echo(f"\nTotal pending: {total_pending} files")
+    state_path = STATE_DIR / "openreview.sqlite3"
+    if state_path.exists():
+        try:
+            from conference import ConferenceState
+
+            summaries = ConferenceState(state_path).source_summary()
+            if summaries:
+                click.echo("\nOpenReview venues:")
+                for item in summaries:
+                    click.echo(
+                        f"  {item['source']:24s}: {item.get('last_outcome') or '-':13s} "
+                        f"tracked={item.get('tracked', 0)} pending={item.get('pending', 0)}"
+                    )
+                    if item.get("run_status") in {"RUNNING", "INTERRUPTED"}:
+                        total = item.get("run_total") or "?"
+                        click.echo(
+                            f"    run {item.get('run_status')} "
+                            f"phase={item.get('run_phase') or '-'} "
+                            f"fetched={item.get('run_fetched', 0)}/{total} "
+                            f"candidates={item.get('run_candidates', 0)} "
+                            f"evaluated={item.get('run_evaluated', 0)} "
+                            f"relevant={item.get('run_relevant', 0)}"
+                        )
+        except Exception as exc:
+            click.echo(f"  OpenReview state unavailable: {exc}")
 
 
 @cli.command()
@@ -372,12 +413,30 @@ def _source_url(source_name: str) -> str:
     show_default=True,
     help="Configured source name whose FreshRSS cache should be cleared.",
 )
-@click.option("--url", default="", help="Explicit feed URL to clear instead of --source.")
-@click.option("--all-stale", is_flag=True, help="Clear every stale SimplePie cache entry.")
-@click.option("--max-age", default=24, show_default=True, help="Stale threshold in hours for --all-stale.")
-@click.option("--dry-run", is_flag=True, help="Show what would be deleted without deleting.")
-@click.option("--refresh", is_flag=True, help="Run FreshRSS actualize_script.php after clearing.")
-@click.option("--container", default="dailyinfo_freshrss", show_default=True, help="FreshRSS container name for --refresh.")
+@click.option(
+    "--url", default="", help="Explicit feed URL to clear instead of --source."
+)
+@click.option(
+    "--all-stale", is_flag=True, help="Clear every stale SimplePie cache entry."
+)
+@click.option(
+    "--max-age",
+    default=24,
+    show_default=True,
+    help="Stale threshold in hours for --all-stale.",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be deleted without deleting."
+)
+@click.option(
+    "--refresh", is_flag=True, help="Run FreshRSS actualize_script.php after clearing."
+)
+@click.option(
+    "--container",
+    default="dailyinfo_freshrss",
+    show_default=True,
+    help="FreshRSS container name for --refresh.",
+)
 def cache_clear(source, url, all_stale, max_age, dry_run, refresh, container):
     """Clear FreshRSS SimplePie cache files for stuck feeds (see issue #57)."""
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))

@@ -19,8 +19,8 @@ import urllib.request
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 
-from datasource import build_feed_url_map, resolve_feed_id, strip_html
-from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR
+from datasource import build_feed_url_map, resolve_feed_id  # noqa: E402
+from paths import FRESHRSS_DATA, PUSHED_DIR  # noqa: E402
 
 SOURCES_JSON = os.path.join(PROJECT_ROOT, "config", "sources.json")
 
@@ -51,7 +51,7 @@ def load_env(key):
     return os.environ.get(key, "")
 
 
-def call_ai(prompt, api_key, model="deepseek-v4-flash", max_tokens=1500):
+def call_ai(prompt, api_key, model="deepseek-v4-pro", max_tokens=1500):
     import requests
 
     resp = requests.post(
@@ -155,7 +155,7 @@ def main():
     db_path = str(FRESHRSS_DATA / "users" / freshrss_user / "db.sqlite")
     if not os.path.exists(db_path):
         log(f"ERROR: FreshRSS DB not found: {db_path}")
-        log(f"       Set FRESHRSS_USER in .env")
+        log("       Set FRESHRSS_USER in .env")
         sys.exit(1)
 
     db = sqlite3.connect(db_path)
@@ -239,7 +239,7 @@ def main():
             path = archive(name, today, full_content)
             log(f"    -> sent & archived: {os.path.basename(path)}")
         else:
-            log(f"    -> Discord send failed, briefing NOT archived")
+            log("    -> Discord send failed, briefing NOT archived")
 
         time.sleep(2)
 

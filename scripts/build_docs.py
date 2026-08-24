@@ -49,9 +49,7 @@ def sync_pictures() -> None:
         return
     # Find `pictures/<name>.png` references in README.md.
     readme_text = README.read_text(encoding="utf-8")
-    referenced = set(
-        re.findall(r"pictures/([A-Za-z0-9_.-]+\.png)", readme_text)
-    )
+    referenced = set(re.findall(r"pictures/([A-Za-z0-9_.-]+\.png)", readme_text))
     target = DOCS_DIR / "pictures"
     target.mkdir(parents=True, exist_ok=True)
     for name in referenced:
@@ -69,8 +67,8 @@ def generate_sources_page() -> None:
         "",
         f"This page is generated from [`config/sources.json`]({SOURCES_URL}).",
         "",
-        "| Name | Display Name | Category | Type | Enabled | Lookback Hours | URL |",
-        "|------|--------------|----------|------|---------|----------------|-----|",
+        "| Name | Display Name | Category | Type | Enabled | Poll/Lookback Hours | URL |",
+        "|------|--------------|----------|------|---------|---------------------|-----|",
     ]
     defaults = cfg.get("defaults", {})
     default_lookback = defaults.get("lookback_hours", "")
@@ -83,7 +81,12 @@ def generate_sources_page() -> None:
                 category=_markdown_cell(source.get("category", "")),
                 type=_markdown_cell(source.get("type", "")),
                 enabled=_markdown_cell(source.get("enabled", True)),
-                lookback=_markdown_cell(source.get("lookback_hours", default_lookback)),
+                lookback=_markdown_cell(
+                    source.get(
+                        "poll_interval_hours",
+                        source.get("lookback_hours", default_lookback),
+                    )
+                ),
                 url=_markdown_cell(source.get("url", "")),
             )
         )
