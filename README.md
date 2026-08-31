@@ -17,7 +17,7 @@ FreshRSS / scrape / API sources
 ```
 
 1. **Collect** — five independent pipelines pull from 40+ feeds, pages, and APIs. A failure in one never blocks the others.
-2. **Summarize and finalize** — StepFun produces structured summaries; DailyInfo validates and persists one canonical PublicationBundle per category/date while retaining the legacy Markdown output.
+2. **Summarize and finalize** — DeepSeek produces structured summaries; DailyInfo validates and persists one canonical PublicationBundle per category/date while retaining the legacy Markdown output.
 3. **Deliver** — `dailyinfo publish` sends the canonical bundle to selected sinks. Discord and Web delivery state are independent and retryable.
 
 You wake up to a curated digest of everything relevant to your field — no feed readers to check, no email, no noise.
@@ -89,7 +89,7 @@ git clone <repo-url>
 cd dailyinfo
 
 cp .env.example .env
-# Fill STEPFUN_API_KEY and DISCORD_BOT_TOKEN.
+# Fill DEEPSEEK_API_KEY and DISCORD_BOT_TOKEN.
 
 uv sync --python python3
 uv pip install -e .
@@ -132,7 +132,7 @@ dailyinfo push
 
 | Variable | Purpose |
 |----------|---------|
-| `STEPFUN_API_KEY` | StepFun API key (primary model for `dailyinfo run`) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (primary model for `dailyinfo run`) |
 | `DISCORD_BOT_TOKEN` | Discord bot token for `dailyinfo push` |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` | Optional category channel IDs |
 | `FRESHRSS_USER` | FreshRSS username |
@@ -143,7 +143,7 @@ dailyinfo push
 | `DAILYINFO_WEB_BRANCH` | Expected Web branch (default `main`) |
 | `OPENROUTER_API_KEY` | OpenRouter API key (optional, used for fallback model) |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) |
-| `DAILYINFO_FALLBACK_MODEL` | Fallback model when StepFun returns empty (default `moonshotai/kimi-k2.5`) |
+| `DAILYINFO_FALLBACK_MODEL` | Fallback model when DeepSeek returns empty (default `moonshotai/kimi-k2.5`) |
 
 ## Scheduling and Agents
 

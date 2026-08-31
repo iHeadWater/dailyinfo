@@ -27,7 +27,7 @@
 
 - **RSS 聚合**：FreshRSS（Docker + SQLite）
 - **处理引擎**：`scripts/run_pipelines.py`（Python, 宿主机直接运行）
-- **AI 模型**：StepFun `stepfun-3.7-flash` API（回退：OpenRouter moonshotai/kimi-k2.5）
+- **AI 模型**：DeepSeek `deepseek-v4-flash` API（回退：OpenRouter moonshotai/kimi-k2.5）
 - **推送脚本**：`scripts/push_to_discord.py`（纯 Python requests，无 AI 调用）
 - **容器编排**：Docker Compose（仅 FreshRSS）
 
@@ -78,7 +78,7 @@ python3 -c "import json; json.load(open('config/sources.json'))"
 {
   "version": 2,
   "defaults": {
-    "model": "stepfun-3.7-flash",
+    "model": "deepseek-v4-flash",
     "lookback_hours": 24
   },
   "sources": [

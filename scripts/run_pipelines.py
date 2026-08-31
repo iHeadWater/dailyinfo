@@ -2,7 +2,7 @@
 """DailyInfo Pipeline Runner — generates daily briefing files.
 
 Reads RSS feeds from FreshRSS, scrapes GitHub/HuggingFace trending,
-scrapes DUT university news, then calls StepFun AI for summaries (OpenRouter fallback).
+scrapes DUT university news, then calls DeepSeek AI for summaries (OpenRouter fallback).
 Output files are saved to ~/.myagentdata/dailyinfo/briefings/{category}/.
 
 Usage:
@@ -133,17 +133,16 @@ def load_api_key() -> str:
 
 
 def load_deepseek_key() -> str:
-    """Load the primary StepFun key, with the old env name as fallback."""
+    """Load the primary DeepSeek API key."""
     env_path = os.path.join(PROJECT_ROOT, ".env")
     if os.path.exists(env_path):
         try:
             from dotenv import dotenv_values
 
             values = dotenv_values(env_path)
-            for env_name in ("STEPFUN_API_KEY", "DEEPSEEK_API_KEY"):
-                key = values.get(env_name, "")
-                if key and not key.startswith("your_"):
-                    return key
+            key = values.get("DEEPSEEK_API_KEY", "")
+            if key and not key.startswith("your_"):
+                return key
         except ImportError:
             with open(env_path) as f:
                 values = {}
@@ -152,28 +151,25 @@ def load_deepseek_key() -> str:
                     if "=" in line and not line.startswith("#"):
                         name, value = line.split("=", 1)
                         values[name.strip()] = value.strip().strip('"').strip("'")
-                for env_name in ("STEPFUN_API_KEY", "DEEPSEEK_API_KEY"):
-                    key = values.get(env_name, "")
-                    if key and not key.startswith("your_"):
-                        return key
-    for env_name in ("STEPFUN_API_KEY", "DEEPSEEK_API_KEY"):
-        key = os.environ.get(env_name, "")
-        if key:
-            return key
-    log("ERROR: No STEPFUN_API_KEY found in .env or environment")
+                key = values.get("DEEPSEEK_API_KEY", "")
+                if key and not key.startswith("your_"):
+                    return key
+    key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if key:
+        return key
+    log("ERROR: No DEEPSEEK_API_KEY found in .env or environment")
     sys.exit(1)
 
 
-STEPFUN_API_URL = "https://api.stepfun.com/v1/chat/completions"
-DEEPSEEK_API_URL = os.environ.get("STEPFUN_API_URL", STEPFUN_API_URL)
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_FALLBACK_MODEL = "moonshotai/kimi-k2.5"
 
 _BACKOFF_SECONDS = (2, 5, 10)
 
-# StepFun reasoning plus the required structured/Markdown response can exceed
-# the old 1200-token ceiling. ``max_tokens`` is the completion budget (not
+# The required structured/Markdown response can exceed the old 1200-token
+# ceiling. ``max_tokens`` is the completion budget (not
 # the input prompt length) for this OpenAI-compatible API.
 DEFAULT_AI_OUTPUT_TOKENS = 50000
 
@@ -209,7 +205,7 @@ def _post_ai(url: str, api_key: str, model: str, prompt: str, max_tokens: int):
 
 
 def _get_deepseek_key() -> str:
-    """Load and cache the primary StepFun API key (exits if missing)."""
+    """Load and cache the primary DeepSeek API key (exits if missing)."""
     global _DEEPSEEK_KEY_CACHE
     if _DEEPSEEK_KEY_CACHE is None:
         _DEEPSEEK_KEY_CACHE = load_deepseek_key()
@@ -221,21 +217,21 @@ _DEEPSEEK_KEY_CACHE: str | None = None
 
 def call_ai(
     prompt: str,
-    model: str = "stepfun-3.7-flash",
+    model: str = "deepseek-v4-flash",
     max_tokens: int = DEFAULT_AI_OUTPUT_TOKENS,
     *,
     fallback_model: str | None = None,
 ) -> str:
-    """Call StepFun API with retries, falling back to OpenRouter.
+    """Call DeepSeek API with retries, falling back to OpenRouter.
 
-    Strategy: 3 attempts on the primary model via StepFun API with
+    Strategy: 3 attempts on the primary model via DeepSeek API with
     exponential backoff (2s / 5s / 10s), then up to 2 attempts on
     ``fallback_model`` via OpenRouter.
     """
     fallback = _resolve_fallback_model(fallback_model)
     ds_key = _get_deepseek_key()
 
-    # ── Primary: StepFun API ───────────────────────────────────────
+    # ── Primary: DeepSeek API ──────────────────────────────────────
     for i in range(3):
         try:
             data = _post_ai(DEEPSEEK_API_URL, ds_key, model, prompt, max_tokens)
@@ -1227,7 +1223,7 @@ def _run_category_pipeline(
     path is used instead of the regular batched path.
     """
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "stepfun-3.7-flash")
+    model_default = defaults.get("model", "deepseek-v4-flash")
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
     publication_collector = (
         PublicationRunCollector(category) if PUBLICATION_INTEGRATION else None
@@ -1346,7 +1342,7 @@ def _run_pipeline_code_publication() -> int:
 
     log("=== Pipeline 4: Code Trending ===")
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "stepfun-3.7-flash")
+    model_default = defaults.get("model", "deepseek-v4-flash")
     code_tmpl = templates.get("code_trending", "")
     collector = PublicationRunCollector("code")
     saved = 0
@@ -1431,7 +1427,7 @@ def run_pipeline_code() -> int:
 
     log("=== Pipeline 4: Code Trending ===")
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "stepfun-3.7-flash")
+    model_default = defaults.get("model", "deepseek-v4-flash")
     code_tmpl = templates.get("code_trending", "")
     saved = 0
 
@@ -1534,7 +1530,7 @@ def _run_pipeline_resource_publication() -> int:
 
     log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get("model", "stepfun-3.7-flash")
+    model_default = defaults.get("model", "deepseek-v4-flash")
     collector = PublicationRunCollector("resource")
     saved = 0
 
@@ -1763,7 +1759,7 @@ def run_pipeline_resource() -> int:
 
     log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get("model", "stepfun-3.7-flash")
+    model_default = defaults.get("model", "deepseek-v4-flash")
     saved = 0
 
     # --- Part A: unified news briefing (8 news sources -> 1 file) ---

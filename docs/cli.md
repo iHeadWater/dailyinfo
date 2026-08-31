@@ -31,7 +31,7 @@ dailyinfo install
 
 This command:
 
-1. Validates `.env` — `STEPFUN_API_KEY` and `DISCORD_BOT_TOKEN` must be non-empty and not a placeholder.
+1. Validates `.env` — `DEEPSEEK_API_KEY` and `DISCORD_BOT_TOKEN` must be non-empty and not a placeholder.
 2. Creates the workspace under `~/.myagentdata/dailyinfo/` (`freshrss/data`, `briefings/*`, `pushed/*`).
 3. Installs Python dependencies via `uv sync` (falls back to `pip install -e .`).
 
@@ -66,7 +66,7 @@ for today (either in `briefings/` waiting to be pushed, or already archived in
 to override — pass `all` to refresh everything, or repeat the flag with
 specific source names (matches `config/sources.json`).
 
-If the primary model (`stepfun-3.7-flash` via StepFun API) returns empty responses after 3
+If the primary model (`deepseek-v4-flash` via DeepSeek API) returns empty responses after 3
 retries with exponential backoff (2s / 5s / 10s), `run` automatically falls
 back to the model in `DAILYINFO_FALLBACK_MODEL` (default
 `moonshotai/kimi-k2.5` via OpenRouter) for 2 more attempts before giving up.
@@ -137,7 +137,7 @@ dailyinfo logs      # Tail logs/dailyinfo.log (if enabled)
 Create `.env` in the project root:
 
 ```env
-STEPFUN_API_KEY=your_stepfun_key_here
+DEEPSEEK_API_KEY=sk-your_deepseek_key_here
 DISCORD_BOT_TOKEN=your_discord_token
 FRESHRSS_USER=owen
 FRESHRSS_PASSWORD=freshrss123
@@ -146,7 +146,7 @@ FRESHRSS_PASSWORD=freshrss123
 
 | Key | Purpose |
 |-----|---------|
-| `STEPFUN_API_KEY` | StepFun API key (required — primary model: `stepfun-3.7-flash`) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (required — primary model: `deepseek-v4-flash`) |
 | `OPENROUTER_API_KEY` | OpenRouter API key (optional, only needed for fallback) |
 | `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` | Per-category channel IDs (missing ones are skipped, not fatal) |
