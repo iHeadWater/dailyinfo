@@ -2,7 +2,7 @@
 """DailyInfo Pipeline Runner — generates daily briefing files.
 
 Reads RSS feeds from FreshRSS, scrapes GitHub/HuggingFace trending,
-scrapes DUT university news, then calls DeepSeek AI for summaries (OpenRouter fallback).
+scrapes DUT university news, then calls StepFun AI for summaries (OpenRouter fallback).
 Output files are saved to ~/.myagentdata/dailyinfo/briefings/{category}/.
 
 Usage:
@@ -20,16 +20,32 @@ import re
 import sqlite3
 import sys
 import time
+from zoneinfo import ZoneInfo
 
 import requests
 
 from datasource import DataSource, RSSDataSource, build_feed_url_map
 from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
+from publication import (
+    PublicationBriefingInput,
+    PublicationFinalizer,
+    PublicationStore,
+)
+from publication.pipeline import (
+    PublicationRunCollector,
+    StructuredResultError,
+    now_utc,
+    results_from_response,
+    source_ref,
+    structured_entries,
+    structured_prompt,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 SOURCES_JSON = os.path.join(CONFIG_DIR, "sources.json")
-DATE = datetime.datetime.now().strftime("%Y-%m-%d")
+CONTENT_TIMEZONE = ZoneInfo("Asia/Shanghai")
+DATE = datetime.datetime.now(CONTENT_TIMEZONE).strftime("%Y-%m-%d")
 
 API_KEY = ""
 
@@ -117,33 +133,49 @@ def load_api_key() -> str:
 
 
 def load_deepseek_key() -> str:
+    """Load the primary StepFun key, with the old env name as fallback."""
     env_path = os.path.join(PROJECT_ROOT, ".env")
     if os.path.exists(env_path):
         try:
             from dotenv import dotenv_values
 
-            key = dotenv_values(env_path).get("DEEPSEEK_API_KEY", "")
-            if key and not key.startswith("your_"):
-                return key
+            values = dotenv_values(env_path)
+            for env_name in ("STEPFUN_API_KEY", "DEEPSEEK_API_KEY"):
+                key = values.get(env_name, "")
+                if key and not key.startswith("your_"):
+                    return key
         except ImportError:
             with open(env_path) as f:
+                values = {}
                 for line in f:
                     line = line.strip()
-                    if line.startswith("DEEPSEEK_API_KEY=") and "your_" not in line:
-                        return line.split("=", 1)[1].strip()
-    key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if key:
-        return key
-    log("ERROR: No DEEPSEEK_API_KEY found in .env or environment")
+                    if "=" in line and not line.startswith("#"):
+                        name, value = line.split("=", 1)
+                        values[name.strip()] = value.strip().strip('"').strip("'")
+                for env_name in ("STEPFUN_API_KEY", "DEEPSEEK_API_KEY"):
+                    key = values.get(env_name, "")
+                    if key and not key.startswith("your_"):
+                        return key
+    for env_name in ("STEPFUN_API_KEY", "DEEPSEEK_API_KEY"):
+        key = os.environ.get(env_name, "")
+        if key:
+            return key
+    log("ERROR: No STEPFUN_API_KEY found in .env or environment")
     sys.exit(1)
 
 
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+STEPFUN_API_URL = "https://api.stepfun.com/v1/chat/completions"
+DEEPSEEK_API_URL = os.environ.get("STEPFUN_API_URL", STEPFUN_API_URL)
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_FALLBACK_MODEL = "moonshotai/kimi-k2.5"
 
 _BACKOFF_SECONDS = (2, 5, 10)
+
+# StepFun reasoning plus the required structured/Markdown response can exceed
+# the old 1200-token ceiling. ``max_tokens`` is the completion budget (not
+# the input prompt length) for this OpenAI-compatible API.
+DEFAULT_AI_OUTPUT_TOKENS = 50000
 
 
 class BriefingGenerationError(ValueError):
@@ -177,7 +209,7 @@ def _post_ai(url: str, api_key: str, model: str, prompt: str, max_tokens: int):
 
 
 def _get_deepseek_key() -> str:
-    """Load and cache the DeepSeek API key (exits if missing)."""
+    """Load and cache the primary StepFun API key (exits if missing)."""
     global _DEEPSEEK_KEY_CACHE
     if _DEEPSEEK_KEY_CACHE is None:
         _DEEPSEEK_KEY_CACHE = load_deepseek_key()
@@ -189,21 +221,21 @@ _DEEPSEEK_KEY_CACHE: str | None = None
 
 def call_ai(
     prompt: str,
-    model: str = "deepseek-v4-flash",
-    max_tokens: int = 1200,
+    model: str = "stepfun-3.7-flash",
+    max_tokens: int = DEFAULT_AI_OUTPUT_TOKENS,
     *,
     fallback_model: str | None = None,
 ) -> str:
-    """Call DeepSeek API with retries, falling back to OpenRouter.
+    """Call StepFun API with retries, falling back to OpenRouter.
 
-    Strategy: 3 attempts on the primary model via DeepSeek API with
+    Strategy: 3 attempts on the primary model via StepFun API with
     exponential backoff (2s / 5s / 10s), then up to 2 attempts on
     ``fallback_model`` via OpenRouter.
     """
     fallback = _resolve_fallback_model(fallback_model)
     ds_key = _get_deepseek_key()
 
-    # ── Primary: DeepSeek API ──────────────────────────────────────
+    # ── Primary: StepFun API ───────────────────────────────────────
     for i in range(3):
         try:
             data = _post_ai(DEEPSEEK_API_URL, ds_key, model, prompt, max_tokens)
@@ -219,9 +251,7 @@ def call_ai(
         if content and finish_reason != "length":
             return content
 
-        reason = (
-            finish_reason or (data.get("error") or {}).get("message") or "empty"
-        )
+        reason = finish_reason or (data.get("error") or {}).get("message") or "empty"
         log(
             f"  [call_ai] {model} attempt {i + 1}/3 incomplete "
             f"(finish_reason={reason}, chars={len(content)})"
@@ -246,9 +276,7 @@ def call_ai(
         if content and finish_reason != "length":
             return content
 
-        reason = (
-            finish_reason or (data.get("error") or {}).get("message") or "empty"
-        )
+        reason = finish_reason or (data.get("error") or {}).get("message") or "empty"
         log(
             f"  [call_ai] {fallback} attempt {i + 1}/2 incomplete "
             f"(finish_reason={reason}, chars={len(content)})"
@@ -333,7 +361,7 @@ def _generate_regular_briefings(
     prompt_template: str,
     model: str,
     *,
-    max_tokens: int = 2500,
+    max_tokens: int = DEFAULT_AI_OUTPUT_TOKENS,
 ) -> list[tuple[str, list]]:
     """Generate one or more complete briefings, splitting oversized batches.
 
@@ -401,7 +429,7 @@ def _retry_failed_items(
         return []
     log(
         f"    Phase 2: retrying {len(failed_items)} failed articles "
-        f"with conservative settings (batch=3, max_tokens=4000)"
+        f"with conservative settings (batch=3, max_tokens={DEFAULT_AI_OUTPUT_TOKENS})"
     )
     results: list[tuple[str, list]] = []
     batch_size = 3
@@ -410,7 +438,11 @@ def _retry_failed_items(
         try:
             results.extend(
                 _generate_regular_briefings(
-                    ds, batch, prompt_template, model, max_tokens=4000
+                    ds,
+                    batch,
+                    prompt_template,
+                    model,
+                    max_tokens=DEFAULT_AI_OUTPUT_TOKENS,
                 )
             )
         except Exception as e:
@@ -426,9 +458,7 @@ _RE_HIGHLIGHT = re.compile(r"\n🔭 \*\*Today's? Highlight\*\*", re.IGNORECASE)
 _RE_NUMBERED = re.compile(r"^(\d+)\.\s+\*\*", re.MULTILINE)
 
 
-def _merge_briefing_parts(
-    ds, parts: list[tuple[str, list]]
-) -> tuple[str, list]:
+def _merge_briefing_parts(ds, parts: list[tuple[str, list]]) -> tuple[str, list]:
     """Merge multiple briefing parts into one cohesive document.
 
     Strips per-batch headers, renumbers articles sequentially, and
@@ -463,10 +493,12 @@ def _merge_briefing_parts(
 
         # Renumber articles sequentially
         current_num = len(all_items) - len(items)
+
         def _renumber(m):
             nonlocal current_num
             current_num += 1
             return f"{current_num}. **"
+
         article_part = _RE_NUMBERED.sub(_renumber, article_part)
 
         if article_part:
@@ -513,6 +545,12 @@ def _already_pushed_within(name: str, category: str, lookback_hours: int) -> boo
 FORCE_ALL: bool = False
 FORCE_SOURCES: set[str] = set()
 
+# The direct helper functions retain their historical Markdown-only behavior
+# for callers/tests that use them as library helpers.  ``main`` enables the
+# production boundary so the user-facing ``dailyinfo run`` is fully
+# integrated without changing the old helper contract underneath it.
+PUBLICATION_INTEGRATION: bool = False
+
 
 def _is_forced(name: str) -> bool:
     """True when the caller explicitly requested a re-run for this source."""
@@ -552,26 +590,463 @@ def _load_sources() -> tuple[dict, dict, dict]:
     return cfg, cfg.get("defaults", {}), cfg.get("prompt_templates", {})
 
 
+class PublicationIntegrationError(RuntimeError):
+    """Raised when a real pipeline result cannot be finalized canonically."""
+
+
+def _build_structured_batch_prompt(
+    ds: DataSource, batch: list, prompt_template: str
+) -> tuple[str, list[str]]:
+    """Build a prompt whose item correlation is explicit and batch-local."""
+
+    entries, refs = structured_entries(ds, batch)
+    base = (
+        prompt_template.replace("{count}", str(len(batch)))
+        .replace("{display_name}", ds.display_name)
+        .replace("{article_list}", ds.format_items(batch))
+        .replace("{items}", ds.format_items(batch))
+        .replace("{date}", DATE)
+    )
+    return structured_prompt(base, entries, refs), refs
+
+
+def _generate_structured_batch(
+    ds: DataSource,
+    batch: list,
+    prompt_template: str,
+    model: str,
+    retrieved_at: datetime.datetime,
+    *,
+    max_tokens: int = DEFAULT_AI_OUTPUT_TOKENS,
+    sections: dict[str, str] | None = None,
+    display_titles: dict[str, str] | None = None,
+) -> list:
+    prompt, _ = _build_structured_batch_prompt(ds, batch, prompt_template)
+    raw = call_ai(prompt, model=model, max_tokens=max_tokens)
+    results = results_from_response(
+        raw,
+        batch,
+        source_name=ds.name,
+        retrieved_at=retrieved_at,
+        sections=sections,
+        display_titles=display_titles,
+    )
+    log(
+        f"    structured AI ok: source={ds.name}, articles={len(batch)}, "
+        f"prompt_chars={len(prompt)}, response_chars={len(raw)}"
+    )
+    return results
+
+
+def _generate_structured_briefings(
+    ds: DataSource,
+    batch: list,
+    prompt_template: str,
+    model: str,
+    retrieved_at: datetime.datetime,
+    *,
+    max_tokens: int = DEFAULT_AI_OUTPUT_TOKENS,
+) -> list:
+    """Generate complete structured results, splitting invalid large batches."""
+
+    try:
+        return _generate_structured_batch(
+            ds,
+            batch,
+            prompt_template,
+            model,
+            retrieved_at,
+            max_tokens=max_tokens,
+        )
+    except (BriefingGenerationError, StructuredResultError):
+        if len(batch) <= 1:
+            raise
+        midpoint = max(1, len(batch) // 2)
+        log(
+            f"    structured AI incomplete for {ds.name} ({len(batch)} articles); "
+            f"splitting into {midpoint}+{len(batch) - midpoint}"
+        )
+        return _generate_structured_briefings(
+            ds,
+            batch[:midpoint],
+            prompt_template,
+            model,
+            retrieved_at,
+            max_tokens=max_tokens,
+        ) + _generate_structured_briefings(
+            ds,
+            batch[midpoint:],
+            prompt_template,
+            model,
+            retrieved_at,
+            max_tokens=max_tokens,
+        )
+
+
+def _structured_title(result) -> str:
+    raw = result.raw_item
+    if result.display_title:
+        return result.display_title
+    return getattr(raw, "title", "")
+
+
+def _render_structured_list(
+    results: list,
+    *,
+    header: str | None = None,
+    separator: str = "\n",
+) -> str:
+    lines = [header] if header else []
+    for index, result in enumerate(results, 1):
+        title = _structured_title(result)
+        lines.append(f"{index}. **{title}**")
+        lines.append(f"   > {result.summary}")
+        if result.why_it_matters:
+            lines.append(f"   > **Why it matters:** {result.why_it_matters}")
+    return separator.join(lines)
+
+
+def _render_regular_publication(ds: DataSource, results: list) -> str:
+    return _render_structured_list(
+        results,
+        header=f"## 📚 {ds.display_name} 今日简报 ({DATE}) - {len(results)}篇文章",
+        separator="\n\n",
+    )
+
+
+def _render_deep_publication(ds: DataSource, result) -> str:
+    raw = result.raw_item
+    url = getattr(raw, "url", "")
+    source_line = f"\n\n[查看原文]({url})" if url else ""
+    return (
+        f"# AI Daily Digest - {DATE}\n\n## {raw.title}\n\n{result.summary}{source_line}"
+    )
+
+
+def _render_code_publication(ds: DataSource, results: list) -> str:
+    return _render_structured_list(
+        results,
+        header=f"# {ds.display_name} - {DATE}",
+        separator="\n\n",
+    )
+
+
+def _render_resource_publication(
+    results: list,
+    *,
+    title: str,
+    footer: str = "",
+) -> str:
+    sections: dict[str, list] = {}
+    for result in results:
+        sections.setdefault(result.section or "最新动态", []).append(result)
+    blocks = [f"# {title} - {DATE}"]
+    for section, section_results in sections.items():
+        blocks.append(f"### {section}")
+        for result in section_results:
+            raw = result.raw_item
+            blocks.append(f"**[{raw.date}] {raw.title}** — {result.summary}")
+            if result.why_it_matters:
+                blocks.append(f"> **Why it matters:** {result.why_it_matters}")
+    if footer:
+        blocks.append(footer)
+    return "\n\n".join(blocks)
+
+
+def _finalize_category_publication(
+    category: str, collector: PublicationRunCollector
+) -> None:
+    """Finalize exactly one category/date briefing after all sources finish."""
+
+    publication_id = f"{category}-{DATE}"
+    if collector.failures:
+        log(
+            f"  publication_id={publication_id} category={category} "
+            f"action=fail item_count={len(collector.results)}"
+        )
+        raise PublicationIntegrationError(
+            f"{category} publication not finalized: " + "; ".join(collector.failures)
+        )
+    if not collector.results:
+        log(
+            f"  publication_id={publication_id} category={category} "
+            "action=skip item_count=0"
+        )
+        return
+    body = collector.body
+    if not body:
+        log(
+            f"  publication_id={publication_id} category={category} "
+            f"action=fail item_count={len(collector.results)}"
+        )
+        raise PublicationIntegrationError(
+            f"{category} publication has items but no canonical body"
+        )
+    published_at = now_utc()
+    briefing = PublicationBriefingInput(
+        category=category,
+        date=DATE,
+        title=f"DailyInfo {category} briefing",
+        generated_at=published_at,
+        published_at=published_at,
+        body=body,
+    )
+    try:
+        bundle = PublicationFinalizer(business_timezone=str(CONTENT_TIMEZONE)).finalize(
+            briefing,
+            collector.item_inputs(published_at=published_at),
+        )
+        result = PublicationStore().save(bundle)
+        collector.commit_deferred_seen()
+    except Exception as exc:
+        log(
+            f"  publication_id={publication_id} category={category} "
+            f"action=fail item_count={len(collector.results)}"
+        )
+        raise PublicationIntegrationError(
+            f"{category} publication finalization failed: {exc}"
+        ) from exc
+    log(
+        f"  publication_id={bundle.briefing.id} category={category} "
+        f"action={result.action} item_count={len(bundle.items)}"
+    )
+
+
 # =====================================================================
 # Shared pipeline helpers
 # =====================================================================
 
+
 def _filter_sources(cfg: dict, category: str, *types: str) -> list[dict]:
     """Return enabled sources matching the given category and types."""
     return [
-        s for s in cfg["sources"]
+        s
+        for s in cfg["sources"]
         if s.get("category") == category
         and s.get("type") in types
         and s.get("enabled", True)
     ]
 
 
-def _process_regular_source(ds, feed_cfg: dict, model_default: str,
-                            templates: dict, default_tmpl_key: str) -> int:
+def _process_regular_source_publication(
+    ds,
+    feed_cfg: dict,
+    model_default: str,
+    templates: dict,
+    default_tmpl_key: str,
+    collector: PublicationRunCollector,
+) -> int:
+    """Structured counterpart of the legacy regular-source processor."""
+
+    name, category = ds.name, ds.category
+    try:
+        retrieved_at = now_utc()
+        items = ds.fetch()
+    except Exception as exc:
+        log(f"    FETCH ERR: {exc}")
+        save(
+            category,
+            f"{name}_briefing_{DATE}.md",
+            f"# {ds.display_name} - {DATE}\n\n⚠️ 获取失败\n",
+        )
+        return 1
+
+    if not items:
+        log(f"  {name}: 0 new articles - placeholder")
+        collector.defer_seen(ds, items)
+        save(
+            category,
+            f"{name}_briefing_{DATE}.md",
+            f"# {ds.display_name} - {DATE}\n\n"
+            f"📭 过去 {ds.lookback_hours} 小时无新内容\n",
+        )
+        if isinstance(ds, RSSDataSource):
+            from freshrss_cache import record_zero_result
+
+            zero_days = record_zero_result(STATE_DIR, name, DATE)
+            if zero_days >= 2:
+                log(
+                    f"  [WARN] {name}: {zero_days} consecutive days with 0 articles — "
+                    "FreshRSS cache may be stuck — run: dailyinfo cache-clear"
+                )
+        return 1
+
+    if isinstance(ds, RSSDataSource):
+        from freshrss_cache import reset_zero_result
+
+        reset_zero_result(STATE_DIR, name)
+
+    if ds.lookback_hours > 24 and _already_pushed_within(
+        name, category, ds.lookback_hours
+    ):
+        log(f"  {name}: {len(items)} articles - already pushed recently, skip")
+        return 0
+
+    model = feed_cfg.get("model") or model_default
+    tmpl_key = feed_cfg.get("prompt_template") or default_tmpl_key
+    prompt_template = templates.get(tmpl_key) or templates.get("one_line_summary", "")
+    if not prompt_template:
+        collector.add_failure(f"{name}: no prompt template")
+        return 0
+
+    total = getattr(ds, "_total_before_filter", len(items))
+    log(
+        f"  {name}: {len(items)} new articles"
+        + (f" ({total - len(items)} duplicates skipped)" if total != len(items) else "")
+    )
+    structured_results: list = []
+    failed_items: list = []
+    for index, batch in enumerate(ds.get_batches(items), 1):
+        try:
+            structured_results.extend(
+                _generate_structured_briefings(
+                    ds, batch, prompt_template, model, retrieved_at
+                )
+            )
+        except Exception as exc:
+            log(f"    structured ERR batch {index}: {exc}")
+            failed_items.extend(batch)
+
+    if failed_items:
+        log(f"    retrying {len(failed_items)} failed structured articles")
+        retry_results: list = []
+        retry_failed: list = []
+        for start in range(0, len(failed_items), 3):
+            batch = failed_items[start : start + 3]
+            try:
+                retry_results.extend(
+                    _generate_structured_briefings(
+                        ds,
+                        batch,
+                        prompt_template,
+                        model,
+                        retrieved_at,
+                        max_tokens=DEFAULT_AI_OUTPUT_TOKENS,
+                    )
+                )
+            except Exception as exc:
+                log(f"    structured retry failed for {len(batch)} articles: {exc}")
+                retry_failed.extend(batch)
+        structured_results.extend(retry_results)
+        failed_items = retry_failed
+
+    if failed_items:
+        collector.add_failure(
+            f"{name}: {len(failed_items)} item(s) lacked valid structured AI output"
+        )
+
+    if structured_results:
+        content = _render_regular_publication(ds, structured_results)
+        save(category, f"{name}_briefing_{DATE}.md", content)
+        collector.add(structured_results)
+        collector.add_body(content)
+        log(f"    -> saved {name}_briefing_{DATE}.md")
+    if failed_items:
+        # Preserve the existing retry/placeholder behavior for legacy sinks;
+        # the failed items are never added to the canonical collector.
+        save(
+            category,
+            f"{name}_briefing_{DATE}_failed.md",
+            _make_placeholder_briefing(ds, failed_items),
+        )
+    collector.defer_seen(ds, items)
+    return 1 if structured_results or failed_items else 0
+
+
+def _process_deep_content_source_publication(
+    ds,
+    feed_cfg: dict,
+    model_default: str,
+    templates: dict,
+    collector: PublicationRunCollector,
+) -> int:
+    """Process a deep-content RSS source with one structured call per item."""
+
+    name, category = ds.name, ds.category
+    retrieved_at = now_utc()
+    items = ds.fetch()
+    if not items:
+        collector.defer_seen(ds, items)
+        return 0
+
+    model = feed_cfg.get("model") or model_default
+    tmpl_key = feed_cfg.get("prompt_template", "smolai_categorized")
+    tmpl = templates.get(tmpl_key, "")
+    committed_items: list = []
+    saved = 0
+
+    for index, item in enumerate(items, 1):
+        base = (
+            tmpl.replace("{content}", item.content).replace("{date}", DATE)
+            if tmpl
+            else (
+                "Summarize the following AI news in Chinese by category:\n\n"
+                f"{item.content}"
+            )
+        )
+        ref = source_ref(0)
+        entries = f"[source_ref={ref}]\nTitle: {item.title}\nContent:\n{item.content}"
+        prompt = structured_prompt(base, entries, [ref])
+        try:
+            raw = call_ai(prompt, model=model, max_tokens=DEFAULT_AI_OUTPUT_TOKENS)
+            result = results_from_response(
+                raw, [item], source_name=name, retrieved_at=retrieved_at
+            )[0]
+            content = _render_deep_publication(ds, result)
+            suffix = f"_part{index}" if len(items) > 1 else ""
+            save(category, f"{name}_briefing_{DATE}{suffix}.md", content)
+            collector.add([result])
+            collector.add_body(content)
+            committed_items.append(item)
+            saved += 1
+            log(f"    -> saved {name}_briefing_{DATE}{suffix}.md")
+        except Exception as exc:
+            log(f"    structured ERR for {name} item {index}: {exc}")
+            try:
+                raw = call_ai(prompt, model=model, max_tokens=DEFAULT_AI_OUTPUT_TOKENS)
+                result = results_from_response(
+                    raw, [item], source_name=name, retrieved_at=retrieved_at
+                )[0]
+                content = _render_deep_publication(ds, result)
+                filename = f"{name}_briefing_{DATE}_retry{index}.md"
+                save(category, filename, content)
+                collector.add([result])
+                collector.add_body(content)
+                committed_items.append(item)
+                saved += 1
+                log(f"    -> saved {filename}")
+            except Exception as retry_exc:
+                collector.add_failure(f"{name} item {index}: {retry_exc}")
+                filename = f"{name}_briefing_{DATE}_failed{index}.md"
+                save(category, filename, _make_placeholder_briefing(ds, [item]))
+                committed_items.append(item)
+                saved += 1
+
+    collector.defer_seen(ds, committed_items)
+    return saved
+
+
+def _process_regular_source(
+    ds,
+    feed_cfg: dict,
+    model_default: str,
+    templates: dict,
+    default_tmpl_key: str,
+    collector: PublicationRunCollector | None = None,
+) -> int:
     """Process a single source: fetch -> batch -> AI -> merge -> save -> commit.
 
     Returns number of files saved (0 or 1).
     """
+    if PUBLICATION_INTEGRATION:
+        own_collector = collector or PublicationRunCollector(ds.category)
+        saved = _process_regular_source_publication(
+            ds, feed_cfg, model_default, templates, default_tmpl_key, own_collector
+        )
+        if collector is None:
+            _finalize_category_publication(ds.category, own_collector)
+        return saved
+
     name, category = ds.name, ds.category
 
     try:
@@ -585,10 +1060,14 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
     if not items:
         log(f"  {name}: 0 new articles - placeholder")
         ds.commit_seen(items)
-        placeholder = f"# {ds.display_name} - {DATE}\n\n" + "\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
+        placeholder = (
+            f"# {ds.display_name} - {DATE}\n\n"
+            + "\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
+        )
         save(category, f"{name}_briefing_{DATE}.md", placeholder)
         if isinstance(ds, RSSDataSource):
             from freshrss_cache import record_zero_result
+
             zero_days = record_zero_result(STATE_DIR, name, DATE)
             if zero_days >= 2:
                 log(
@@ -599,10 +1078,16 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
 
     if isinstance(ds, RSSDataSource):
         from freshrss_cache import reset_zero_result
+
         reset_zero_result(STATE_DIR, name)
 
-    if ds.lookback_hours > 24 and _already_pushed_within(name, category, ds.lookback_hours):
-        log(f"  {name}: {len(items)} articles - already pushed within {ds.lookback_hours}h, skip")
+    if ds.lookback_hours > 24 and _already_pushed_within(
+        name, category, ds.lookback_hours
+    ):
+        log(
+            f"  {name}: {len(items)} articles - already pushed within "
+            f"{ds.lookback_hours}h, skip"
+        )
         return 0
 
     model = feed_cfg.get("model") or model_default
@@ -616,7 +1101,10 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
     total = getattr(ds, "_total_before_filter", len(items))
     new = len(items)
     dup = total - new
-    log(f"  {name}: {new} new articles" + (f" ({dup} duplicates skipped)" if dup else ""))
+    log(
+        f"  {name}: {new} new articles"
+        + (f" ({dup} duplicates skipped)" if dup else "")
+    )
 
     generated_parts: list[tuple[str, list]] = []
     failed_items: list = []
@@ -647,12 +1135,21 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
     return 1 if merged_content else 0
 
 
-def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
-                                 templates: dict) -> int:
+def _process_deep_content_source(
+    ds, feed_cfg: dict, model_default: str, templates: dict
+) -> int:
     """Process a use_content source: one AI call per article, per-article files.
 
     Returns number of files saved.
     """
+    if PUBLICATION_INTEGRATION:
+        collector = PublicationRunCollector(ds.category)
+        saved = _process_deep_content_source_publication(
+            ds, feed_cfg, model_default, templates, collector
+        )
+        _finalize_category_publication(ds.category, collector)
+        return saved
+
     name, category = ds.name, ds.category
     model = feed_cfg.get("model") or model_default
     tmpl_key = feed_cfg.get("prompt_template", "smolai_categorized")
@@ -665,14 +1162,18 @@ def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
         prompt = (
             tmpl.replace("{content}", item.content).replace("{date}", DATE)
             if tmpl
-            else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
+            else (
+                "Summarize the following AI news in Chinese by category:\n\n"
+                f"{item.content}"
+            )
         )
         suffix = f"_part{idx + 1}" if len(items) > 1 else ""
         filename = f"{name}_briefing_{DATE}{suffix}.md"
         try:
-            content_text = call_ai(prompt, model=model, max_tokens=2000)
-            save(category, filename,
-                 f"# AI Daily Digest - {DATE}\n\n{content_text}")
+            content_text = call_ai(
+                prompt, model=model, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+            )
+            save(category, filename, f"# AI Daily Digest - {DATE}\n\n{content_text}")
             saved += 1
             committed_items.append(item)
             log(f"    -> saved {filename}")
@@ -687,13 +1188,19 @@ def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
             prompt = (
                 tmpl.replace("{content}", item.content).replace("{date}", DATE)
                 if tmpl
-                else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
+                else (
+                    "Summarize the following AI news in Chinese by category:\n\n"
+                    f"{item.content}"
+                )
             )
             try:
-                content_text = call_ai(prompt, model=model, max_tokens=3000)
+                content_text = call_ai(
+                    prompt, model=model, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+                )
                 filename = f"{name}_briefing_{DATE}_retry{retry_idx}.md"
-                save(category, filename,
-                     f"# AI Daily Digest - {DATE}\n\n{content_text}")
+                save(
+                    category, filename, f"# AI Daily Digest - {DATE}\n\n{content_text}"
+                )
                 saved += 1
                 committed_items.append(item)
                 log(f"    -> saved retry {filename}")
@@ -709,9 +1216,9 @@ def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
     return saved
 
 
-def _run_category_pipeline(category: str, *,
-                           create_marker: bool = False,
-                           deep_content: bool = False) -> int:
+def _run_category_pipeline(
+    category: str, *, create_marker: bool = False, deep_content: bool = False
+) -> int:
     """Generic pipeline for a single category.
 
     Handles both RSS and non-RSS sources. If *create_marker* is True,
@@ -720,8 +1227,11 @@ def _run_category_pipeline(category: str, *,
     path is used instead of the regular batched path.
     """
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "stepfun-3.7-flash")
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
+    publication_collector = (
+        PublicationRunCollector(category) if PUBLICATION_INTEGRATION else None
+    )
 
     # --- RSS sources ---
     try:
@@ -754,11 +1264,23 @@ def _run_category_pipeline(category: str, *,
                 continue
 
             if deep_content:
-                saved += _process_deep_content_source(ds, feed_cfg, model_default,
-                                                      templates)
+                if publication_collector is None:
+                    saved += _process_deep_content_source(
+                        ds, feed_cfg, model_default, templates
+                    )
+                else:
+                    saved += _process_deep_content_source_publication(
+                        ds, feed_cfg, model_default, templates, publication_collector
+                    )
             else:
-                saved += _process_regular_source(ds, feed_cfg, model_default,
-                                                 templates, default_tmpl_key)
+                saved += _process_regular_source(
+                    ds,
+                    feed_cfg,
+                    model_default,
+                    templates,
+                    default_tmpl_key,
+                    publication_collector,
+                )
     finally:
         db.close()
         if create_marker:
@@ -771,8 +1293,17 @@ def _run_category_pipeline(category: str, *,
             log(f"    briefing already exists for {DATE}, skip")
             continue
         log(f"  {ds.name}...")
-        saved += _process_regular_source(ds, source_cfg, model_default,
-                                         templates, default_tmpl_key)
+        saved += _process_regular_source(
+            ds,
+            source_cfg,
+            model_default,
+            templates,
+            default_tmpl_key,
+            publication_collector,
+        )
+
+    if publication_collector is not None:
+        _finalize_category_publication(category, publication_collector)
 
     return saved
 
@@ -810,10 +1341,97 @@ def run_pipeline_arxiv() -> int:
 # =====================================================================
 # PIPELINE 4: Code Trending (GitHub + HuggingFace)
 # =====================================================================
-def run_pipeline_code() -> int:
+def _run_pipeline_code_publication() -> int:
+    """Run code sources and finalize one canonical code briefing."""
+
     log("=== Pipeline 4: Code Trending ===")
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "stepfun-3.7-flash")
+    code_tmpl = templates.get("code_trending", "")
+    collector = PublicationRunCollector("code")
+    saved = 0
+
+    for source_cfg in cfg["sources"]:
+        if source_cfg.get("category") != "code" or source_cfg.get("enabled") is False:
+            continue
+        ds = DataSource.create(source_cfg, defaults)
+        log(f"  {ds.name}...")
+        if _has_real_briefing_today(ds.name, "code"):
+            log(f"    briefing already exists for {DATE}, skip")
+            continue
+
+        items = None
+        for attempt in range(3):
+            try:
+                retrieved_at = now_utc()
+                items = ds.fetch()
+                break
+            except Exception as exc:
+                log(f"    FETCH ERR (attempt {attempt + 1}/3): {exc}")
+                if attempt < 2:
+                    time.sleep(_BACKOFF_SECONDS[attempt])
+        if items is None:
+            save(
+                "code",
+                f"{ds.name}_briefing_{DATE}.md",
+                f"# {ds.display_name} - {DATE}\n\n⚠️ 获取失败\n",
+            )
+            continue
+        if not items:
+            log("    no items")
+            continue
+
+        tmpl_key = source_cfg.get("prompt_template") or "code_trending"
+        prompt_tmpl = templates.get(tmpl_key) or code_tmpl
+        if not prompt_tmpl:
+            collector.add_failure(f"{ds.name}: no prompt template")
+            continue
+        prompt, _ = _build_structured_batch_prompt(ds, items, prompt_tmpl)
+        display_titles = {
+            source_ref(index): item.extra.get("full_name")
+            or item.extra.get("name")
+            or item.title
+            for index, item in enumerate(items)
+        }
+        try:
+            raw = call_ai(
+                prompt,
+                model=source_cfg.get("model", model_default),
+                max_tokens=DEFAULT_AI_OUTPUT_TOKENS,
+            )
+            results = results_from_response(
+                raw,
+                items,
+                source_name=ds.name,
+                retrieved_at=retrieved_at,
+                display_titles=display_titles,
+            )
+            content = _render_code_publication(ds, results)
+            save("code", f"{ds.name}_briefing_{DATE}.md", content)
+            collector.add(results)
+            collector.add_body(content)
+            saved += 1
+            log(f"    -> saved {ds.name}_briefing_{DATE}.md")
+        except Exception as exc:
+            collector.add_failure(f"{ds.name}: invalid structured AI output: {exc}")
+            save(
+                "code",
+                f"{ds.name}_briefing_{DATE}_failed.md",
+                f"# {ds.display_name} - {DATE}\n\n⚠️ AI 生成失败\n",
+            )
+
+    _finalize_category_publication("code", collector)
+    log(f"  Pipeline 4 done: {saved} files saved")
+    return saved
+
+
+def run_pipeline_code() -> int:
+    if PUBLICATION_INTEGRATION:
+        return _run_pipeline_code_publication()
+
+    log("=== Pipeline 4: Code Trending ===")
+    cfg, defaults, templates = _load_sources()
+    model_default = defaults.get("model", "stepfun-3.7-flash")
     code_tmpl = templates.get("code_trending", "")
     saved = 0
 
@@ -847,7 +1465,7 @@ def run_pipeline_code() -> int:
             continue
 
         if not items:
-            log(f"    no items")
+            log("    no items")
             continue
 
         log(f"    {len(items)} items")
@@ -863,7 +1481,8 @@ def run_pipeline_code() -> int:
             )
         else:
             prompt = (
-                f"请为以下 {ds.display_name} 的每一条目写一行中文简介，突出核心功能或技术亮点。\n\n"
+                f"请为以下 {ds.display_name} 的每一条目写一行中文简介，"
+                "突出核心功能或技术亮点。\n\n"
                 f"{items_list}\n\n"
                 f"输出要求（严格遵守）：\n"
                 f"- 直接输出列表，不要任何前言、说明或总结\n"
@@ -874,7 +1493,9 @@ def run_pipeline_code() -> int:
             )
         try:
             content_text = call_ai(
-                prompt, model=source_cfg.get("model", model_default), max_tokens=2500
+                prompt,
+                model=source_cfg.get("model", model_default),
+                max_tokens=DEFAULT_AI_OUTPUT_TOKENS,
             )
             save(
                 "code",
@@ -898,7 +1519,172 @@ def run_pipeline_code() -> int:
 # PIPELINE 5: University News (DLUT HTML + API)
 # =====================================================================
 _DLUT_NEWS_GROUP = "dlut_news"
-_DLUT_NEWS_SECTION_ORDER = ["综合新闻", "人才培养", "学术科研", "合作交流", "一线风采", "学院动态"]
+_DLUT_NEWS_SECTION_ORDER = [
+    "综合新闻",
+    "人才培养",
+    "学术科研",
+    "合作交流",
+    "一线风采",
+    "学院动态",
+]
+
+
+def _run_pipeline_resource_publication() -> int:
+    """Run DLUT news/recruitment adapters and finalize canonical resource data."""
+
+    log("=== Pipeline 5: University News & Recruitment ===")
+    cfg, defaults, prompt_templates = _load_sources()
+    model_default = defaults.get("model", "stepfun-3.7-flash")
+    collector = PublicationRunCollector("resource")
+    saved = 0
+
+    news_sources = [
+        s
+        for s in cfg["sources"]
+        if s.get("category") == "resource"
+        and s.get("news_group") == _DLUT_NEWS_GROUP
+        and s.get("enabled", True) is not False
+    ]
+    if news_sources and not _has_real_briefing_today(_DLUT_NEWS_GROUP, "resource"):
+        records: list[tuple[dict, str, object, datetime.datetime]] = []
+        seen_urls: set[str] = set()
+        for source_cfg in news_sources:
+            ds = DataSource.create(source_cfg, defaults)
+            section = source_cfg.get("section", ds.display_name)
+            try:
+                retrieved_at = now_utc()
+                raw_items = ds.fetch()
+            except Exception as exc:
+                collector.add_failure(f"{ds.name}: fetch failed: {exc}")
+                continue
+            for item in raw_items:
+                if item.url and item.url in seen_urls:
+                    continue
+                if item.url:
+                    seen_urls.add(item.url)
+                records.append((source_cfg, section, item, retrieved_at))
+
+        if records:
+            entries = []
+            refs = []
+            source_names = []
+            sections: dict[str, str] = {}
+            for index, (source_cfg, section, item, _item_retrieved_at) in enumerate(
+                records
+            ):
+                ref = source_ref(index)
+                refs.append(ref)
+                source_names.append(source_cfg["name"])
+                sections[ref] = section
+                entries.append(
+                    f"[source_ref={ref}] [{section}] [{item.date}] "
+                    f"{item.title}\n{item.url}"
+                )
+            items_text = "\n".join(entries)
+            tmpl = prompt_templates.get("university_news_unified", "")
+            base = tmpl.replace("{items}", items_text).replace("{date}", DATE)
+            prompt = structured_prompt(base, items_text, refs)
+            try:
+                raw = call_ai(
+                    prompt, model=model_default, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+                )
+                results = results_from_response(
+                    raw,
+                    [record[2] for record in records],
+                    retrieved_at=[record[3] for record in records],
+                    source_names=source_names,
+                    sections=sections,
+                )
+                content = _render_resource_publication(
+                    results,
+                    title="大连理工大学校园动态",
+                    footer=(
+                        f"---\n*共 {len(results)} 条动态，来自 "
+                        f"{len(news_sources)} 个信源汇总*"
+                    ),
+                )
+                save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", content)
+                collector.add(results)
+                collector.add_body(content)
+                saved += 1
+                log(f"    -> saved {_DLUT_NEWS_GROUP}_briefing_{DATE}.md")
+            except Exception as exc:
+                collector.add_failure(
+                    f"{_DLUT_NEWS_GROUP}: invalid structured AI output: {exc}"
+                )
+                save(
+                    "resource",
+                    f"{_DLUT_NEWS_GROUP}_briefing_{DATE}_failed.md",
+                    f"# 大连理工大学校园动态 - {DATE}\n\n⚠️ AI 生成失败\n",
+                )
+        else:
+            log("    no updates -> no canonical publication")
+
+    for source_cfg in cfg["sources"]:
+        if (
+            source_cfg.get("category") != "resource"
+            or source_cfg.get("enabled") is False
+            or source_cfg.get("news_group") == _DLUT_NEWS_GROUP
+        ):
+            continue
+        ds = DataSource.create(source_cfg, defaults)
+        log(f"  {ds.name}...")
+        if _has_real_briefing_today(ds.name, "resource"):
+            log(f"    briefing already exists for {DATE}, skip")
+            continue
+        try:
+            retrieved_at = now_utc()
+            items = ds.fetch()
+        except Exception as exc:
+            collector.add_failure(f"{ds.name}: fetch failed: {exc}")
+            log(f"    FETCH ERR: {exc}")
+            continue
+        if not items:
+            save(
+                "resource",
+                f"{ds.name}_briefing_{DATE}.md",
+                f"# {ds.display_name} - {DATE}\n\n"
+                f"📭 过去 {ds.lookback_hours} 小时无新内容\n",
+            )
+            saved += 1
+            continue
+        items_text = ds.format_items(items)
+        tmpl_key = source_cfg.get("prompt_template", "university_news")
+        base_template = prompt_templates.get(tmpl_key) or prompt_templates.get(
+            "university_news", ""
+        )
+        base = base_template.replace(
+            "{items}", f"{ds.display_name}\n{items_text}"
+        ).replace("{date}", DATE)
+        entries, refs = structured_entries(ds, items)
+        prompt = structured_prompt(base, entries, refs)
+        try:
+            raw = call_ai(
+                prompt, model=model_default, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+            )
+            results = results_from_response(
+                raw,
+                items,
+                source_name=ds.name,
+                retrieved_at=retrieved_at,
+                sections={ref: ds.display_name for ref in refs},
+            )
+            content = _render_resource_publication(
+                results,
+                title=ds.display_name,
+                footer=f"---\n*{len(results)} items (past {ds.lookback_hours}h)*",
+            )
+            save("resource", f"{ds.name}_briefing_{DATE}.md", content)
+            collector.add(results)
+            collector.add_body(content)
+            saved += 1
+            log(f"    -> saved {ds.name}_briefing_{DATE}.md")
+        except Exception as exc:
+            collector.add_failure(f"{ds.name}: invalid structured AI output: {exc}")
+
+    _finalize_category_publication("resource", collector)
+    log(f"  Pipeline 5 done: {saved} files saved")
+    return saved
 
 
 def _generate_unified_news(
@@ -908,7 +1694,7 @@ def _generate_unified_news(
     model_default: str,
 ) -> int:
     """Batch-fetch all news-group sources, merge by section, URL-dedup, one AI call."""
-    sections: dict = {}   # section_name -> list[Item]
+    sections: dict = {}  # section_name -> list[Item]
     seen_urls: set = set()
 
     for src in news_sources:
@@ -936,11 +1722,10 @@ def _generate_unified_news(
 
     if total == 0:
         placeholder = (
-            f"# 大连理工大学校园动态 - {DATE}\n\n"
-            f"\U0001f4ed 过去 48 小时无新内容\n"
+            f"# 大连理工大学校园动态 - {DATE}\n\n" f"\U0001f4ed 过去 48 小时无新内容\n"
         )
         save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", placeholder)
-        log(f"    no updates -> placeholder")
+        log("    no updates -> placeholder")
         return 1
 
     section_parts = []
@@ -956,7 +1741,9 @@ def _generate_unified_news(
     prompt = tmpl.replace("{items}", items_text).replace("{date}", DATE)
 
     try:
-        content_text = call_ai(prompt, model=model_default, max_tokens=3000)
+        content_text = call_ai(
+            prompt, model=model_default, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+        )
         full_content = (
             f"# 大连理工大学校园动态 - {DATE}\n\n"
             f"{content_text}\n\n"
@@ -971,14 +1758,18 @@ def _generate_unified_news(
 
 
 def run_pipeline_resource() -> int:
+    if PUBLICATION_INTEGRATION:
+        return _run_pipeline_resource_publication()
+
     log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "stepfun-3.7-flash")
     saved = 0
 
     # --- Part A: unified news briefing (8 news sources -> 1 file) ---
     news_sources = [
-        s for s in cfg["sources"]
+        s
+        for s in cfg["sources"]
         if s.get("category") == "resource"
         and s.get("news_group") == _DLUT_NEWS_GROUP
         and s.get("enabled", True) is not False
@@ -990,7 +1781,9 @@ def run_pipeline_resource() -> int:
                 f"(use --force {_DLUT_NEWS_GROUP} to regenerate)"
             )
         else:
-            saved += _generate_unified_news(news_sources, defaults, prompt_templates, model_default)
+            saved += _generate_unified_news(
+                news_sources, defaults, prompt_templates, model_default
+            )
 
     # --- Part B: recruitment sources (per-source, logic unchanged) ---
     for source_cfg in cfg["sources"]:
@@ -1025,7 +1818,7 @@ def run_pipeline_resource() -> int:
             )
             save("resource", f"{ds.name}_briefing_{DATE}.md", no_update)
             saved += 1
-            log(f"    no updates -> placeholder")
+            log("    no updates -> placeholder")
             continue
 
         log(f"    {len(items)} items (within {ds.lookback_hours}h)")
@@ -1037,7 +1830,9 @@ def run_pipeline_resource() -> int:
         prompt = prompt_tmpl.replace("{items}", f"{ds.display_name}\n{items_text}")
 
         try:
-            content_text = call_ai(prompt, model=model_default, max_tokens=1200)
+            content_text = call_ai(
+                prompt, model=model_default, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+            )
             display_url = source_cfg.get("list_url", source_cfg.get("url", ""))
             full_content = (
                 f"# {ds.display_name} - {DATE}\n\n"
@@ -1065,7 +1860,10 @@ def main() -> int:
         "--pipeline",
         type=int,
         choices=[1, 2, 3, 4, 5],
-        help="Run specific pipeline: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource. Default: all",
+        help=(
+            "Run specific pipeline: 1=papers, 2=ai_news, 3=arxiv, "
+            "4=code, 5=resource. Default: all"
+        ),
     )
     parser.add_argument(
         "--force",
@@ -1077,10 +1875,11 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    global API_KEY, FORCE_ALL, FORCE_SOURCES
+    global API_KEY, FORCE_ALL, FORCE_SOURCES, PUBLICATION_INTEGRATION
     API_KEY = load_api_key()
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
+    PUBLICATION_INTEGRATION = True
     if FORCE_ALL or FORCE_SOURCES:
         log(
             "Force mode: "
@@ -1101,13 +1900,16 @@ def main() -> int:
     }
     to_run = [args.pipeline] if args.pipeline else [1, 2, 3, 4, 5]
     total_saved = 0
+    failed_pipelines = 0
 
     for p in to_run:
         try:
             total_saved += pipelines[p]()
         except Exception as e:
+            failed_pipelines += 1
             log(f"Pipeline {p} FAILED: {e}")
             import traceback
+
             traceback.print_exc()
 
     log("=== Summary ===")
@@ -1118,7 +1920,7 @@ def main() -> int:
             log(f'  {d}/: {len(files)} today - {", ".join(files)}')
 
     log(f"Total: {total_saved} files saved")
-    return 0 if total_saved > 0 else 1
+    return 0 if total_saved > 0 and failed_pipelines == 0 else 1
 
 
 if __name__ == "__main__":

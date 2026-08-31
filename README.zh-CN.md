@@ -2,7 +2,7 @@
 
 中文 | [English](README.md)
 
-DailyInfo 是面向 AI for Science 研究者的自动化科研情报收集器。每天自动从 RSS 源、网页和 API 聚合期刊论文、AI 资讯、arXiv 预印本、代码趋势和院所动态,再用 DeepSeek 生成简洁的中文简报,直接推送到你的 Discord。
+DailyInfo 是面向 AI for Science 研究者的自动化科研情报收集器。每天自动从 RSS 源、网页和 API 聚合期刊论文、AI 资讯、arXiv 预印本、代码趋势和院所动态,再用 StepFun 生成简洁的中文简报,直接推送到你的 Discord。
 
 ## 工作原理
 
@@ -17,7 +17,7 @@ FreshRSS / 网页抓取 / API 数据源
 ```
 
 1. **采集** — 五条独立流水线从 40+ 个 feed、页面和 API 拉取信息。一条流水线失败不影响其他。
-2. **归纳** — DeepSeek 为每个数据源生成一份可读的中文简报,面向研究者优化:这些论文讲了什么、为什么重要、哪些值得细看。
+2. **归纳** — StepFun 为每个数据源生成一份可读的中文简报,面向研究者优化:这些论文讲了什么、为什么重要、哪些值得细看。
 3. **推送** — 简报进入你的 Discord 频道并本地归档。同一份内容永远不会重复发送。
 
 每天醒来,你的领域内值得关注的一切已经整理成一份中文摘要等你查看——不用刷 feed 阅读器,没有邮件轰炸,没有噪音。
@@ -87,7 +87,7 @@ git clone <repo-url>
 cd dailyinfo
 
 cp .env.example .env
-# 填写 DEEPSEEK_API_KEY 和 DISCORD_BOT_TOKEN。
+# 填写 STEPFUN_API_KEY 和 DISCORD_BOT_TOKEN。
 
 uv sync --python python3
 uv pip install -e .
@@ -126,7 +126,7 @@ dailyinfo push
 
 | 变量 | 用途 |
 |------|------|
-| `DEEPSEEK_API_KEY` | `dailyinfo run` 使用的 DeepSeek API key(主模型) |
+| `STEPFUN_API_KEY` | `dailyinfo run` 使用的 StepFun API key(主模型) |
 | `DISCORD_BOT_TOKEN` | `dailyinfo push` 使用的 Discord bot token |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` | 可选分类频道 ID |
 | `FRESHRSS_USER` | FreshRSS 用户名 |

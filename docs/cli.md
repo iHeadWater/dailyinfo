@@ -31,7 +31,7 @@ dailyinfo install
 
 This command:
 
-1. Validates `.env` — `DEEPSEEK_API_KEY` and `DISCORD_BOT_TOKEN` must be non-empty and not a placeholder.
+1. Validates `.env` — `STEPFUN_API_KEY` and `DISCORD_BOT_TOKEN` must be non-empty and not a placeholder.
 2. Creates the workspace under `~/.myagentdata/dailyinfo/` (`freshrss/data`, `briefings/*`, `pushed/*`).
 3. Installs Python dependencies via `uv sync` (falls back to `pip install -e .`).
 
@@ -66,7 +66,7 @@ for today (either in `briefings/` waiting to be pushed, or already archived in
 to override — pass `all` to refresh everything, or repeat the flag with
 specific source names (matches `config/sources.json`).
 
-If the primary model (`deepseek-v4-flash` via DeepSeek API) returns empty responses after 3
+If the primary model (`stepfun-3.7-flash` via StepFun API) returns empty responses after 3
 retries with exponential backoff (2s / 5s / 10s), `run` automatically falls
 back to the model in `DAILYINFO_FALLBACK_MODEL` (default
 `moonshotai/kimi-k2.5` via OpenRouter) for 2 more attempts before giving up.
@@ -78,12 +78,44 @@ dailyinfo push                       # Push today's briefings (all categories)
 dailyinfo push -d 2026-04-22         # Backfill a specific day (YYYY-MM-DD)
 dailyinfo push -c papers,ai_news     # Push only selected categories
 dailyinfo push -c weekly             # Push weekly recap only (noon cron)
+dailyinfo push --force               # Explicitly retry a successful Discord delivery
 ```
 
-Scans files under `~/.myagentdata/dailyinfo/briefings/{category}/` whose name
-contains the target date, posts to the mapped Discord channel, and moves
-successfully pushed files to `pushed/{category}/`. `push` is idempotent: a day
-with no pending files just emits a "暂无新简报" notice and exits cleanly.
+For Phase 2C publications, `push` loads the canonical
+`publications/briefings/.../briefing.json` bundle, sends its `Briefing.body`
+through `DiscordPublisher`, and records `(briefing_id, discord)` in the
+independent `deliveries/` store. A recorded successful delivery is skipped on
+normal repeats; `--force` explicitly sends it again. Failed deliveries return
+non-zero and remain retryable. The old `briefings/` and `pushed/` Markdown paths
+remain for compatibility and archive maintenance; a real legacy pending file
+without a canonical bundle is rejected instead of being used as a new
+publication source.
+
+### Publish canonical Publications
+
+```bash
+dailyinfo publish --sink web                       # publish today to dailyinfo-web
+dailyinfo publish --sink web -d 2026-04-22         # publish one date
+dailyinfo publish --sink web -c papers,arxiv       # select categories
+dailyinfo publish --sink web --force                # reconcile Web despite success state
+dailyinfo publish --sink discord                   # canonical Discord delivery
+dailyinfo publish --sink all                       # independent Discord + Web attempts
+```
+
+The Web sink requires `DAILYINFO_WEB_REPO` to name a persistent local
+`dailyinfo-web` checkout. Optional `DAILYINFO_WEB_REMOTE` and
+`DAILYINFO_WEB_BRANCH` protect against publishing to the wrong remote or branch.
+The checkout must be clean and on the configured branch. WebPublisher fetches
+and fast-forwards only, writes only `src/content/items/generated/` and
+`src/content/briefings/generated/`, runs the Web validation/test/check/build
+gates, then creates and pushes one ordinary DailyInfo Bot commit for each
+changed Briefing. A push failure leaves that local publisher commit for retry.
+
+`dailyinfo publish` reads canonical `publications/` only; it never reconstructs
+a PublicationBundle from legacy Markdown. With `--sink all`, a failed sink does
+not roll back a successful other sink, and the command exits non-zero if either
+sink fails. Web publishing is intentionally not part of `dailyinfo run` in
+Phase 2D.
 
 ### Weekly Recap
 
@@ -105,7 +137,7 @@ dailyinfo logs      # Tail logs/dailyinfo.log (if enabled)
 Create `.env` in the project root:
 
 ```env
-DEEPSEEK_API_KEY=sk-your_deepseek_key_here
+STEPFUN_API_KEY=your_stepfun_key_here
 DISCORD_BOT_TOKEN=your_discord_token
 FRESHRSS_USER=owen
 FRESHRSS_PASSWORD=freshrss123
@@ -114,13 +146,16 @@ FRESHRSS_PASSWORD=freshrss123
 
 | Key | Purpose |
 |-----|---------|
-| `DEEPSEEK_API_KEY` | DeepSeek API key (required — primary model: `deepseek-v4-flash`) |
+| `STEPFUN_API_KEY` | StepFun API key (required — primary model: `stepfun-3.7-flash`) |
 | `OPENROUTER_API_KEY` | OpenRouter API key (optional, only needed for fallback) |
 | `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` | Per-category channel IDs (missing ones are skipped, not fatal) |
 | `DISCORD_CHANNEL_*_DEV` / `_STAGING` | Env-specific channel IDs when `DAILYINFO_ENV=dev` or `staging` |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) — controls data dir and channel suffix |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`; env-suffixed for dev/staging) |
+| `DAILYINFO_WEB_REPO` | Local `dailyinfo-web` checkout required by `publish --sink web` |
+| `DAILYINFO_WEB_REMOTE` | Expected Web `origin` URL (default `git@github.com:CylenLC/dailyinfo-web.git`) |
+| `DAILYINFO_WEB_BRANCH` | Expected Web branch (default `main`) |
 | `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
 | `FRESHRSS_PASSWORD` | FreshRSS password |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `moonshotai/kimi-k2.5`) |

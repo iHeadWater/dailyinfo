@@ -34,6 +34,32 @@ def test_fetch_title_only_respects_cutoff(rss_db):
     assert len(titles) == 5
 
 
+def test_fetch_preserves_rss_guid_and_source_publication_timestamp(rss_db):
+    rss_db.execute("ALTER TABLE entry ADD COLUMN guid TEXT")
+    rss_db.execute("UPDATE entry SET guid=? WHERE id=?", ("feed-guid-0", 1))
+    rss_db.commit()
+
+    ds = _make_rss(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+        },
+        rss_db,
+    )
+
+    item = next(item for item in ds.fetch() if item.title == "Fresh Title 0")
+    raw_timestamp = rss_db.execute(
+        "SELECT date FROM entry WHERE id=?", (1,)
+    ).fetchone()[0]
+
+    assert item.extra["guid"] == "feed-guid-0"
+    assert item.extra["source_published_at"] == datetime.datetime.fromtimestamp(
+        raw_timestamp, datetime.timezone.utc
+    )
+
+
 def test_fetch_respects_max_articles(rss_db):
     ds = _make_rss(
         {
@@ -195,8 +221,6 @@ def test_seen_dedup_filters_already_processed(rss_db):
 
 def test_commit_seen_only_records_provided_items(rss_db):
     """commit_seen should only mark the items passed to it, not all fetched items."""
-    from datasource import Item
-
     ds = _make_rss(
         {
             "name": "test_feed1",
@@ -220,8 +244,6 @@ def test_commit_seen_only_records_provided_items(rss_db):
 
 def test_commit_seen_empty_list_is_harmless(rss_db):
     """commit_seen([]) should not fail and should not affect existing seen state."""
-    from datasource import Item
-
     ds = _make_rss(
         {
             "name": "test_feed1",

@@ -297,7 +297,7 @@ def test_process_regular_source_records_zero_state_for_empty_rss(rss_db, monkeyp
     saved = rp._process_regular_source(
         ds,
         ds.config,
-        "deepseek-v4-flash",
+        "deepseek-v4-pro",
         {"one_line_summary": "summarize {article_list}"},
         "one_line_summary",
     )
@@ -352,7 +352,7 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
     saved = rp._process_regular_source(
         ds,
         ds.config,
-        "deepseek-v4-flash",
+        "deepseek-v4-pro",
         {"one_line_summary": "summarize {article_list}"},
         "one_line_summary",
     )
@@ -409,6 +409,22 @@ def test_call_ai_returns_primary_content_on_first_success(monkeypatch):
     )
 
     assert rp.call_ai("prompt", model="primary/model") == "hello world"
+
+
+def test_call_ai_uses_a_larger_default_output_budget(monkeypatch):
+    import run_pipelines as rp
+
+    request_budgets: list[int] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-test-ds")
+
+    def fake_post(url, *args, **kwargs):
+        request_budgets.append(kwargs["json"]["max_tokens"])
+        return _StubAIResponse(content="complete reply", finish_reason="stop")
+
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    assert rp.call_ai("prompt") == "complete reply"
+    assert request_budgets == [50000]
 
 
 def test_call_ai_falls_back_after_primary_empty_responses(monkeypatch):
@@ -1142,6 +1158,16 @@ def test_load_deepseek_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
     assert rp.load_deepseek_key() == "sk-deepseek-test"
 
 
+def test_load_deepseek_key_prefers_stepfun_key(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("STEPFUN_API_KEY", "sk-stepfun-test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-legacy-test")
+
+    assert rp.load_deepseek_key() == "sk-stepfun-test"
+
+
 def test_load_deepseek_key_exits_when_missing(tmp_path, monkeypatch):
     import run_pipelines as rp
 
@@ -1173,12 +1199,12 @@ def test_load_deepseek_key_skips_placeholder_values(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Dual-provider call_ai — DeepSeek primary, OpenRouter fallback
+# Dual-provider call_ai — StepFun primary, OpenRouter fallback
 # ---------------------------------------------------------------------------
 
 
-def test_call_ai_uses_deepseek_primary_openrouter_fallback(monkeypatch):
-    """Primary calls api.deepseek.com (3 tries), fallback calls openrouter.ai."""
+def test_call_ai_uses_stepfun_primary_openrouter_fallback(monkeypatch):
+    """Primary calls StepFun (3 tries), fallback calls openrouter.ai."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
 
@@ -1189,8 +1215,8 @@ def test_call_ai_uses_deepseek_primary_openrouter_fallback(monkeypatch):
 
     def fake_post(url, *args, **kwargs):
         call_urls.append(url)
-        if "deepseek" in url:
-            raise rp.requests.RequestException("deepseek transient error")
+        if "stepfun" in url:
+            raise rp.requests.RequestException("stepfun transient error")
         return _StubAIResponse(content="kimi fallback reply", finish_reason="stop")
 
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
@@ -1200,8 +1226,8 @@ def test_call_ai_uses_deepseek_primary_openrouter_fallback(monkeypatch):
     result = rp.call_ai("summarise")
 
     assert result == "kimi fallback reply"
-    deepseek_calls = [u for u in call_urls if "deepseek" in u]
+    stepfun_calls = [u for u in call_urls if "stepfun" in u]
     openrouter_calls = [u for u in call_urls if "openrouter" in u]
-    assert len(deepseek_calls) == 3, f"expected 3 deepseek attempts, got {call_urls}"
+    assert len(stepfun_calls) == 3, f"expected 3 StepFun attempts, got {call_urls}"
     assert len(openrouter_calls) == 1, f"expected 1 openrouter attempt, got {call_urls}"
     assert "switching to fallback" in "\n".join(logs)
