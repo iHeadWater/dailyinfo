@@ -11,14 +11,14 @@ One pipeline, five independent sources of information:
 ```text
 FreshRSS / scrape / API sources
   -> dailyinfo run
-  -> AI-generated Markdown briefings (Chinese)
-  -> dailyinfo push
-  -> Discord channels + local archive
+  -> structured summaries + canonical PublicationStore
+  -> dailyinfo publish --sink web / discord
+  -> independent delivery sinks + local state
 ```
 
 1. **Collect** — five independent pipelines pull from 40+ feeds, pages, and APIs. A failure in one never blocks the others.
-2. **Summarize** — DeepSeek writes a readable Chinese briefing per source, tuned for researchers: what the papers are, why they matter, and what's worth a closer look.
-3. **Deliver** — briefings land in your Discord channels and are archived locally. Nothing is ever sent twice.
+2. **Summarize and finalize** — DeepSeek produces structured summaries; DailyInfo validates and persists one canonical PublicationBundle per category/date while retaining the legacy Markdown output.
+3. **Deliver** — `dailyinfo publish` sends the canonical bundle to selected sinks. Discord and Web delivery state are independent and retryable.
 
 You wake up to a curated digest of everything relevant to your field — no feed readers to check, no email, no noise.
 
@@ -72,12 +72,14 @@ Default data root: `~/.myagentdata/dailyinfo/`. Override it with `DAILYINFO_DATA
 │   ├── arxiv/
 │   ├── code/
 │   └── resource/
-└── pushed/              # Successfully pushed archive
-    ├── papers/
-    ├── ai_news/
-    ├── arxiv/
-    ├── code/
-    └── resource/
+├── pushed/              # Successfully pushed archive
+│   ├── papers/
+│   ├── ai_news/
+│   ├── arxiv/
+│   ├── code/
+│   └── resource/
+├── publications/         # Canonical Publication v1 store
+└── deliveries/           # Independent Discord/Web delivery state
 ```
 
 ## Quick Start
@@ -115,6 +117,10 @@ dailyinfo push
 | `dailyinfo run -f all` | Force regeneration for all sources |
 | `dailyinfo push` | Push pending briefings to Discord and archive them |
 | `dailyinfo push -d 2026-04-22` | Push briefings for a specific date |
+| `dailyinfo publish --sink web` | Publish canonical briefings to the configured `dailyinfo-web` checkout |
+| `dailyinfo publish --sink discord` | Deliver canonical briefings to Discord |
+| `dailyinfo publish --sink all` | Attempt Discord and Web independently |
+| `dailyinfo publish --sink web --force` | Reconcile Web even when delivery state is already successful |
 | `dailyinfo push -c weekly` | Push the weekly recap only |
 | `dailyinfo weekly` | Generate a weekly AI news recap from recent briefings |
 | `dailyinfo status` | Show today's briefing/archive counts |
@@ -132,6 +138,9 @@ dailyinfo push
 | `FRESHRSS_USER` | FreshRSS username |
 | `FRESHRSS_PASSWORD` | FreshRSS initial password |
 | `DAILYINFO_DATA_ROOT` | Override default data root |
+| `DAILYINFO_WEB_REPO` | Required local `dailyinfo-web` checkout for Web publishing |
+| `DAILYINFO_WEB_REMOTE` | Expected Web `origin` URL (default official repository) |
+| `DAILYINFO_WEB_BRANCH` | Expected Web branch (default `main`) |
 | `OPENROUTER_API_KEY` | OpenRouter API key (optional, used for fallback model) |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback model when DeepSeek returns empty (default `moonshotai/kimi-k2.5`) |

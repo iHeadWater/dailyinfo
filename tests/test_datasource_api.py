@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from conftest import fixture_path
 
@@ -50,6 +51,8 @@ def test_huggingface_models_parse_fields():
     assert first.extra["task"] == "text-generation"
     assert first.extra["likes"] == 123
     assert first.extra["downloads"] == 45678
+    assert first.extra["repo_id"] == "org/model-a"
+    assert "source_published_at" not in first.extra
 
 
 def test_huggingface_parse_handles_non_list_data():
@@ -274,9 +277,7 @@ def test_crossref_parse_uses_online_date_for_new_items():
                     "title": ["Recently posted online"],
                     "URL": "https://doi.org/10.3724/example",
                     "DOI": "10.3724/example",
-                    "published-print": {
-                        "date-parts": [[old.year, old.month, old.day]]
-                    },
+                    "published-print": {"date-parts": [[old.year, old.month, old.day]]},
                     "published-online": {
                         "date-parts": [[now.year, now.month, now.day]]
                     },
@@ -299,6 +300,66 @@ def test_crossref_parse_uses_online_date_for_new_items():
 
     assert [item.title for item in items] == ["Recently posted online"]
     assert items[0].date == now.strftime("%Y-%m-%d")
+    assert items[0].extra["source_published_at"] == now.strftime("%Y-%m-%d")
+    assert items[0].extra["doi"] == "10.3724/example"
+
+
+def test_dlut_recruitment_start_time_is_not_source_publication_time(monkeypatch):
+    import datasource
+    from datasource import APIDataSource
+
+    # The production module keeps Beijing wall-clock time as a naive datetime.
+    # Keep the test reference timezone-aware, then adapt it at that module
+    # boundary so the test does not depend on the day it happens to run.
+    fixed_now = datetime(2026, 8, 27, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(datasource, "NOW", fixed_now.replace(tzinfo=None))
+
+    ds = APIDataSource(
+        {
+            "name": "dlut_recruitment",
+            "category": "resource",
+            "url": "https://x.test/",
+            "extract": {"fields": {"title": "title", "date": "startTime"}},
+        },
+        DEFAULTS,
+    )
+    items = ds._parse_dlut_api(
+        [
+            {
+                "id": 42,
+                "title": "Recruitment",
+                "startTime": "2026-08-27 01:00:00",
+            }
+        ]
+    )
+
+    assert items[0].extra["item_id"] == "42"
+    assert items[0].extra.get("source_published_at") is None
+
+
+def test_dlut_recruitment_lookback_uses_fixed_clock(monkeypatch):
+    import datasource
+    from datasource import APIDataSource
+
+    fixed_now = datetime(2026, 8, 27, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    monkeypatch.setattr(datasource, "NOW", fixed_now.replace(tzinfo=None))
+    config = {
+        "name": "dlut_recruitment",
+        "category": "resource",
+        "url": "https://x.test/",
+        "extract": {"fields": {"title": "title", "date": "startTime"}},
+    }
+    ds = APIDataSource(config, DEFAULTS)
+
+    inside = ds._parse_dlut_api(
+        [{"id": 1, "title": "Inside", "startTime": "2026-08-27 11:00:00"}]
+    )
+    outside = ds._parse_dlut_api(
+        [{"id": 2, "title": "Outside", "startTime": "2026-08-26 11:59:59"}]
+    )
+
+    assert [item.extra["item_id"] for item in inside] == ["1"]
+    assert outside == []
 
 
 def test_shuili_xuebao_config_sorts_by_updated():
@@ -321,9 +382,7 @@ def test_crossref_fetch_filters_seen_articles(fake_requests):
                     "title": ["Hydraulic engineering paper"],
                     "URL": "https://doi.org/10.1234/example",
                     "DOI": "10.1234/example",
-                    "published": {
-                        "date-parts": [[now.year, now.month, now.day]]
-                    },
+                    "published": {"date-parts": [[now.year, now.month, now.day]]},
                 }
             ]
         }
@@ -358,9 +417,7 @@ def test_dlut_recruitment_filters_expired_deadlines(monkeypatch):
     import datasource
     from datasource import APIDataSource
 
-    monkeypatch.setattr(
-        datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0)
-    )
+    monkeypatch.setattr(datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0))
     api_data = {
         "object": {
             "list": [
@@ -421,9 +478,7 @@ def test_dlut_recruitment_expired_cursor_item_stops_pagination(monkeypatch):
     import datasource
     from datasource import APIDataSource
 
-    monkeypatch.setattr(
-        datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0)
-    )
+    monkeypatch.setattr(datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0))
     ds = APIDataSource(
         {
             "name": "dlut_internship",

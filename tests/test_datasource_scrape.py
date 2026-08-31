@@ -39,6 +39,7 @@ def test_github_trending_parses_items(fake_requests):
     assert first.extra["language"] == "Python"
     assert first.extra["stars"] == "1234"
     assert first.extra["stars_today"] == "200"
+    assert "source_published_at" not in first.extra
 
     assert second.extra["full_name"] == "bob/rust-lib"
     assert second.extra["language"] == "Rust"
@@ -119,6 +120,7 @@ def test_dlut_news_parsing_filters_old_entries(fake_requests):
     assert it.title == "Fresh DLUT announcement title"
     assert it.url == "https://dlut.example.edu/info/1234.htm"
     assert it.date == now.strftime("%Y-%m-%d")
+    assert it.extra["source_published_at"] == it.date
 
 
 def test_dlut_news_respects_max_items(fake_requests):
