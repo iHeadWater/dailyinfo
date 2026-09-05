@@ -41,6 +41,7 @@ This page is generated from [`config/sources.json`](https://github.com/iHeadWate
 | shuili_xuebao | 水利学报 | papers | api | True | 720 | https://api.crossref.org/works?filter=issn:0559-9350&sort=updated&order=desc&rows=20 |
 | chinawater | 中国水利 | papers | scrape | True | 48 | https://slzg.cbpt.cnki.net/portal/journal/portal/client/index |
 | smolai_news | SmolAI News | ai_news | rss | True | 24 | https://news.smol.ai/rss.xml |
+| ai_weekly | AI Weekly | ai_news | rss | True | 24 | https://aiweekly.co/feed |
 | arxiv_cs_ai | arXiv CS.AI | arxiv | rss | True | 24 | https://rss.arxiv.org/rss/cs.AI |
 | github_trending | GitHub Trending | code | scrape | True | 24 | https://github.com/trending?since=daily |
 | huggingface_models | HuggingFace Trending Models | code | api | True | 24 | https://huggingface.co/api/models |
