@@ -322,6 +322,16 @@
       "type": "rss"
     },
     {
+      "name": "ai_weekly",
+      "display_name": "AI Weekly",
+      "category": "ai_news",
+      "enabled": true,
+      "prompt_template": "smolai_categorized",
+      "use_content": true,
+      "url": "https://aiweekly.co/feed",
+      "type": "rss"
+    },
+    {
       "name": "arxiv_cs_ai",
       "display_name": "arXiv CS.AI",
       "category": "arxiv",
