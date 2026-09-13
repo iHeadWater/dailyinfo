@@ -27,13 +27,15 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 uv sync --python python3 && uv pip install -e .
 dailyinfo install                # Validate .env + create workspace dirs + install deps
 
-# Run pipelines (idempotent - skips sources with today's briefing)
-dailyinfo run                    # All 5 pipelines
+# Run pipelines (idempotent - skips static sources with today's briefing)
+dailyinfo run                    # All 6 pipelines
 dailyinfo run -p 1               # Pipeline 1: papers
 dailyinfo run -p 2               # Pipeline 2: AI news
 dailyinfo run -p 3               # Pipeline 3: arXiv
 dailyinfo run -p 4               # Pipeline 4: code trending
 dailyinfo run -p 5               # Pipeline 5: university news
+dailyinfo run -p 6               # Pipeline 6: OpenReview conference events
+dailyinfo run -p 6 --source openreview_iclr_2026
 dailyinfo run -f all             # Force regenerate all sources
 dailyinfo run -f arxiv_cs_ai    # Force regenerate one source
 
@@ -71,7 +73,7 @@ uv run mkdocs serve              # Local preview
 
 ## Architecture
 
-### Five Pipelines
+### Six Pipelines
 
 | Pipeline | Sources | Output |
 |----------|---------|--------|
@@ -80,6 +82,7 @@ uv run mkdocs serve              # Local preview
 | 3 | arXiv CS.AI (RSS, up to 500 articles) | `arxiv/` |
 | 4 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
 | 5 | DLUT university sites (scrape + API) | `resource/` |
+| 6 | OpenReview conferences (API v2 + lifecycle state) | `conference/` |
 
 Each pipeline is independent — a failure in one does not affect the others. Common processing logic (fetch → batch → AI → merge → save) is shared via `_process_regular_source()`.
 
@@ -94,7 +97,11 @@ Each pipeline is independent — a failure in one does not affect the others. Co
 - `DataSource` (ABC) with factory `DataSource.create(config, defaults, **ctx)`
   - `RSSDataSource` - FreshRSS SQLite DB
   - `ScrapeDataSource` - HTML scraping (GitHub Trending, DLUT sites, Chinese water journals)
-  - `APIDataSource` - REST API calls (HuggingFace, DLUT recruitment, Crossref)
+- `APIDataSource` - REST API calls (HuggingFace, DLUT recruitment, Crossref)
+
+OpenReview is intentionally not routed through the static `Item`/seen-URL
+contract. `OpenReviewProvider` normalizes API v2 data and the conference
+pipeline stores venue cursors, paper snapshots, and events in SQLite.
 
 ### Key Design Patterns
 
@@ -109,7 +116,7 @@ Each pipeline is independent — a failure in one does not affect the others. Co
 
 Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`.
 
-Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-v4-flash`.
+Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-v4-pro`.
 
 Prompt templates under `prompt_templates` key use placeholders: `{count}`, `{display_name}`, `{article_list}`, `{items}`, `{date}`, `{content}`.
 
@@ -120,7 +127,7 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 ## Environment Variables
 
 Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`
-Optional: `OPENROUTER_API_KEY` (fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`
+Optional: `OPENROUTER_API_KEY` (fallback model), `OPENREVIEW_USERNAME/PASSWORD` (set together), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE/CONFERENCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`
 
 Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPERS_PATH`)已随 zotero_sync 迁移至 mylibrary,本仓库不再需要。
 

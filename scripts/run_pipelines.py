@@ -24,7 +24,10 @@ import time
 import requests
 
 from datasource import DataSource, RSSDataSource, build_feed_url_map
+from conference import ConferenceState, run_conference_source
+from openreview_provider import classify_openreview_error
 from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
+from paper_retrieval import PaperRetriever, deduplicate_papers
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
@@ -32,6 +35,11 @@ SOURCES_JSON = os.path.join(CONFIG_DIR, "sources.json")
 DATE = datetime.datetime.now().strftime("%Y-%m-%d")
 
 API_KEY = ""
+
+# Running total of prompt characters sent to the AI this process, logged per
+# run so heavy days are attributable. Nothing throttles on it: batching is
+# capped by max_batches only, so cost stays observable rather than bounded.
+AI_PROMPT_CHARS: int = 0
 
 
 def _get_freshrss_user() -> str:
@@ -143,6 +151,15 @@ OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_FALLBACK_MODEL = "moonshotai/kimi-k2.5"
 
+# Reasoning models spend `max_tokens` on chain-of-thought *before* writing the
+# answer. A real 10-article batch measured 1,100-2,800 reasoning tokens on top of
+# ~950 for the briefing body, so the 2,500 budget callers sized for the visible
+# answer truncated intermittently (finish_reason=length). Floor every request:
+# the cap is not prepaid — only generated tokens are billed — whereas a
+# truncation forces a batch split that resends the whole ~41K char prompt, so
+# headroom is strictly cheaper than clipping.
+MIN_COMPLETION_TOKENS = 8000
+
 _BACKOFF_SECONDS = (2, 5, 10)
 
 
@@ -172,8 +189,13 @@ def _post_ai(url: str, api_key: str, model: str, prompt: str, max_tokens: int):
         },
         timeout=120,
     )
-    resp.raise_for_status()
-    return resp.json()
+    try:
+        resp.raise_for_status()
+        return resp.json()
+    finally:
+        close = getattr(resp, "close", None)
+        if callable(close):
+            close()
 
 
 def _get_deepseek_key() -> str:
@@ -189,7 +211,7 @@ _DEEPSEEK_KEY_CACHE: str | None = None
 
 def call_ai(
     prompt: str,
-    model: str = "deepseek-v4-flash",
+    model: str = "deepseek-v4-pro",
     max_tokens: int = 1200,
     *,
     fallback_model: str | None = None,
@@ -202,6 +224,7 @@ def call_ai(
     """
     fallback = _resolve_fallback_model(fallback_model)
     ds_key = _get_deepseek_key()
+    max_tokens = max(max_tokens, MIN_COMPLETION_TOKENS)
 
     # ── Primary: DeepSeek API ──────────────────────────────────────
     for i in range(3):
@@ -280,12 +303,22 @@ def _count_matched_titles(content: str, expected_titles: list[str]) -> int:
     )
 
 
+def _has_unclosed_bold(line: str) -> bool:
+    """Return True when ``line`` opens a bold span it never closes.
+
+    Counting the ``**`` markers is what separates a genuinely truncated
+    ``2. **Half a tit`` from a finished ``... **术语** 的后续说明。``, where the
+    bold is closed and ordinary prose continues on the same line.
+    """
+    return line.count("**") % 2 == 1
+
+
 def _looks_cut_off(content: str) -> bool:
     """Return True for common half-written markdown or sentence endings."""
     stripped = content.strip()
     if not stripped:
         return True
-    if re.search(r"\*\*[^*\n]{1,160}$", stripped):
+    if _has_unclosed_bold(stripped.splitlines()[-1]):
         return True
     if stripped.endswith(("**", "*", "`", "：", ":", "，", ",")):
         return True
@@ -340,7 +373,9 @@ def _generate_regular_briefings(
     Returns list of (content, batch_items) tuples so callers can track which
     items were successfully processed for commit_seen.
     """
+    global AI_PROMPT_CHARS
     prompt = _build_regular_prompt(prompt_template, ds, batch)
+    AI_PROMPT_CHARS += len(prompt)
     try:
         content = call_ai(prompt, model=model, max_tokens=max_tokens)
         validate_briefing_content(content, len(batch), [item.title for item in batch])
@@ -512,6 +547,8 @@ def _already_pushed_within(name: str, category: str, lookback_hours: int) -> boo
 # every source is re-run; names in ``FORCE_SOURCES`` are selectively re-run.
 FORCE_ALL: bool = False
 FORCE_SOURCES: set[str] = set()
+SOURCE_FILTER: set[str] = set()
+CONFERENCE_RUN_FAILED: bool = False
 
 
 def _is_forced(name: str) -> bool:
@@ -563,38 +600,102 @@ def _filter_sources(cfg: dict, category: str, *types: str) -> list[dict]:
         if s.get("category") == category
         and s.get("type") in types
         and s.get("enabled", True)
+        and (not SOURCE_FILTER or s.get("name") in SOURCE_FILTER)
     ]
 
 
+def _apply_paper_retrieval(ds, feed_cfg: dict, items: list) -> tuple[list, list]:
+    """Filter paper items and return ``(selected, all_items_to_commit)``.
+
+    Filtering is opt-in so every existing RSS/API source keeps its historical
+    behaviour. The complete fetched set is committed after a successful source
+    run, including items rejected by retrieval, preventing them from being
+    rescanned forever.
+    """
+
+    if "keyword_filter" not in feed_cfg and "retrieval" not in feed_cfg:
+        return items, items
+    retriever = PaperRetriever(
+        feed_cfg,
+        logger=lambda message: log(f"[{ds.display_name}]{message}"),
+    )
+    result = retriever.filter(items)
+    log(
+        f"  {ds.name}: retrieval selected={len(result.selected)}/{len(items)} "
+        f"keyword={result.keyword_count} embedding={result.embedding_count}"
+    )
+    return result.selected, items
+
+
 def _process_regular_source(ds, feed_cfg: dict, model_default: str,
-                            templates: dict, default_tmpl_key: str) -> int:
+                            templates: dict, default_tmpl_key: str,
+                            *, fetched_items: list | None = None,
+                            commit_items: list | None = None,
+                            items_are_filtered: bool = False,
+                            fetched_before_filter: int | None = None) -> int:
     """Process a single source: fetch -> batch -> AI -> merge -> save -> commit.
+
+    ``fetched_before_filter`` carries the number of entries the source returned
+    *before* retrieval ran. Callers that pre-filter (the arXiv pipeline) must
+    pass it, otherwise a fully-rejected page is indistinguishable from a feed
+    that returned nothing and would trip the FreshRSS "stuck cache" heuristic.
 
     Returns number of files saved (0 or 1).
     """
     name, category = ds.name, ds.category
 
-    try:
-        items = ds.fetch()
-    except Exception as e:
-        log(f"    FETCH ERR: {e}")
-        placeholder = f"# {ds.display_name} - {DATE}\n\n" + "⚠️ 获取失败\n"
-        save(category, f"{name}_briefing_{DATE}.md", placeholder)
-        return 1
+    if ds.skips_today():
+        log(f"  {name}: {ds.target_date()} 是周末，本源不发布，跳过")
+        return 0
+
+    if fetched_items is None:
+        try:
+            raw_items = ds.fetch()
+        except Exception as e:
+            log(f"    FETCH ERR: {e}")
+            placeholder = f"# {ds.display_name} - {DATE}\n\n" + "⚠️ 获取失败\n"
+            save(category, f"{name}_briefing_{DATE}.md", placeholder)
+            return 1
+    else:
+        raw_items = fetched_items
+
+    if items_are_filtered:
+        items, default_commit_items = raw_items, raw_items
+    else:
+        try:
+            items, default_commit_items = _apply_paper_retrieval(
+                ds, feed_cfg, raw_items
+            )
+        except Exception as e:
+            log(f"    RETRIEVAL ERR: {e}")
+            return 0
+    commit_pool = commit_items if commit_items is not None else default_commit_items
+    if fetched_before_filter is None:
+        fetched_before_filter = len(raw_items)
 
     if not items:
-        log(f"  {name}: 0 new articles - placeholder")
-        ds.commit_seen(items)
-        placeholder = f"# {ds.display_name} - {DATE}\n\n" + "\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
+        log(f"  {name}: 0 relevant new articles - placeholder")
+        ds.commit_seen(commit_pool)
+        ds.commit_cursor()
+        placeholder = (
+            f"# {ds.display_name} - {DATE}\n\n"
+            f"\U0001f4ed 过去 {ds.lookback_hours} 小时无新内容\n"
+        )
         save(category, f"{name}_briefing_{DATE}.md", placeholder)
         if isinstance(ds, RSSDataSource):
             from freshrss_cache import record_zero_result
-            zero_days = record_zero_result(STATE_DIR, name, DATE)
-            if zero_days >= 2:
-                log(
-                    f"  [WARN] {name}: {zero_days} consecutive days with 0 articles — "
-                    f"FreshRSS cache may be stuck. Run: dailyinfo cache-clear"
-                )
+            from freshrss_cache import reset_zero_result
+            if fetched_before_filter:
+                # The feed returned entries, but retrieval rejected all of
+                # them; this is not evidence that FreshRSS is stuck.
+                reset_zero_result(STATE_DIR, name)
+            else:
+                zero_days = record_zero_result(STATE_DIR, name, DATE)
+                if zero_days >= 2:
+                    log(
+                        f"  [WARN] {name}: {zero_days} consecutive days with 0 articles — "
+                        f"FreshRSS cache may be stuck. Run: dailyinfo cache-clear"
+                    )
         return 1
 
     if isinstance(ds, RSSDataSource):
@@ -643,7 +744,9 @@ def _process_regular_source(ds, feed_cfg: dict, model_default: str,
         except Exception as e:
             log(f"    SAVE ERR: {e}")
 
-    ds.commit_seen(all_items)
+    # Mark rejected retrieval items as processed as well as summarized items.
+    ds.commit_seen(commit_pool)
+    ds.commit_cursor()
     return 1 if merged_content else 0
 
 
@@ -709,18 +812,14 @@ def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
     return saved
 
 
-def _run_category_pipeline(category: str, *,
-                           create_marker: bool = False,
-                           deep_content: bool = False) -> int:
+def _run_category_pipeline(category: str, *, deep_content: bool = False) -> int:
     """Generic pipeline for a single category.
 
-    Handles both RSS and non-RSS sources. If *create_marker* is True,
-    the arXiv generation marker is created before processing and removed
-    in a finally block. If *deep_content* is True, the smolai use_content
-    path is used instead of the regular batched path.
+    Handles both RSS and non-RSS sources. If *deep_content* is True, the
+    smolai use_content path is used instead of the regular batched path.
     """
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-v4-pro")
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
 
     # --- RSS sources ---
@@ -734,9 +833,6 @@ def _run_category_pipeline(category: str, *,
         return 0
     db.row_factory = sqlite3.Row
     full_map, base_map = build_feed_url_map(db)
-
-    if create_marker:
-        _create_arxiv_marker()
 
     try:
         saved = 0
@@ -761,8 +857,6 @@ def _run_category_pipeline(category: str, *,
                                                  templates, default_tmpl_key)
     finally:
         db.close()
-        if create_marker:
-            _remove_arxiv_marker()
 
     # --- Non-RSS sources ---
     for source_cfg in _filter_sources(cfg, category, "scrape", "api"):
@@ -802,7 +896,82 @@ def run_pipeline_ai_news() -> int:
 # =====================================================================
 def run_pipeline_arxiv() -> int:
     log("=== Pipeline 3: arXiv ===")
-    saved = _run_category_pipeline("arxiv", create_marker=True)
+    # arXiv RSS and HF Daily Papers share the same Discord channel. Fetch both
+    # channels first, apply their independent retrieval rules, then remove
+    # cross-source duplicates before invoking the summarizer.
+    cfg, defaults, templates = _load_sources()
+    model_default = defaults.get("model", "deepseek-v4-pro")
+    default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
+    saved = 0
+    db = None
+    try:
+        try:
+            db = sqlite3.connect(FRESHRSS_DB)
+            db.row_factory = sqlite3.Row
+            full_map, base_map = build_feed_url_map(db)
+        except Exception as exc:
+            log(f"  [arxiv] FreshRSS unavailable; RSS sources will be skipped: {exc}")
+            full_map, base_map = {}, {}
+
+        _create_arxiv_marker()
+        seen_identities: set[str] = set()
+        records: list[tuple[object, dict, list, list, int]] = []
+        source_cfgs = _filter_sources(cfg, "arxiv", "rss", "api", "scrape")
+        # Community-ranked HF items win when the same paper is also present in
+        # the RSS feed; the arXiv channel still retains all unique RSS hits.
+        source_cfgs.sort(key=lambda source: 0 if source.get("name") == "hf_daily_papers" else 1)
+
+        for source_cfg in source_cfgs:
+            name = source_cfg.get("name", "")
+            category = source_cfg.get("category", "arxiv")
+            if _has_real_briefing_today(name, category):
+                log(f"  {name}: briefing already exists for {DATE}, skip")
+                continue
+            ds = DataSource.create(
+                source_cfg,
+                defaults,
+                db=db,
+                full_map=full_map,
+                base_map=base_map,
+            )
+            if ds.skips_today():
+                log(f"  {name}: {ds.target_date()} 是周末，本源不发布，跳过")
+                continue
+            log(f"  {name}...")
+            try:
+                raw_items = ds.fetch()
+                selected, commit_pool = _apply_paper_retrieval(
+                    ds, source_cfg, raw_items
+                )
+                unique_selected = deduplicate_papers(selected, seen_identities)
+                duplicate_count = len(selected) - len(unique_selected)
+                if duplicate_count:
+                    log(f"  {name}: removed {duplicate_count} cross-source duplicates")
+                records.append(
+                    (ds, source_cfg, unique_selected, commit_pool, len(raw_items))
+                )
+            except Exception as exc:
+                log(f"    FETCH/RETRIEVAL ERR: {exc}")
+                placeholder = f"# {ds.display_name} - {DATE}\n\n⚠️ 获取或筛选失败\n"
+                save(category, f"{name}_briefing_{DATE}.md", placeholder)
+                saved += 1
+
+        for ds, source_cfg, items, commit_pool, fetched_count in records:
+            saved += _process_regular_source(
+                ds,
+                source_cfg,
+                model_default,
+                templates,
+                default_tmpl_key,
+                fetched_items=items,
+                commit_items=commit_pool,
+                items_are_filtered=True,
+                fetched_before_filter=fetched_count,
+            )
+    finally:
+        if db is not None:
+            db.close()
+        _remove_arxiv_marker()
     log(f"  Pipeline 3 done: {saved} files saved")
     return saved
 
@@ -813,12 +982,14 @@ def run_pipeline_arxiv() -> int:
 def run_pipeline_code() -> int:
     log("=== Pipeline 4: Code Trending ===")
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-v4-pro")
     code_tmpl = templates.get("code_trending", "")
     saved = 0
 
     for source_cfg in cfg["sources"]:
         if source_cfg.get("category") != "code" or source_cfg.get("enabled") is False:
+            continue
+        if SOURCE_FILTER and source_cfg.get("name") not in SOURCE_FILTER:
             continue
 
         ds = DataSource.create(source_cfg, defaults)
@@ -847,7 +1018,7 @@ def run_pipeline_code() -> int:
             continue
 
         if not items:
-            log(f"    no items")
+            log("    no items")
             continue
 
         log(f"    {len(items)} items")
@@ -940,7 +1111,7 @@ def _generate_unified_news(
             f"\U0001f4ed 过去 48 小时无新内容\n"
         )
         save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", placeholder)
-        log(f"    no updates -> placeholder")
+        log("    no updates -> placeholder")
         return 1
 
     section_parts = []
@@ -973,7 +1144,7 @@ def _generate_unified_news(
 def run_pipeline_resource() -> int:
     log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-v4-pro")
     saved = 0
 
     # --- Part A: unified news briefing (8 news sources -> 1 file) ---
@@ -982,6 +1153,7 @@ def run_pipeline_resource() -> int:
         if s.get("category") == "resource"
         and s.get("news_group") == _DLUT_NEWS_GROUP
         and s.get("enabled", True) is not False
+        and (not SOURCE_FILTER or s.get("name") in SOURCE_FILTER)
     ]
     if news_sources:
         if _has_real_briefing_today(_DLUT_NEWS_GROUP, "resource"):
@@ -998,6 +1170,7 @@ def run_pipeline_resource() -> int:
             source_cfg.get("category") != "resource"
             or source_cfg.get("enabled") is False
             or source_cfg.get("news_group") == _DLUT_NEWS_GROUP
+            or (SOURCE_FILTER and source_cfg.get("name") not in SOURCE_FILTER)
         ):
             continue
 
@@ -1025,7 +1198,7 @@ def run_pipeline_resource() -> int:
             )
             save("resource", f"{ds.name}_briefing_{DATE}.md", no_update)
             saved += 1
-            log(f"    no updates -> placeholder")
+            log("    no updates -> placeholder")
             continue
 
         log(f"    {len(items)} items (within {ds.lookback_hours}h)")
@@ -1057,6 +1230,76 @@ def run_pipeline_resource() -> int:
 
 
 # =====================================================================
+# PIPELINE 6: OpenReview Conference Papers
+# =====================================================================
+def run_pipeline_conference() -> int:
+    global CONFERENCE_RUN_FAILED
+
+    CONFERENCE_RUN_FAILED = False
+    log("=== Pipeline 6: Conference Papers ===")
+    cfg, defaults, _templates = _load_sources()
+    sources = _filter_sources(cfg, "conference", "api")
+    saved = 0
+    for source_cfg in sources:
+        if source_cfg.get("provider") != "openreview":
+            log(f"  {source_cfg.get('name', '?')}: unsupported conference provider")
+            CONFERENCE_RUN_FAILED = True
+            continue
+        name = source_cfg["name"]
+        log(f"  {name}...")
+        try:
+            result = run_conference_source(
+                source_cfg,
+                defaults,
+                call_ai,
+                STATE_DIR,
+                BRIEFINGS_DIR,
+                DATE,
+                force=_is_forced(name),
+                logger=log,
+            )
+            saved += result.files_saved
+            if result.outcome == "DEGRADED":
+                CONFERENCE_RUN_FAILED = True
+            log(
+                f"    {result.outcome}: scanned={result.submissions_scanned} "
+                f"candidates={result.retrieval_candidates} "
+                f"relevant={result.relevant_papers} events={result.events_created} "
+                f"saved={result.files_saved}"
+            )
+        except KeyboardInterrupt:
+            try:
+                active = ConferenceState(STATE_DIR / "openreview.sqlite3").active_run(
+                    name
+                )
+                if active:
+                    ConferenceState(STATE_DIR / "openreview.sqlite3").interrupt_run(
+                        active["run_id"], "received interrupt signal"
+                    )
+            finally:
+                raise
+        except Exception as exc:
+            CONFERENCE_RUN_FAILED = True
+            try:
+                state = ConferenceState(STATE_DIR / "openreview.sqlite3")
+                active = state.active_run(name)
+                if active:
+                    state.interrupt_run(active["run_id"], f"source error: {exc}")
+            except Exception as state_exc:
+                log(f"    STATE_ERROR: {state_exc}")
+            outcome = classify_openreview_error(exc)
+            try:
+                ConferenceState(STATE_DIR / "openreview.sqlite3").record_outcome(
+                    name, source_cfg.get("venue_id", ""), outcome, str(exc)
+                )
+            except Exception as state_exc:
+                log(f"    STATE_ERROR: {state_exc}")
+            log(f"    {outcome}: {exc}")
+    log(f"  Pipeline 6 done: {saved} files saved")
+    return saved
+
+
+# =====================================================================
 # Main
 # =====================================================================
 def main() -> int:
@@ -1064,8 +1307,8 @@ def main() -> int:
     parser.add_argument(
         "--pipeline",
         type=int,
-        choices=[1, 2, 3, 4, 5],
-        help="Run specific pipeline: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource. Default: all",
+        choices=[1, 2, 3, 4, 5, 6],
+        help="Run specific pipeline: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource, 6=conference. Default: all",
     )
     parser.add_argument(
         "--force",
@@ -1075,12 +1318,46 @@ def main() -> int:
         help="Force regenerate. Pass 'all' to refresh everything or a source "
         "name to target one source. Repeatable.",
     )
+    parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        metavar="SOURCE",
+        help="Only run the named configured source. Repeatable.",
+    )
     args = parser.parse_args()
 
-    global API_KEY, FORCE_ALL, FORCE_SOURCES
-    API_KEY = load_api_key()
+    global API_KEY, FORCE_ALL, FORCE_SOURCES, SOURCE_FILTER
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
+    SOURCE_FILTER = set(args.source)
+    if SOURCE_FILTER:
+        cfg, _defaults, _templates = _load_sources()
+        configured = {source.get("name"): source for source in cfg.get("sources", [])}
+        unknown = sorted(SOURCE_FILTER - configured.keys())
+        if unknown:
+            parser.error(f"unknown source(s): {', '.join(unknown)}")
+        if args.pipeline:
+            pipeline_categories = {
+                1: "papers",
+                2: "ai_news",
+                3: "arxiv",
+                4: "code",
+                5: "resource",
+                6: "conference",
+            }
+            wrong = sorted(
+                name
+                for name in SOURCE_FILTER
+                if configured[name].get("category")
+                != pipeline_categories[args.pipeline]
+            )
+            if wrong:
+                parser.error(
+                    f"source(s) do not belong to pipeline {args.pipeline}: "
+                    + ", ".join(wrong)
+                )
+    API_KEY = load_api_key()
     if FORCE_ALL or FORCE_SOURCES:
         log(
             "Force mode: "
@@ -1098,26 +1375,64 @@ def main() -> int:
         3: run_pipeline_arxiv,
         4: run_pipeline_code,
         5: run_pipeline_resource,
+        6: run_pipeline_conference,
     }
-    to_run = [args.pipeline] if args.pipeline else [1, 2, 3, 4, 5]
+    if args.pipeline:
+        to_run = [args.pipeline]
+    elif SOURCE_FILTER:
+        category_pipelines = {
+            "papers": 1,
+            "ai_news": 2,
+            "arxiv": 3,
+            "code": 4,
+            "resource": 5,
+            "conference": 6,
+        }
+        to_run = sorted(
+            {
+                category_pipelines[configured[name]["category"]]
+                for name in SOURCE_FILTER
+            }
+        )
+    else:
+        to_run = [1, 2, 3, 4, 5, 6]
     total_saved = 0
+    failed_pipelines: set[int] = set()
 
     for p in to_run:
         try:
             total_saved += pipelines[p]()
         except Exception as e:
+            failed_pipelines.add(p)
             log(f"Pipeline {p} FAILED: {e}")
             import traceback
             traceback.print_exc()
 
     log("=== Summary ===")
-    for d in ["papers", "ai_news", "code", "resource", "arxiv"]:
+    for d in ["papers", "ai_news", "code", "resource", "arxiv", "conference"]:
         path = BRIEFINGS_DIR / d
         if path.exists():
-            files = [f.name for f in sorted(path.iterdir()) if DATE in f.name]
+            try:
+                files = [f.name for f in sorted(path.iterdir()) if DATE in f.name]
+            except OSError as exc:
+                # Do not turn a resource-exhaustion diagnostic into a second
+                # traceback while rendering the summary.
+                log(f"  {d}/: unavailable ({exc})")
+                continue
             log(f'  {d}/: {len(files)} today - {", ".join(files)}')
 
     log(f"Total: {total_saved} files saved")
+    if AI_PROMPT_CHARS:
+        log(f"AI prompt volume: {AI_PROMPT_CHARS:,} chars (~{AI_PROMPT_CHARS // 4:,} tokens)")
+    # A crashed or degraded pipeline is a failure no matter how much unrelated
+    # work succeeded. Reporting 0 because some other pipeline saved a file hid
+    # conference breakage from the scheduler on every full run.
+    if failed_pipelines or CONFERENCE_RUN_FAILED:
+        failed = failed_pipelines | ({6} if CONFERENCE_RUN_FAILED else set())
+        log(f"Failed pipelines: {sorted(failed)}")
+        return 1
+    if args.pipeline == 6:
+        return 0
     return 0 if total_saved > 0 else 1
 
 

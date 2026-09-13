@@ -195,8 +195,6 @@ def test_seen_dedup_filters_already_processed(rss_db):
 
 def test_commit_seen_only_records_provided_items(rss_db):
     """commit_seen should only mark the items passed to it, not all fetched items."""
-    from datasource import Item
-
     ds = _make_rss(
         {
             "name": "test_feed1",
@@ -220,8 +218,6 @@ def test_commit_seen_only_records_provided_items(rss_db):
 
 def test_commit_seen_empty_list_is_harmless(rss_db):
     """commit_seen([]) should not fail and should not affect existing seen state."""
-    from datasource import Item
-
     ds = _make_rss(
         {
             "name": "test_feed1",

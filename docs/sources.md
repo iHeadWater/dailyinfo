@@ -2,8 +2,8 @@
 
 This page is generated from [`config/sources.json`](https://github.com/iHeadWater/dailyinfo/blob/main/config/sources.json).
 
-| Name | Display Name | Category | Type | Enabled | Lookback Hours | URL |
-|------|--------------|----------|------|---------|----------------|-----|
+| Name | Display Name | Category | Type | Enabled | Poll/Lookback Hours | URL |
+|------|--------------|----------|------|---------|---------------------|-----|
 | nature | Nature | papers | rss | True | 24 | https://www.nature.com/nature.rss |
 | nature_communications | Nature Communications | papers | rss | True | 24 | https://www.nature.com/ncomms.rss |
 | scientific_data | Scientific Data | papers | rss | True | 24 | https://www.nature.com/sdata.rss |
@@ -41,7 +41,8 @@ This page is generated from [`config/sources.json`](https://github.com/iHeadWate
 | shuili_xuebao | 水利学报 | papers | api | True | 720 | https://api.crossref.org/works?filter=issn:0559-9350&sort=updated&order=desc&rows=20 |
 | chinawater | 中国水利 | papers | scrape | True | 48 | https://slzg.cbpt.cnki.net/portal/journal/portal/client/index |
 | smolai_news | SmolAI News | ai_news | rss | True | 24 | https://news.smol.ai/rss.xml |
-| arxiv_cs_ai | arXiv CS.AI | arxiv | rss | True | 24 | https://rss.arxiv.org/rss/cs.AI |
+| arxiv_cs_ai | arXiv CS.AI - 关键词+Embedding筛选 | arxiv | rss | True | 24 | https://rss.arxiv.org/rss/cs.AI |
+| hf_daily_papers | HuggingFace Daily Papers | arxiv | api | True | 24 | https://huggingface.co/api/daily_papers |
 | github_trending | GitHub Trending | code | scrape | True | 24 | https://github.com/trending?since=daily |
 | huggingface_models | HuggingFace Trending Models | code | api | True | 24 | https://huggingface.co/api/models |
 | huggingface_datasets | HuggingFace Trending Datasets | code | api | True | 24 | https://huggingface.co/api/datasets |
@@ -57,3 +58,6 @@ This page is generated from [`config/sources.json`](https://github.com/iHeadWate
 | dlut_recruitment | 大连理工大学 - 招聘信息 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
 | dlut_internship | 大连理工大学 - 实习信息 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
 | dlut_transfer_recruitment | 大连理工大学 - 选调生 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
+| openreview_iclr_2026 | ICLR 2026 | conference | api | True | 168 |  |
+| openreview_icml_2026 | ICML 2026 | conference | api | True | 168 |  |
+| openreview_neurips_2026 | NeurIPS 2026 | conference | api | True | 24 |  |
