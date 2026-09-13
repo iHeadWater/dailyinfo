@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import time
 
 DEFAULTS = {"lookback_hours": 24}
 
@@ -191,6 +192,54 @@ def test_seen_dedup_filters_already_processed(rss_db):
     # Second fetch should filter all of them out
     items2 = ds.fetch()
     assert items2 == []
+
+
+def test_use_content_extended_lookback_and_seen_dedup(rss_db):
+    """use_content 分支要同时满足两件事:跨天窗口能捞回,且不会重复推送。
+
+    这是低频源采用 72h 窗口的前提 —— 24h 窗口只在条目进入 FreshRSS 的当天
+    能捞到它,那天流水线漏跑就永久丢失;而窗口放长之后,同一条必须被 seen
+    状态挡住,否则会连续多天重复推送。
+    """
+    now = int(time.time())
+    rss_db.execute(
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen)"
+        " VALUES (?,?,?,?,?,?)",
+        (
+            2,
+            "Two Day Old Issue",
+            "https://news.example.com/a/old",
+            "<p>an issue published two days ago</p>" + ("word " * 30),
+            now - 48 * 3600,
+            now - 48 * 3600,
+        ),
+    )
+    rss_db.commit()
+
+    def make(name, lookback_hours):
+        return _make_rss(
+            {
+                "name": name,
+                "type": "rss",
+                "category": "ai_news",
+                "url": "https://news.example.com/rss?format=xml",
+                "use_content": True,
+                "lookback_hours": lookback_hours,
+            },
+            rss_db,
+        )
+
+    # 48h 前的条目落在 24h 窗口外 —— 这正是原配置的丢数据风险
+    assert make("feed2_narrow", 24).fetch() == []
+
+    # 72h 窗口把它捞回来
+    ds = make("feed2_wide", 72)
+    items = ds.fetch()
+    assert [it.title for it in items] == ["Two Day Old Issue"]
+
+    # 窗口跨天后同一条不得二次推送
+    ds.commit_seen(items)
+    assert ds.fetch() == []
 
 
 def test_commit_seen_only_records_provided_items(rss_db):
