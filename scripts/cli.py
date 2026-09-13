@@ -328,7 +328,6 @@ def code_weekly(days, force):
     sys.exit(result.returncode)
 
 
-
 @cli.command()
 def status():
     """Show today's briefing and pushed file counts."""

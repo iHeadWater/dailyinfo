@@ -112,12 +112,8 @@ class TestCollectWeekCodeBriefings:
             content_p, encoding="utf-8"
         )
 
-        monkeypatch.setattr(
-            "weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings"
-        )
-        monkeypatch.setattr(
-            "weekly_code_trends.PUSHED_DIR", data_root / "pushed"
-        )
+        monkeypatch.setattr("weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings")
+        monkeypatch.setattr("weekly_code_trends.PUSHED_DIR", data_root / "pushed")
 
         result = collect_week_code_briefings("code", days=7)
         assert len(result) == 1
@@ -140,12 +136,8 @@ class TestCollectWeekCodeBriefings:
             "# HF Models\n\nNot a github file.\n", encoding="utf-8"
         )
 
-        monkeypatch.setattr(
-            "weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings"
-        )
-        monkeypatch.setattr(
-            "weekly_code_trends.PUSHED_DIR", data_root / "pushed"
-        )
+        monkeypatch.setattr("weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings")
+        monkeypatch.setattr("weekly_code_trends.PUSHED_DIR", data_root / "pushed")
 
         result = collect_week_code_briefings("code", days=7)
         assert len(result) == 1
@@ -382,12 +374,8 @@ class TestEndToEnd:
             content_day3, encoding="utf-8"
         )
 
-        monkeypatch.setattr(
-            "weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings"
-        )
-        monkeypatch.setattr(
-            "weekly_code_trends.PUSHED_DIR", data_root / "pushed"
-        )
+        monkeypatch.setattr("weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings")
+        monkeypatch.setattr("weekly_code_trends.PUSHED_DIR", data_root / "pushed")
 
         # Stub GitHub API
         def _fake_query_github(repo_names):
@@ -403,9 +391,7 @@ class TestEndToEnd:
                 }
             return result
 
-        monkeypatch.setattr(
-            "weekly_code_trends.query_github_api", _fake_query_github
-        )
+        monkeypatch.setattr("weekly_code_trends.query_github_api", _fake_query_github)
 
         # Run
         code = run_weekly_code_trends(days=7, force=True)
@@ -430,12 +416,8 @@ class TestEndToEnd:
         (data_root / "briefings" / "code").mkdir(parents=True)
         (data_root / "pushed" / "code").mkdir(parents=True)
 
-        monkeypatch.setattr(
-            "weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings"
-        )
-        monkeypatch.setattr(
-            "weekly_code_trends.PUSHED_DIR", data_root / "pushed"
-        )
+        monkeypatch.setattr("weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings")
+        monkeypatch.setattr("weekly_code_trends.PUSHED_DIR", data_root / "pushed")
 
         code = run_weekly_code_trends(days=7, force=True)
         assert code == 1
@@ -448,7 +430,6 @@ class TestCLI:
     def test_main_help(self):
         """Verify argparse help works without error."""
         import subprocess
-        import os
 
         result = subprocess.run(
             [sys.executable, str(SCRIPTS_DIR / "weekly_code_trends.py"), "--help"],
