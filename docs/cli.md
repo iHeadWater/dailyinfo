@@ -101,15 +101,13 @@ dailyinfo code-weekly --days 14   # 自定义回溯窗口
 dailyinfo code-weekly --force     # 覆盖今天已生成的数据文件
 ```
 
-Aggregates the repos appearing in `github_trending_briefing_*.md`, enriches them
-with star counts from the GitHub API, and ranks by (days appeared, stars) to pick
-a top-5. Writes `briefings/code_weekly/data_{DATE}.json` — this is *input* for the
-`weekly-code-trends` skill, not a Discord-pushed briefing, so it is not archived
-to `pushed/`.
+Aggregates the repos appearing in `github_trending_briefing_*.md` and ranks them
+by how many days they appeared on, writing the top 5 to
+`briefings/code_weekly/data_{DATE}.json`.
 
-Set `GITHUB_TOKEN` before relying on this: one run issues one API call per unique
-repo (60+ in a typical week), which exceeds the unauthenticated 60/hour limit.
-Repos past the limit are dropped and their star count falls back to 0.
+Pure local processing — no network calls, no credentials, no LLM. It reads
+briefing files only, so the same inputs always produce the same ranking; repos
+tied on day count keep the order they first appeared in.
 
 ### Status & Logs
 
@@ -142,7 +140,6 @@ FRESHRSS_PASSWORD=freshrss123
 | `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
 | `FRESHRSS_PASSWORD` | FreshRSS password |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `moonshotai/kimi-k2.5`) |
-| `GITHUB_TOKEN` | GitHub API token for `dailyinfo code-weekly` — raises the rate limit from 60/hr to 5000/hr. A typical run (60+ unique repos) exceeds the unauthenticated limit, so treat this as required for correct ranking |
 
 ## Scheduling
 

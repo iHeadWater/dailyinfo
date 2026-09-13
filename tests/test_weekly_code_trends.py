@@ -1,4 +1,4 @@
-"""Tests for weekly_code_trends.py — parsing, ranking, GitHub API, end-to-end."""
+"""Tests for weekly_code_trends.py — parsing, collection, ranking, end-to-end."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -34,20 +33,6 @@ def briefing_date(days_ago: int) -> str:
 def sample_briefing():
     """Return content of a realistic github_trending briefing."""
     return read_fixture("github_trending_briefing_2026-07-01.md")
-
-
-@pytest.fixture
-def fake_github_api_response():
-    """Return a minimal GitHub API response dict matching GET /repos/{owner}/{repo}."""
-    return {
-        "full_name": "simplex-chat/simplex-chat",
-        "description": "Private messaging network without user identifiers",
-        "stargazers_count": 12345,
-        "language": "Haskell",
-        "html_url": "https://github.com/simplex-chat/simplex-chat",
-        "updated_at": "2026-07-01T12:00:00Z",
-        "topics": ["privacy", "chat", "p2p"],
-    }
 
 
 # ── Parsing ──────────────────────────────────────────────────────────────
@@ -155,9 +140,6 @@ class TestRankRepos:
         repo_stats = {
             f"owner{i}/repo{i}": {
                 "full_name": f"owner{i}/repo{i}",
-                "description": f"Test repo {i}",
-                "stars": 1000 + i * 100,
-                "language": "Python",
                 "url": f"https://github.com/owner{i}/repo{i}",
                 "day_count": i + 1,
             }
@@ -168,23 +150,17 @@ class TestRankRepos:
         assert len(top5) == 5
 
     def test_higher_day_count_ranks_higher(self):
-        """Repo appearing on more days should rank higher (same stars)."""
+        """Repo appearing on more days should rank higher."""
         from weekly_code_trends import rank_repos
 
         repo_stats = {
             "a/repo_a": {
                 "full_name": "a/repo_a",
-                "description": "Frequent",
-                "stars": 1000,
-                "language": "Python",
                 "url": "https://github.com/a/repo_a",
                 "day_count": 5,
             },
             "b/repo_b": {
                 "full_name": "b/repo_b",
-                "description": "Rare",
-                "stars": 1000,
-                "language": "Python",
                 "url": "https://github.com/b/repo_b",
                 "day_count": 1,
             },
@@ -193,31 +169,65 @@ class TestRankRepos:
         top = rank_repos(repo_stats)
         assert top[0]["full_name"] == "a/repo_a"
 
-    def test_higher_stars_tiebreaker(self):
-        """Same day_count — higher stars ranks higher."""
+    def test_ties_keep_first_seen_order(self):
+        """Repos tied on day_count keep insertion order.
+
+        That order is the order they were first seen in, i.e. the order they
+        first appeared across the collected briefings. With star counts gone
+        this is the sole tiebreaker, so the ranking must stay deterministic.
+        """
         from weekly_code_trends import rank_repos
 
         repo_stats = {
-            "a/repo_a": {
-                "full_name": "a/repo_a",
-                "description": "Less stars",
-                "stars": 500,
-                "language": "Python",
-                "url": "https://github.com/a/repo_a",
+            "first/repo": {
+                "full_name": "first/repo",
+                "url": "https://github.com/first/repo",
                 "day_count": 3,
             },
-            "b/repo_b": {
-                "full_name": "b/repo_b",
-                "description": "More stars",
-                "stars": 50000,
-                "language": "Python",
-                "url": "https://github.com/b/repo_b",
+            "second/repo": {
+                "full_name": "second/repo",
+                "url": "https://github.com/second/repo",
+                "day_count": 3,
+            },
+            "third/repo": {
+                "full_name": "third/repo",
+                "url": "https://github.com/third/repo",
                 "day_count": 3,
             },
         }
 
         top = rank_repos(repo_stats)
-        assert top[0]["full_name"] == "b/repo_b"
+        assert [r["full_name"] for r in top] == [
+            "first/repo",
+            "second/repo",
+            "third/repo",
+        ]
+
+    def test_day_count_beats_stale_extra_fields(self):
+        """Ranking must ignore fields that used to come from the GitHub API.
+
+        Guards the deterministic / no-network boundary: stale star counts on
+        the input dicts must not influence the order.
+        """
+        from weekly_code_trends import rank_repos
+
+        repo_stats = {
+            "lowstars/repo": {
+                "full_name": "lowstars/repo",
+                "url": "https://github.com/lowstars/repo",
+                "day_count": 4,
+                "stars": 1,
+            },
+            "highstars/repo": {
+                "full_name": "highstars/repo",
+                "url": "https://github.com/highstars/repo",
+                "day_count": 2,
+                "stars": 999999,
+            },
+        }
+
+        top = rank_repos(repo_stats)
+        assert top[0]["full_name"] == "lowstars/repo"
 
     def test_fewer_than_5_returns_all(self):
         """When only 3 repos, return all 3."""
@@ -226,9 +236,6 @@ class TestRankRepos:
         repo_stats = {
             f"owner{i}/repo{i}": {
                 "full_name": f"owner{i}/repo{i}",
-                "description": f"Test repo {i}",
-                "stars": 1000 + i,
-                "language": "Python",
                 "url": f"https://github.com/owner{i}/repo{i}",
                 "day_count": 1,
             }
@@ -244,98 +251,12 @@ class TestRankRepos:
         assert rank_repos({}) == []
 
 
-# ── GitHub API ───────────────────────────────────────────────────────────
-
-
-class TestGitHubAPI:
-    def test_query_single_repo(self, fake_github_api_response):
-        """Verify GitHub API call format and response parsing."""
-        from weekly_code_trends import query_github_api
-
-        with mock.patch("weekly_code_trends.requests.get") as mock_get:
-            mock_resp = mock.MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = fake_github_api_response
-            mock_get.return_value = mock_resp
-
-            result = query_github_api(["simplex-chat/simplex-chat"])
-
-            assert len(result) == 1
-            assert result["simplex-chat/simplex-chat"]["stars"] == 12345
-            assert result["simplex-chat/simplex-chat"]["language"] == "Haskell"
-            assert (
-                result["simplex-chat/simplex-chat"]["description"]
-                == "Private messaging network without user identifiers"
-            )
-
-    def test_api_error_returns_empty_dict(self):
-        """On HTTP error, return empty dict for the failed repo."""
-        from weekly_code_trends import query_github_api
-
-        with mock.patch("weekly_code_trends.requests.get") as mock_get:
-            mock_resp = mock.MagicMock()
-            mock_resp.status_code = 404
-            mock_resp.raise_for_status.side_effect = Exception("404 Not Found")
-            mock_get.return_value = mock_resp
-
-            result = query_github_api(["nonexistent/repo"])
-
-            assert result == {}
-
-    def test_batch_query(self):
-        """Multiple repos queried in sequence."""
-        from weekly_code_trends import query_github_api
-
-        with mock.patch("weekly_code_trends.requests.get") as mock_get:
-
-            def make_resp(full_name, stars):
-                r = mock.MagicMock()
-                r.status_code = 200
-                r.json.return_value = {
-                    "full_name": full_name,
-                    "stargazers_count": stars,
-                    "language": "Python",
-                    "description": "desc",
-                    "html_url": f"https://github.com/{full_name}",
-                    "updated_at": "2026-07-01T12:00:00Z",
-                }
-                return r
-
-            mock_get.side_effect = [
-                make_resp("a/repo1", 1000),
-                make_resp("b/repo2", 2000),
-                make_resp("c/repo3", 3000),
-            ]
-
-            result = query_github_api(["a/repo1", "b/repo2", "c/repo3"])
-
-            assert len(result) == 3
-            assert result["a/repo1"]["stars"] == 1000
-            assert result["c/repo3"]["stars"] == 3000
-
-    def test_rate_limit_handling(self):
-        """On 403 rate limit, raise a meaningful error."""
-        from weekly_code_trends import query_github_api
-
-        with mock.patch("weekly_code_trends.requests.get") as mock_get:
-            mock_resp = mock.MagicMock()
-            mock_resp.status_code = 403
-            mock_resp.json.return_value = {"message": "API rate limit exceeded"}
-            mock_resp.raise_for_status.side_effect = Exception("403 rate limited")
-            mock_get.return_value = mock_resp
-
-            result = query_github_api(["a/repo1"])
-
-            # Should not crash — returns empty dict for failed repo
-            assert result == {}
-
-
 # ── End-to-End ──────────────────────────────────────────────────────────
 
 
 class TestEndToEnd:
     def test_full_pipeline_writes_json_output(self, tmp_path, monkeypatch):
-        """Complete pipeline: collect → parse → query API → rank → write JSON."""
+        """Complete pipeline: collect → parse → rank → write JSON."""
         from weekly_code_trends import run_weekly_code_trends
 
         data_root = tmp_path / "data"
@@ -377,22 +298,6 @@ class TestEndToEnd:
         monkeypatch.setattr("weekly_code_trends.BRIEFINGS_DIR", data_root / "briefings")
         monkeypatch.setattr("weekly_code_trends.PUSHED_DIR", data_root / "pushed")
 
-        # Stub GitHub API
-        def _fake_query_github(repo_names):
-            result = {}
-            for rn in repo_names[:10]:
-                result[rn] = {
-                    "full_name": rn,
-                    "description": f"Description for {rn}",
-                    "stars": 5000,
-                    "language": "Python",
-                    "url": f"https://github.com/{rn}",
-                    "updated_at": "2026-07-01T12:00:00Z",
-                }
-            return result
-
-        monkeypatch.setattr("weekly_code_trends.query_github_api", _fake_query_github)
-
         # Run
         code = run_weekly_code_trends(days=7, force=True)
         assert code == 0
@@ -407,6 +312,10 @@ class TestEndToEnd:
         # shared/repo should be in top 5 (appeared 3× across 3 days)
         top_names = [r["full_name"] for r in data["top_repos"]]
         assert "shared/repo" in top_names
+
+        # Every field must be derivable from local files alone — no network data
+        for repo in data["top_repos"]:
+            assert set(repo) == {"full_name", "url", "day_count", "dates_seen"}
 
     def test_no_briefings_returns_error(self, tmp_path, monkeypatch):
         """When no briefings exist, return code 1."""
