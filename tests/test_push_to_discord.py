@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 
 
 def test_split_message_short_passthrough():
@@ -245,3 +246,94 @@ def test_send_to_discord_uses_requests_post(monkeypatch):
     assert captured
     assert "chan-123" in captured[0][0]
     assert captured[0][2]["content"] == "hello"
+
+
+def test_send_figure_to_discord_uses_multipart_and_attachment_embed(
+    monkeypatch, tmp_path
+):
+    import push_to_discord as pd
+
+    image = tmp_path / "hero.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nfigure")
+    captured = []
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+    def fake_post(url, headers, data, files, timeout):
+        captured.append((url, headers, data, files, timeout))
+        return _Resp()
+
+    monkeypatch.setattr(pd.requests, "post", fake_post)
+    monkeypatch.setattr(pd.time, "sleep", lambda *_: None)
+
+    assert pd.send_figure_to_discord(
+        "chan-123",
+        image,
+        title="Example model",
+        caption="Figure 1: Overview.",
+        nonce_prefix="bundle-1",
+    ) is True
+    assert captured
+    _url, headers, data, files, _timeout = captured[0]
+    assert "Content-Type" not in headers
+    payload = json.loads(data["payload_json"])
+    assert payload["embeds"][0]["image"]["url"] == "attachment://hero.png"
+    assert payload["enforce_nonce"] is True
+    assert "files[0]" in files
+
+
+def test_conference_briefing_places_each_figure_after_its_paper(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    first.write_bytes(b"png-1")
+    second.write_bytes(b"png-2")
+    content = (
+        "# ICLR Briefing\n\n"
+        "### Paper One（状态：accepted）\n\nSummary one.\n\n"
+        "### Paper Two\n\nSummary two."
+    )
+    sidecar = {
+        "attachments": [
+            {
+                "event_id": "event-2",
+                "title": "Paper Two",
+                "manifest": {"path": str(second), "caption": "Figure 2"},
+            },
+            {
+                "event_id": "event-1",
+                "title": "Paper One",
+                "manifest": {"path": str(first), "caption": "Figure 1"},
+            },
+        ]
+    }
+    sent = []
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, text, **kwargs: (
+            sent.append(("text", text.splitlines()[0])), True
+        )[1],
+    )
+    monkeypatch.setattr(
+        pd,
+        "send_figure_to_discord",
+        lambda channel, path, **kwargs: (
+            sent.append(("figure", kwargs["title"])), True
+        )[1],
+    )
+    monkeypatch.setattr(pd, "_save_receipt", lambda *_args: None)
+
+    assert pd.send_conference_briefing(
+        "channel-1", content, sidecar, {}, filename="briefing.md"
+    )
+    assert sent == [
+        ("text", "# ICLR Briefing"),
+        ("text", "### Paper One（状态：accepted）"),
+        ("figure", "Paper One"),
+        ("text", "### Paper Two"),
+        ("figure", "Paper Two"),
+    ]

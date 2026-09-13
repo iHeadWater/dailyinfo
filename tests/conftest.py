@@ -34,6 +34,8 @@ if str(SCRIPTS_DIR) not in sys.path:
 _RELOAD_ORDER = (
     "paths",
     "datasource",
+    "openreview_provider",
+    "conference",
     "run_pipelines",
     "push_to_discord",
     "cli",
@@ -77,7 +79,14 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
     yield data_root
 
     # Drop cached modules so the next test imports cleanly under its own env.
-    for name in ("cli", "push_to_discord", "run_pipelines", "zotero_notebooklm"):
+    for name in (
+        "cli",
+        "push_to_discord",
+        "run_pipelines",
+        "conference",
+        "openreview_provider",
+        "zotero_notebooklm",
+    ):
         sys.modules.pop(name, None)
 
 
