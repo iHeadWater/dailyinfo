@@ -93,6 +93,22 @@ dailyinfo weekly --days 14      # 自定义回溯窗口
 dailyinfo weekly --force        # 覆盖今天已生成的 recap
 ```
 
+### Code Weekly
+
+```bash
+dailyinfo code-weekly             # 汇总过去 7 天的 GitHub Trending
+dailyinfo code-weekly --days 14   # 自定义回溯窗口
+dailyinfo code-weekly --force     # 覆盖今天已生成的数据文件
+```
+
+Aggregates the repos appearing in `github_trending_briefing_*.md` and ranks them
+by how many days they appeared on, writing the top 5 to
+`briefings/code_weekly/data_{DATE}.json`.
+
+Pure local processing — no network calls, no credentials, no LLM. It reads
+briefing files only, so the same inputs always produce the same ranking; repos
+tied on day count keep the order they first appeared in.
+
 ### Status & Logs
 
 ```bash
