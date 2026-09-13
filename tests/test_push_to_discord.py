@@ -245,3 +245,30 @@ def test_send_to_discord_uses_requests_post(monkeypatch):
     assert captured
     assert "chan-123" in captured[0][0]
     assert captured[0][2]["content"] == "hello"
+
+
+def test_send_to_discord_suppresses_all_mentions(monkeypatch):
+    """Briefing text comes from external feeds, so it must never ping anyone.
+
+    Discord parses user/role/everyone mentions by default when allowed_mentions
+    is omitted, which would let feed content trigger a real notification in the
+    channel.
+    """
+    import push_to_discord as pd
+
+    captured = []
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+    def fake_post(url, headers, json, timeout):
+        captured.append(json)
+        return _Resp()
+
+    monkeypatch.setattr(pd.requests, "post", fake_post)
+    monkeypatch.setattr(pd.time, "sleep", lambda *_: None)
+
+    assert pd.send_to_discord("chan-123", "@everyone look at this") is True
+    assert captured
+    assert captured[0]["allowed_mentions"] == {"parse": []}

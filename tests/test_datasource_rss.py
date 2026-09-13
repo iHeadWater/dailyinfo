@@ -194,12 +194,17 @@ def test_seen_dedup_filters_already_processed(rss_db):
     assert items2 == []
 
 
-def test_use_content_extended_lookback_and_seen_dedup(rss_db):
-    """use_content 分支要同时满足两件事:跨天窗口能捞回,且不会重复推送。
+def test_use_content_window_follows_last_seen_not_date(rss_db):
+    """The use_content cutoff applies to lastSeen, not to the publication date.
 
-    这是低频源采用 72h 窗口的前提 —— 24h 窗口只在条目进入 FreshRSS 的当天
-    能捞到它,那天流水线漏跑就永久丢失;而窗口放长之后,同一条必须被 seen
-    状态挡住,否则会连续多天重复推送。
+    FreshRSS refreshes an entry's lastSeen on every poll for as long as the
+    entry stays in the feed, so an entry published weeks ago still counts as
+    recent. That is what makes a skipped run harmless: the entry stays visible
+    until it drops out of the feed, and _filter_seen -- not the cutoff -- is
+    what stops it being pushed twice.
+
+    Filtering on `date` instead would look reasonable and would silently drop
+    anything the pipeline missed on publication day.
     """
     now = int(time.time())
     rss_db.execute(
@@ -207,37 +212,31 @@ def test_use_content_extended_lookback_and_seen_dedup(rss_db):
         " VALUES (?,?,?,?,?,?)",
         (
             2,
-            "Two Day Old Issue",
+            "Published Long Ago Still In Feed",
             "https://news.example.com/a/old",
-            "<p>an issue published two days ago</p>" + ("word " * 30),
-            now - 48 * 3600,
-            now - 48 * 3600,
+            "<p>published a week ago, still in the feed</p>" + ("word " * 30),
+            now - 7 * 24 * 3600,  # publication date: a week ago
+            now - 60,  # lastSeen: refreshed by the latest poll
         ),
     )
     rss_db.commit()
 
-    def make(name, lookback_hours):
-        return _make_rss(
-            {
-                "name": name,
-                "type": "rss",
-                "category": "ai_news",
-                "url": "https://news.example.com/rss?format=xml",
-                "use_content": True,
-                "lookback_hours": lookback_hours,
-            },
-            rss_db,
-        )
+    ds = _make_rss(
+        {
+            "name": "feed2_lastseen",
+            "type": "rss",
+            "category": "ai_news",
+            "url": "https://news.example.com/rss?format=xml",
+            "use_content": True,
+        },
+        rss_db,
+    )
 
-    # 48h 前的条目落在 24h 窗口外 —— 这正是原配置的丢数据风险
-    assert make("feed2_narrow", 24).fetch() == []
-
-    # 72h 窗口把它捞回来
-    ds = make("feed2_wide", 72)
+    # Returned despite the week-old date, because lastSeen is fresh.
     items = ds.fetch()
-    assert [it.title for it in items] == ["Two Day Old Issue"]
+    assert [it.title for it in items] == ["Published Long Ago Still In Feed"]
 
-    # 窗口跨天后同一条不得二次推送
+    # Re-push is prevented by seen state, not by the window.
     ds.commit_seen(items)
     assert ds.fetch() == []
 

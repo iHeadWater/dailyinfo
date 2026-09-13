@@ -223,7 +223,12 @@ def send_to_discord(channel_id, content):
     for i, msg in enumerate(messages):
         if len(messages) > 1:
             msg = f"{_chunk_prefix(i + 1, len(messages))}{msg}"
-        data = {"content": msg}
+        data = {
+            "content": msg,
+            # Briefing text originates from external feeds; never let it
+            # resolve into real pings.
+            "allowed_mentions": {"parse": []},
+        }
 
         if not _post_single_message(channel_id, headers, data, i + 1):
             return False
