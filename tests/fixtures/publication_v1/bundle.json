@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "briefing": {
+    "schema_version": 1,
+    "id": "papers-2026-08-27",
+    "category": "papers",
+    "date": "2026-08-27",
+    "title": "AI for Science Daily Briefing",
+    "generated_at": "2026-08-27T01:05:00.000000Z",
+    "published_at": "2026-08-27T01:05:00.000000Z",
+    "updated_at": null,
+    "item_ids": ["nature-2508.12345"],
+    "body": "# AI for Science Daily Briefing - 2026-08-27\n\n1. **A reproducible hydrological foundation model**\n"
+  },
+  "items": [
+    {
+      "schema_version": 1,
+      "id": "nature-2508.12345",
+      "category": "papers",
+      "title": "A reproducible hydrological foundation model",
+      "source": {
+        "name": "nature",
+        "url": "https://www.nature.com/articles/s41586-026-12345-6",
+        "external_id": "doi:10.1038/s41586-026-12345-6"
+      },
+      "authors": ["Li Wei", "Mina Chen"],
+      "source_published_at": "2026-08-26T00:00:00.000000Z",
+      "retrieved_at": "2026-08-27T01:00:00.000000Z",
+      "published_at": "2026-08-27T01:05:00.000000Z",
+      "updated_at": null,
+      "summary": "The authors introduce a benchmark and model for transferring hydrological knowledge across basins.",
+      "why_it_matters": "It provides a common baseline for evaluating AI for Science models under distribution shift.",
+      "tags": ["foundation-model", "hydrology"],
+      "language": "en",
+      "briefing_ids": ["papers-2026-08-27"]
+    }
+  ]
+}

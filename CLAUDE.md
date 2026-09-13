@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DailyInfo is an automated research intelligence aggregation and push system for AI for Science researchers. It collects RSS feeds, scrapes websites, and queries APIs, then uses DeepSeek V4 Pro (OpenRouter Kimi K2.5 as fallback) to generate Chinese-language summaries pushed to Discord channels.
+DailyInfo is an automated research intelligence aggregation and push system for AI for Science researchers. It collects RSS feeds, scrapes websites, and queries APIs, then uses DeepSeek `deepseek-v4-flash` (OpenRouter Kimi K2.5 as fallback) to generate Chinese-language summaries pushed to Discord channels.
 
 **Core pipeline**: FreshRSS collection -> AI summary generation (markdown to disk) -> Discord push + archive
 
@@ -15,7 +15,7 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 - Python 3.10+, package manager: uv (primary) / pip (fallback)
 - CLI: Click 8+
 - RSS: FreshRSS (Docker/SQLite, `restart: always`, auto-start via myopenclaw launchd)
-- AI: DeepSeek V4 Pro official API (fallback: OpenRouter `moonshotai/kimi-k2.5`)
+- AI: DeepSeek `deepseek-v4-flash` API (fallback: OpenRouter `moonshotai/kimi-k2.5`)
 - Push: Discord Bot API via `requests`
 - Docs: MkDocs Material (GitHub Pages)
 - Lint: Ruff, Format: Black, Test: pytest 8+

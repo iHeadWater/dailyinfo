@@ -51,7 +51,7 @@ def load_env(key):
     return os.environ.get(key, "")
 
 
-def call_ai(prompt, api_key, model="deepseek-v4-flash", max_tokens=1500):
+def call_ai(prompt, api_key, model="deepseek-v4-pro", max_tokens=1500):
     import requests
 
     resp = requests.post(

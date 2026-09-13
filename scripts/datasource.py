@@ -345,9 +345,14 @@ class RSSDataSource(DataSource):
             )
             return []
 
+        entry_columns = {
+            row[1] for row in self._db.execute("PRAGMA table_info(entry)").fetchall()
+        }
+        guid_select = "guid AS feed_guid" if "guid" in entry_columns else "NULL AS feed_guid"
+
         if self.use_content:
             rows = self._db.execute(
-                "SELECT title, content, link, date FROM entry "
+                f"SELECT title, content, link, date, {guid_select} FROM entry "
                 "WHERE id_feed=? AND lastSeen>? ORDER BY date DESC LIMIT 3",
                 [fid, self._cutoff_ts],
             ).fetchall()
@@ -361,34 +366,58 @@ class RSSDataSource(DataSource):
                     )
                 if len(plain) < 100:
                     continue
+                extra = self._rss_extra(row["feed_guid"])
+                extra["source_published_at"] = self._rss_source_time(row["date"])
                 items.append(
                     Item(
                         title=row["title"] or "",
-                        date=datetime.datetime.fromtimestamp(row["date"]).strftime(
-                            "%Y-%m-%d"
-                        ),
+                        date=datetime.datetime.fromtimestamp(
+                            row["date"], _BEIJING_TZ
+                        ).strftime("%Y-%m-%d"),
                         url=row["link"] or "",
                         content=plain,
+                        extra=extra,
                     )
                 )
             return self._filter_seen(items)
 
         rows = self._db.execute(
-            "SELECT title, link, date FROM entry WHERE id_feed=? AND lastSeen>? ORDER BY date DESC",
+            f"SELECT title, link, date, {guid_select} FROM entry "
+            "WHERE id_feed=? AND lastSeen>? ORDER BY date DESC",
             [fid, self._cutoff_ts],
         ).fetchall()
         entries = list(rows)
         if self.max_articles and len(entries) > self.max_articles:
             entries = entries[: self.max_articles]
-        items = [
-            Item(
-                title=row["title"] or "",
-                date=datetime.datetime.fromtimestamp(row["date"]).strftime("%Y-%m-%d"),
-                url=row["link"] or "",
+        items = []
+        for row in entries:
+            source_time = self._rss_source_time(row["date"])
+            items.append(
+                Item(
+                    title=row["title"] or "",
+                    date=source_time.astimezone(_BEIJING_TZ).strftime("%Y-%m-%d"),
+                    url=row["link"] or "",
+                    extra={
+                        **self._rss_extra(row["feed_guid"]),
+                        "source_published_at": source_time,
+                    },
+                )
             )
-            for row in entries
-        ]
         return self._filter_seen(items)
+
+    @staticmethod
+    def _rss_source_time(value) -> datetime.datetime:
+        try:
+            return datetime.datetime.fromtimestamp(value, datetime.timezone.utc)
+        except (TypeError, ValueError, OSError) as exc:
+            raise ValueError("RSS entry date is not a valid source timestamp") from exc
+
+    @staticmethod
+    def _rss_extra(guid) -> dict:
+        if guid is None:
+            return {}
+        value = str(guid).strip()
+        return {"guid": value} if value else {}
 
     def get_batches(self, items: list[Item]) -> list[list[Item]]:
         """Split items into AI-processing batches respecting max_articles_per_batch."""
@@ -510,6 +539,7 @@ class ScrapeDataSource(DataSource):
 
         # Fetch first article page to get real online-publication date
         pub_date = NOW.strftime("%Y-%m-%d")
+        source_pub_date: Optional[str] = None
         try:
             detail_resp = requests.get(
                 base_url + raw_items[0][0], headers=hdrs, timeout=15
@@ -518,6 +548,7 @@ class ScrapeDataSource(DataSource):
             date_m = re.search(r"online[^0-9]*(\d{4}-\d{2}-\d{2})", detail_resp.text, re.I)
             if date_m:
                 pub_date = date_m.group(1)
+                source_pub_date = pub_date
         except Exception:
             pass
 
@@ -525,7 +556,19 @@ class ScrapeDataSource(DataSource):
         if pub_dt.date() < self._cutoff_dt.date():
             return []
 
-        return [Item(title=title, date=pub_date, url=base_url + path) for path, title in raw_items]
+        return [
+            Item(
+                title=title,
+                date=pub_date,
+                url=base_url + path,
+                extra=(
+                    {"source_published_at": source_pub_date}
+                    if source_pub_date
+                    else {}
+                ),
+            )
+            for path, title in raw_items
+        ]
 
     def _fetch_chinawater_journal(self) -> list[Item]:
         """《中国水利》期刊 (slzg.cbpt.cnki.net) — three-step:
@@ -586,6 +629,7 @@ class ScrapeDataSource(DataSource):
 
         # Fetch first article page to get the real publication date
         pub_date = NOW.strftime("%Y-%m-%d")
+        source_pub_date: Optional[str] = None
         try:
             detail_resp = requests.get(
                 f"{base}{raw_items[0][0]}", headers=hdrs, timeout=15
@@ -594,6 +638,7 @@ class ScrapeDataSource(DataSource):
             date_m = re.search(r"出版时间[：:]\s*(\d{4}-\d{2}-\d{2})", detail_resp.text)
             if date_m:
                 pub_date = date_m.group(1)
+                source_pub_date = pub_date
         except Exception:
             pass
 
@@ -602,7 +647,16 @@ class ScrapeDataSource(DataSource):
             return []
 
         return [
-            Item(title=title, date=pub_date, url=f"{base}{path}")
+            Item(
+                title=title,
+                date=pub_date,
+                url=f"{base}{path}",
+                extra=(
+                    {"source_published_at": source_pub_date}
+                    if source_pub_date
+                    else {}
+                ),
+            )
             for path, _, title in raw_items
         ]
 
@@ -649,6 +703,11 @@ class ScrapeDataSource(DataSource):
                         title=title_raw.strip()[:100],
                         date=dt.strftime("%Y-%m-%d") if dt else "unknown",
                         url=url,
+                        extra=(
+                            {"source_published_at": dt.strftime("%Y-%m-%d")}
+                            if dt
+                            else {}
+                        ),
                     )
                 )
                 if len(items) >= max_items:
@@ -675,6 +734,11 @@ class ScrapeDataSource(DataSource):
                         title=title,
                         date=dt.strftime("%Y-%m-%d") if dt else date_raw,
                         url=url,
+                        extra=(
+                            {"source_published_at": dt.strftime("%Y-%m-%d")}
+                            if dt
+                            else {}
+                        ),
                     )
                 )
                 if len(items) >= max_items:
@@ -703,6 +767,11 @@ class ScrapeDataSource(DataSource):
                         title=title,
                         date=dt.strftime("%Y-%m-%d") if dt else "unknown",
                         url=url,
+                        extra=(
+                            {"source_published_at": dt.strftime("%Y-%m-%d")}
+                            if dt
+                            else {}
+                        ),
                     )
                 )
                 if len(items) >= max_items:
@@ -731,6 +800,11 @@ class ScrapeDataSource(DataSource):
                         title=title,
                         date=dt.strftime("%Y-%m-%d") if dt else "unknown",
                         url=url,
+                        extra=(
+                            {"source_published_at": dt.strftime("%Y-%m-%d")}
+                            if dt
+                            else {}
+                        ),
                     )
                 )
                 if len(items) >= max_items:
@@ -867,12 +941,24 @@ class APIDataSource(DataSource):
             dt = self._crossref_date(row)
             if dt and dt < self._cutoff_dt:
                 continue
-            items.append(Item(
-                title=title,
-                date=dt.strftime("%Y-%m-%d") if dt else NOW.strftime("%Y-%m-%d"),
-                url=row.get("URL", ""),
-                extra={"doi": row.get("DOI", "")},
-            ))
+            source_dt = self._crossref_publication_date(row)
+            items.append(
+                Item(
+                    title=title,
+                    date=dt.strftime("%Y-%m-%d")
+                    if dt
+                    else NOW.strftime("%Y-%m-%d"),
+                    url=row.get("URL", ""),
+                    extra={
+                        "doi": row.get("DOI", ""),
+                        **(
+                            {"source_published_at": source_dt.strftime("%Y-%m-%d")}
+                            if source_dt
+                            else {}
+                        ),
+                    },
+                )
+            )
             if len(items) >= max_items:
                 break
 
@@ -881,6 +967,23 @@ class APIDataSource(DataSource):
             self._enrich_chinese_titles(items, chinese_title_url)
 
         return items
+
+    @staticmethod
+    def _crossref_publication_date(row: dict) -> Optional[datetime.datetime]:
+        """Return only Crossref publication fields, not deposit/index times."""
+        for key in ("published-online", "published", "published-print", "issued"):
+            value = row.get(key) or {}
+            parts = (value.get("date-parts") or [[]])[0]
+            try:
+                if len(parts) >= 3:
+                    return datetime.datetime(parts[0], parts[1], parts[2])
+                if len(parts) >= 2:
+                    return datetime.datetime(parts[0], parts[1], 1)
+                if len(parts) >= 1:
+                    return datetime.datetime(parts[0], 1, 1)
+            except (ValueError, TypeError):
+                continue
+        return None
 
     _CHINESE_TITLE_RGX = re.compile(
         r'<meta[^>]+name=["\']twitter:title["\'][^>]+content=["\']([^"\']+)["\']',
@@ -913,7 +1016,9 @@ class APIDataSource(DataSource):
         items = []
         for row in data[:max_items]:
             extracted = {out_k: row.get(src_k) for out_k, src_k in field_map.items()}
-            name = extracted.get("name", "")
+            repo_id = row.get("id") or extracted.get("repo_id") or extracted.get("name", "")
+            extracted["repo_id"] = str(repo_id).strip() if repo_id else ""
+            name = extracted.get("name", "") or extracted["repo_id"]
             items.append(
                 Item(
                     title=name,
@@ -961,6 +1066,7 @@ class APIDataSource(DataSource):
             date_val = row.get(field_map.get("date", "date"), "")
             deadline_val = row.get(field_map.get("deadline", "deadline"), "")
             item_id = row.get("id", "")
+            item_id = str(item_id).strip() if item_id is not None else ""
             if not title:
                 continue
             dt: Optional[datetime.datetime] = None
@@ -990,6 +1096,9 @@ class APIDataSource(DataSource):
             if _is_expired_deadline(deadline_dt):
                 continue
 
+            source_published_at = self._dlut_source_published_at(
+                row, field_map, date_val, dt
+            )
             items.append(
                 Item(
                     title=title[:100],
@@ -998,6 +1107,11 @@ class APIDataSource(DataSource):
                     extra={
                         "item_id": item_id,
                         "item_time": date_val,
+                        **(
+                            {"source_published_at": source_published_at.strftime("%Y-%m-%d")}
+                            if source_published_at
+                            else {}
+                        ),
                         "deadline": (
                             deadline_dt.strftime("%Y-%m-%d")
                             if deadline_dt
@@ -1008,6 +1122,46 @@ class APIDataSource(DataSource):
             )
 
         return items, should_stop
+
+    @staticmethod
+    def _parse_api_datetime(value) -> Optional[datetime.datetime]:
+        if isinstance(value, datetime.datetime):
+            return value
+        if not isinstance(value, str) or not value.strip():
+            return None
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%Y/%m/%d",
+            "%Y-%m-%dT%H:%M:%S",
+        ):
+            try:
+                return datetime.datetime.strptime(value[:19], fmt)
+            except ValueError:
+                pass
+        return None
+
+    def _dlut_source_published_at(
+        self, row: dict, field_map: dict, date_val, parsed_date
+    ) -> Optional[datetime.datetime]:
+        explicit_field = field_map.get("source_published_at")
+        if explicit_field:
+            return self._parse_api_datetime(row.get(explicit_field))
+        date_field = field_map.get("date", "date").lower()
+        if any(token in date_field for token in ("publish", "created", "create")):
+            return parsed_date
+        for key in (
+            "publishTime",
+            "publishDate",
+            "publishedAt",
+            "published_at",
+            "createTime",
+            "createdAt",
+        ):
+            source_date = self._parse_api_datetime(row.get(key))
+            if source_date is not None:
+                return source_date
+        return None
 
     def _parse_dlut_api(self, api_data) -> list[Item]:
         max_items = self.config.get("max_items", 10)
