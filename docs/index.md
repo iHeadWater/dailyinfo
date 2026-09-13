@@ -2,27 +2,36 @@
 
 [中文](https://github.com/iHeadWater/dailyinfo/blob/main/README.zh-CN.md) | English
 
-DailyInfo is an automated research intelligence **collector** for AI for Science researchers. It collects papers, AI news, code trends, and institutional updates from FreshRSS feeds, scraped pages, and APIs, writes local Markdown briefings, and pushes them to Discord.
+DailyInfo is an automated research intelligence collector for AI for Science researchers. Every day it gathers journal papers, AI news, arXiv preprints, code trends, and university announcements from RSS feeds, scraped pages, and APIs — then turns them into concise Chinese-language briefings delivered straight to your Discord.
 
-> **Scope**: DailyInfo is a pure intelligence collector — collection, summarization, and push. **It does not handle Zotero.** All Zotero-related work (PDF download, ingestion, deep literature analysis, analysis cards, themed reviews, WeChat articles, podcasts, Bilibili publishing) lives in the sibling repo [`OuyangWenyu/mylibrary`](https://github.com/OuyangWenyu/mylibrary).
+## How It Works
 
-## Overview
-
-Core flow:
+One pipeline, five independent sources of information:
 
 ```text
 FreshRSS / scrape / API sources
   -> dailyinfo run
-  -> Markdown briefings
+  -> AI-generated Markdown briefings (Chinese)
   -> dailyinfo push
   -> Discord channels + local archive
 ```
 
-Design principles:
+1. **Collect** — five independent pipelines pull from 40+ feeds, pages, and APIs. A failure in one never blocks the others.
+2. **Summarize** — DeepSeek writes a readable Chinese briefing per source, tuned for researchers: what the papers are, why they matter, and what's worth a closer look.
+3. **Deliver** — briefings land in your Discord channels and are archived locally. Nothing is ever sent twice.
 
-- Configuration-driven sources in `config/sources.json`.
-- Idempotent CLI commands that can be safely rerun.
-- External scheduling through cron, myopenclaw, openclaw, or other agent runtimes.
+You wake up to a curated digest of everything relevant to your field — no feed readers to check, no email, no noise.
+
+## Features
+
+| | |
+|---|---|
+| **Five pipelines** | Papers (30+ journals, including Chinese water-resources journals) · AI news · arXiv CS.AI (up to 500 preprints/day) · GitHub trending + HuggingFace models · University updates |
+| **Chinese-first briefings** | AI summaries in Chinese with automatic fallback to an OpenRouter model when the primary API fails |
+| **Configuration-driven** | Add RSS, scrape, or API sources in `config/sources.json` — no code changes required |
+| **Idempotent & safe to rerun** | Sources with today's briefing are skipped; pushed files are never re-sent |
+| **Resilient** | Retries with exponential backoff, batch splitting on partial AI responses, per-source isolation |
+| **Scheduler-agnostic** | Bring your own cron, systemd timer, or agent runtime — DailyInfo owns the pipeline, not the clock |
 
 ## Screenshots
 
@@ -60,11 +69,13 @@ Default data root: `~/.myagentdata/dailyinfo/`. Override it with `DAILYINFO_DATA
 ├── briefings/           # Markdown files waiting to be pushed
 │   ├── papers/
 │   ├── ai_news/
+│   ├── arxiv/
 │   ├── code/
 │   └── resource/
 └── pushed/              # Successfully pushed archive
     ├── papers/
     ├── ai_news/
+    ├── arxiv/
     ├── code/
     └── resource/
 ```
@@ -104,18 +115,12 @@ dailyinfo push
 | `dailyinfo run -f all` | Force regeneration for all sources |
 | `dailyinfo push` | Push pending briefings to Discord and archive them |
 | `dailyinfo push -d 2026-04-22` | Push briefings for a specific date |
+| `dailyinfo push -c weekly` | Push the weekly recap only |
 | `dailyinfo weekly` | Generate a weekly AI news recap from recent briefings |
 | `dailyinfo status` | Show today's briefing/archive counts |
 | `dailyinfo logs` | Tail the execution log |
 | `dailyinfo cache-clear` | Clear a source's FreshRSS cache (default `arxiv_cs_ai`) |
 | `dailyinfo clean-cache` | Delete FreshRSS cache files older than N hours (default 24h) |
-
-## Zotero / Deep Literature — moved to mylibrary
-
-DailyInfo is now a pure collector. **All Zotero-related work lives in the sibling repository:**
-
-- **Repository**: [`OuyangWenyu/mylibrary`](https://github.com/OuyangWenyu/mylibrary) (local: `D:\code\mylibrary`)
-- **Handles**: PDF download & Zotero ingestion (`download-pdf`, `zotero_sync`), weekly reviews, analysis cards, themed clustering, WeChat articles, NotebookLM podcasts, Bilibili publishing.
 
 ## Environment Variables
 
@@ -123,7 +128,7 @@ DailyInfo is now a pure collector. **All Zotero-related work lives in the siblin
 |----------|---------|
 | `DEEPSEEK_API_KEY` | DeepSeek API key (primary model for `dailyinfo run`) |
 | `DISCORD_BOT_TOKEN` | Discord bot token for `dailyinfo push` |
-| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` | Optional category channel IDs |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` | Optional category channel IDs |
 | `FRESHRSS_USER` | FreshRSS username |
 | `FRESHRSS_PASSWORD` | FreshRSS initial password |
 | `DAILYINFO_DATA_ROOT` | Override default data root |
@@ -141,7 +146,6 @@ DailyInfo intentionally avoids owning the scheduler. Recommended ownership:
 | Markdown generation via `dailyinfo run` | DailyInfo |
 | Discord push/archive via `dailyinfo push` | DailyInfo |
 | Timed execution | cron, myopenclaw, openclaw, or agent runtime |
-| Zotero / deep literature | mylibrary |
 
 ## Documentation
 

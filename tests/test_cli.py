@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import subprocess
+import tomllib
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+
+PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
 
 class _FakeCompleted:
@@ -230,9 +234,12 @@ def test_start_fails_when_compose_missing(cli_mod, tmp_path, monkeypatch):
 
 
 def test_version_flag_prints_project_version(cli_mod):
+    project_version = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
     result = CliRunner().invoke(cli_mod.cli, ["--version"])
     assert result.exit_code == 0
-    assert "0.1.0" in result.output
+    assert project_version in result.output
 
 
 def test_run_forwards_pipeline_flag(cli_mod):
