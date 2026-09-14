@@ -78,8 +78,7 @@ def _write_env(tmp_path, contents: str):
 def test_get_freshrss_user_reads_env_file(tmp_path, monkeypatch):
     import run_pipelines as rp
 
-    _write_env(tmp_path, "FRESHRSS_USER=alice\n")
-    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(rp, "ENV_FILE", _write_env(tmp_path, "FRESHRSS_USER=alice\n"))
 
     assert rp._get_freshrss_user() == "alice"
 

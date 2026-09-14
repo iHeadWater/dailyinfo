@@ -51,7 +51,12 @@ def test_discord_send_error_is_logged_without_the_token(monkeypatch):
 
 
 def test_empty_generation_is_logged_as_skipped_not_as_a_failure(monkeypatch):
-    """None covers both a failure and a null content field; say which."""
+    """None covers both a failure and a null content field; say which.
+
+    Note the consequence beyond the log line: main() continues on None, so an
+    empty generation is no longer pushed. Before this change an empty string
+    fell through and a header-only briefing went to Discord.
+    """
     import backfill_push as bp
 
     logs: list[str] = []

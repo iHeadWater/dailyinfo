@@ -81,6 +81,16 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
 
     import paths  # noqa: F401
 
+    # Import the modules pinned below rather than hoping some earlier test
+    # already did. Checking ``sys.modules`` and skipping when absent is what
+    # made an earlier version of this block silently ineffective: whether the
+    # pin landed depended on test ordering, so identical tests behaved
+    # differently depending on where they sat in the file.
+    import backfill_push  # noqa: F401
+    import push_to_discord  # noqa: F401
+    import run_pipelines  # noqa: F401
+    import weekly_summary  # noqa: F401
+
     importlib.reload(paths)
     for name in _RELOAD_ORDER[1:]:
         if name in sys.modules:

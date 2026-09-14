@@ -120,7 +120,7 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 ## Environment Variables
 
 Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`
-Optional: `GLM_API_KEY` (Zhipu fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`
+Optional: `GLM_API_KEY` (Zhipu fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`, `DAILYINFO_ENV_FILE` (**test-only** — redirects every `.env` lookup; set only by `tests/conftest.py`)
 
 Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPERS_PATH`)已随 zotero_sync 迁移至 mylibrary,本仓库不再需要。
 

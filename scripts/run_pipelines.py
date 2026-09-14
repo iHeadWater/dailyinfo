@@ -25,7 +25,7 @@ import requests
 
 from datasource import DataSource, RSSDataSource, build_feed_url_map
 from logsafe import http_error_detail, one_line
-from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
+from paths import BRIEFINGS_DIR, ENV_FILE, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
@@ -34,7 +34,11 @@ DATE = datetime.datetime.now().strftime("%Y-%m-%d")
 
 
 def _get_freshrss_user() -> str:
-    env_path = os.path.join(PROJECT_ROOT, ".env")
+    # Via paths.ENV_FILE, not PROJECT_ROOT: this runs at import time (see
+    # FRESHRESS_DB below), it is the one remaining route by which a test run
+    # opened the developer's real .env, and paths.ENV_FILE is the seam that
+    # DAILYINFO_ENV_FILE redirects.
+    env_path = str(ENV_FILE)
     if os.path.exists(env_path):
         with open(env_path, encoding="utf-8") as f:
             for line in f:
