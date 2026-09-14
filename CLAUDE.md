@@ -133,6 +133,21 @@ Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPER
 - `rss_db` fixture provides in-memory SQLite with fresh/stale entry fixtures
 - Test files mirror source: `test_{module}.py` for `scripts/{module}.py`
 
+**Every fix lands with proof that its test can fail** — either a mutation
+(revert the fix, show the test go red) or a measured number. "The suite is
+green" is not verification: on the branch that introduced this rule, seven
+review rounds each found a fix that was unverified or did not do what its
+message said, and none of them were visible in a passing run.
+
+`tests/mutation_probes.py` holds the standing mutations and runs in CI
+(`.github/workflows/tests.yml`). Add a probe when you close a gap; the script
+fails loudly if an anchor moves rather than skipping silently. Run it from a
+clean tree — it edits files and restores them.
+
+CI also runs the whole suite a second time against a generated decoy `.env`
+(`tests/decoy_env.py`), because CI has no `.env` and therefore never noticed
+that a value there could change test outcomes.
+
 ## Agent skills
 
 ### 已迁移至 mylibrary (⚠️ 勿在此仓库使用)

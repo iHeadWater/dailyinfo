@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      # Three steps rather than three jobs: the suite takes seconds, so the
+      # setup would dominate, and the step name already says which check failed.
+      - name: Run the suite
+        run: uv run pytest -q
+
+      # CI has no .env, so CI never noticed that a value there changed test
+      # outcomes. This makes it look like a configured machine.
+      - name: Run the suite against a decoy .env
+        run: |
+          uv run python tests/decoy_env.py .env
+          uv run pytest -q
+
+      # Every fix on the branch that introduced this file landed with a
+      # mutation that turns its test red, and every one of those mutations was
+      # applied by hand. This is that discipline, mechanised.
+      - name: Check that the guards can fail
+        run: uv run python tests/mutation_probes.py
