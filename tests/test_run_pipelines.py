@@ -107,42 +107,42 @@ def test_get_freshrss_user_falls_back_to_env_user(tmp_path, monkeypatch):
     assert rp._get_freshrss_user() == "fallback-user"
 
 
-def test_load_api_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
+def test_load_glm_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
     import run_pipelines as rp
 
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # empty dir → no .env
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-env")
+    monkeypatch.setenv("GLM_API_KEY", "sk-test-env")
 
-    assert rp.load_api_key() == "sk-test-env"
+    assert rp.load_glm_key() == "sk-test-env"
 
 
-def test_load_api_key_returns_empty_when_missing(tmp_path, monkeypatch):
+def test_load_glm_key_returns_empty_when_missing(tmp_path, monkeypatch):
     import run_pipelines as rp
 
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
 
-    assert rp.load_api_key() == ""
+    assert rp.load_glm_key() == ""
 
 
-def test_load_api_key_prefers_dotenv_over_env(tmp_path, monkeypatch):
+def test_load_glm_key_prefers_dotenv_over_env(tmp_path, monkeypatch):
     import run_pipelines as rp
 
-    _write_env(tmp_path, "OPENROUTER_API_KEY=sk-from-dotenv\n")
+    _write_env(tmp_path, "GLM_API_KEY=sk-from-dotenv\n")
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-from-env")
+    monkeypatch.setenv("GLM_API_KEY", "sk-from-env")
 
-    assert rp.load_api_key() == "sk-from-dotenv"
+    assert rp.load_glm_key() == "sk-from-dotenv"
 
 
-def test_load_api_key_skips_placeholder_values(tmp_path, monkeypatch):
+def test_load_glm_key_skips_placeholder_values(tmp_path, monkeypatch):
     import run_pipelines as rp
 
-    _write_env(tmp_path, "OPENROUTER_API_KEY=your_api_key_here\n")
+    _write_env(tmp_path, "GLM_API_KEY=your_api_key_here\n")
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-real")
+    monkeypatch.setenv("GLM_API_KEY", "sk-real")
 
-    assert rp.load_api_key() == "sk-real"
+    assert rp.load_glm_key() == "sk-real"
 
 
 def test_has_real_briefing_today_detects_existing_content():
@@ -362,7 +362,7 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
 
 
 class _StubAIResponse:
-    """Tiny stand-in for OpenRouter JSON responses used by call_ai tests."""
+    """Tiny stand-in for Zhipu GLM JSON responses used by call_ai tests."""
 
     def __init__(self, content: str = "", finish_reason: str = "stop"):
         self._payload = {
@@ -385,7 +385,7 @@ def _install_call_ai_stubs(monkeypatch, responses, logs):
     """Queue ``responses`` for successive requests.post calls and capture logs."""
     import run_pipelines as rp
 
-    monkeypatch.setattr(rp, "API_KEY", "sk-test")
+    monkeypatch.setattr(rp, "GLM_KEY", "sk-test")
     monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-test-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
@@ -1173,35 +1173,68 @@ def test_load_deepseek_key_skips_placeholder_values(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Dual-provider call_ai — DeepSeek primary, OpenRouter fallback
+# Dual-provider call_ai — DeepSeek primary, Zhipu GLM fallback
 # ---------------------------------------------------------------------------
 
 
-def test_call_ai_uses_deepseek_primary_openrouter_fallback(monkeypatch):
-    """Primary calls api.deepseek.com (3 tries), fallback calls openrouter.ai."""
+def test_call_ai_uses_deepseek_primary_glm_fallback(monkeypatch):
+    """Primary calls api.deepseek.com (3 tries), fallback calls open.bigmodel.cn."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
+    monkeypatch.setenv("GLM_API_KEY", "sk-glm")
 
     import run_pipelines as rp
 
     logs: list[str] = []
-    call_urls: list[str] = []
+    calls: list[tuple[str, dict]] = []
 
     def fake_post(url, *args, **kwargs):
-        call_urls.append(url)
+        calls.append((url, kwargs.get("json") or {}))
         if "deepseek" in url:
             raise rp.requests.RequestException("deepseek transient error")
-        return _StubAIResponse(content="kimi fallback reply", finish_reason="stop")
+        return _StubAIResponse(content="glm fallback reply", finish_reason="stop")
 
+    monkeypatch.setattr(rp, "GLM_KEY", rp.load_glm_key())
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
     monkeypatch.setattr(rp.requests, "post", fake_post)
 
     result = rp.call_ai("summarise")
 
-    assert result == "kimi fallback reply"
-    deepseek_calls = [u for u in call_urls if "deepseek" in u]
-    openrouter_calls = [u for u in call_urls if "openrouter" in u]
-    assert len(deepseek_calls) == 3, f"expected 3 deepseek attempts, got {call_urls}"
-    assert len(openrouter_calls) == 1, f"expected 1 openrouter attempt, got {call_urls}"
+    assert result == "glm fallback reply"
+    deepseek_calls = [u for u, _ in calls if "deepseek" in u]
+    glm_calls = [(u, body) for u, body in calls if "bigmodel.cn" in u]
+    assert len(deepseek_calls) == 3, f"expected 3 deepseek attempts, got {calls}"
+    assert len(glm_calls) == 1, f"expected 1 glm attempt, got {calls}"
+    assert glm_calls[0][1]["model"] == "glm-5.3-flash", glm_calls[0][1]
+    # GLM always thinks and bills thinking against max_tokens — the fallback
+    # must ask for the cheap level; the primary must not receive the field.
+    assert glm_calls[0][1]["reasoning_effort"] == "low", glm_calls[0][1]
+    primary_bodies = [body for u, body in calls if "deepseek" in u]
+    assert all("reasoning_effort" not in b for b in primary_bodies), primary_bodies
     assert "switching to fallback" in "\n".join(logs)
+
+
+def test_call_ai_skips_fallback_when_glm_key_missing(monkeypatch):
+    """No GLM_API_KEY disables the fallback instead of firing a tokenless request."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+
+    import run_pipelines as rp
+
+    call_urls: list[str] = []
+
+    def fake_post(url, *args, **kwargs):
+        call_urls.append(url)
+        raise rp.requests.RequestException("deepseek transient error")
+
+    monkeypatch.setattr(rp, "GLM_KEY", "")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: None)
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    with pytest.raises(ValueError) as excinfo:
+        rp.call_ai("summarise")
+
+    assert "GLM_API_KEY not configured" in str(excinfo.value)
+    assert len(call_urls) == 3, f"fallback must not fire, got {call_urls}"
+    assert all("bigmodel.cn" not in u for u in call_urls)

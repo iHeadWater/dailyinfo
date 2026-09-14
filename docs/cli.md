@@ -66,10 +66,12 @@ for today (either in `briefings/` waiting to be pushed, or already archived in
 to override — pass `all` to refresh everything, or repeat the flag with
 specific source names (matches `config/sources.json`).
 
-If the primary model (`deepseek-v4-flash` via DeepSeek API) returns empty responses after 3
+If the primary model (`deepseek-flash` via DeepSeek API) returns empty responses after 3
 retries with exponential backoff (2s / 5s / 10s), `run` automatically falls
 back to the model in `DAILYINFO_FALLBACK_MODEL` (default
-`moonshotai/kimi-k2.5` via OpenRouter) for 2 more attempts before giving up.
+`glm-5.3-flash` via the Zhipu official API) for 2 more attempts before giving up.
+A missing `GLM_API_KEY` disables the fallback outright rather than retrying
+without credentials.
 
 ### Push to Discord
 
@@ -130,8 +132,8 @@ FRESHRSS_PASSWORD=freshrss123
 
 | Key | Purpose |
 |-----|---------|
-| `DEEPSEEK_API_KEY` | DeepSeek API key (required — primary model: `deepseek-v4-flash`) |
-| `OPENROUTER_API_KEY` | OpenRouter API key (optional, only needed for fallback) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (required — primary model: `deepseek-flash`) |
+| `GLM_API_KEY` | Zhipu GLM API key (optional, only needed for fallback) |
 | `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` | Per-category channel IDs (missing ones are skipped, not fatal) |
 | `DISCORD_CHANNEL_*_DEV` / `_STAGING` | Env-specific channel IDs when `DAILYINFO_ENV=dev` or `staging` |
@@ -139,7 +141,7 @@ FRESHRSS_PASSWORD=freshrss123
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`; env-suffixed for dev/staging) |
 | `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
 | `FRESHRSS_PASSWORD` | FreshRSS password |
-| `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `moonshotai/kimi-k2.5`) |
+| `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `glm-5.3-flash`, a Zhipu model name) |
 
 ## Scheduling
 

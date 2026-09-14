@@ -53,7 +53,7 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
     """Route every test's data writes to an isolated ``tmp_path`` subdir.
 
     Also sets ``DISCORD_BOT_TOKEN`` so importing ``push_to_discord`` does not
-    hit its ``sys.exit`` guard, and clears ``OPENROUTER_API_KEY`` so pipeline
+    hit its ``sys.exit`` guard, and clears ``GLM_API_KEY`` so pipeline
     tests start from a known state.
 
     Forces ``DAILYINFO_ENV=dev`` so tests never accidentally touch prod data
@@ -65,7 +65,7 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("DAILYINFO_DATA_ROOT", str(data_root))
     monkeypatch.setenv("DAILYINFO_ENV", "dev")
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "test-token")
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
 
     import paths  # noqa: F401
 
