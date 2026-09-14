@@ -1193,6 +1193,7 @@ def test_call_ai_uses_deepseek_primary_glm_fallback(monkeypatch):
         return _StubAIResponse(content="glm fallback reply", finish_reason="stop")
 
     monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-glm")
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
     monkeypatch.setattr(rp.requests, "post", fake_post)
@@ -1227,6 +1228,7 @@ def test_call_ai_skips_fallback_when_glm_key_missing(monkeypatch):
         raise rp.requests.RequestException("deepseek transient error")
 
     monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: None)
     monkeypatch.setattr(rp.requests, "post", fake_post)
@@ -1254,10 +1256,23 @@ def test_load_glm_key_rejects_env_placeholder(tmp_path, monkeypatch):
 
 
 def test_load_deepseek_key_rejects_env_placeholder(tmp_path, monkeypatch):
+    """The literal is the one .env.example actually ships, not a tidy variant."""
     import run_pipelines as rp
 
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "your_api_key_here")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-your_deepseek_key_here")
+
+    with pytest.raises(SystemExit):
+        rp.load_deepseek_key()
+
+
+def test_load_deepseek_key_rejects_dotenv_placeholder(tmp_path, monkeypatch):
+    """Same shipped literal, reached through the .env branch."""
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DEEPSEEK_API_KEY=sk-your_deepseek_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
     with pytest.raises(SystemExit):
         rp.load_deepseek_key()
@@ -1274,6 +1289,63 @@ def test_redact_replaces_secret_and_tolerates_empty():
     assert rp._redact("bearer sk-secret rejected", "sk-secret") == "bearer *** rejected"
     assert rp._redact("nothing to hide", "") == "nothing to hide"
     assert rp._redact("nothing to hide", "sk-absent") == "nothing to hide"
+
+
+def test_redact_masks_provider_masked_key_tail():
+    """DeepSeek echoes 'Your api key: ****<last4>'; that must not survive either."""
+    import run_pipelines as rp
+
+    redacted = rp._redact("Your api key: ****abcd is invalid", "sk-0123456789abcd")
+
+    assert "****abcd" not in redacted, redacted
+
+
+def test_http_error_detail_redacts_before_truncating():
+    """A secret straddling the 200-char cut must not survive as a prefix."""
+    import run_pipelines as rp
+
+    secret = "sk-AAAABBBBCCCCDDDDEEEEFFFF"
+    body = "x" * 190 + secret  # 10 chars of the secret fall inside body[:200]
+
+    class _FakeResponse:
+        text = body
+
+    exc = rp.requests.HTTPError("400 Client Error")
+    exc.response = _FakeResponse()
+
+    detail = rp._http_error_detail(exc, secret)
+
+    assert secret not in detail
+    assert "sk-AAAABBB" not in detail, detail
+
+
+def test_http_error_detail_keeps_output_on_one_line():
+    """A body with newlines must not be able to forge extra log lines."""
+    import run_pipelines as rp
+
+    class _FakeResponse:
+        text = "oops\n[WARN] forged line"
+
+    exc = rp.requests.HTTPError("400 Client Error")
+    exc.response = _FakeResponse()
+
+    detail = rp._http_error_detail(exc, "sk-secret")
+
+    assert "\n" not in detail, detail
+
+
+def test_http_error_detail_survives_a_response_that_raises():
+    import run_pipelines as rp
+
+    class _ExplodingResponse:
+        @property
+        def text(self):
+            raise RuntimeError("body unavailable")
+
+    exc = rp.requests.HTTPError("400 Client Error")
+    exc.response = _ExplodingResponse()
+
+    assert "400 Client Error" in rp._http_error_detail(exc, "sk-secret")
 
 
 def test_http_error_detail_includes_response_body():
@@ -1341,3 +1413,60 @@ def test_no_warning_for_native_glm_model(monkeypatch):
     rp._warn_if_fallback_looks_like_openrouter("glm-5.3-flash")
 
     assert logs == []
+
+
+def test_main_wires_its_startup_warnings(monkeypatch):
+    """Pin the call sites: a helper nothing calls is a helper that does nothing."""
+    import sys
+
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(
+        rp, "_resolve_fallback_model", lambda explicit: "moonshotai/kimi-k2.5"
+    )
+    for name in (
+        "run_pipeline_papers",
+        "run_pipeline_ai_news",
+        "run_pipeline_arxiv",
+        "run_pipeline_code",
+        "run_pipeline_resource",
+    ):
+        monkeypatch.setattr(rp, name, lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py", "--pipeline", "1"])
+
+    rp.main()
+
+    joined = "\n".join(logs)
+    assert "GLM_API_KEY" in joined, joined
+    assert "OpenRouter" in joined, joined
+
+
+def test_call_ai_redacts_glm_credential_from_error_log(monkeypatch):
+    """The fallback loop guards the GLM key; that needs its own regression test."""
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-glm-super-secret")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    def fake_post(url, *args, **kwargs):
+        if "deepseek" in url:
+            raise rp.requests.RequestException("deepseek transient error")
+        raise rp.requests.exceptions.InvalidHeader(
+            "Invalid leading whitespace, reserved character(s), or return "
+            "character(s) in header value: 'Bearer sk-glm-super-secret'"
+        )
+
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    joined = "\n".join(logs)
+    assert "switching to fallback" in joined
+    assert "sk-glm-super-secret" not in joined, joined

@@ -105,7 +105,7 @@ def load_glm_key() -> str:
             from dotenv import dotenv_values
 
             key = dotenv_values(env_path).get("GLM_API_KEY", "")
-            if key and not key.startswith("your_"):
+            if key and "your_" not in key:
                 return key
         except ImportError:
             with open(env_path) as f:
@@ -114,7 +114,7 @@ def load_glm_key() -> str:
                     if line.startswith("GLM_API_KEY=") and "your_" not in line:
                         return line.split("=", 1)[1].strip()
     key = os.environ.get("GLM_API_KEY", "")
-    if key and not key.startswith("your_"):
+    if key and "your_" not in key:
         return key
     return ""
 
@@ -126,7 +126,7 @@ def load_deepseek_key() -> str:
             from dotenv import dotenv_values
 
             key = dotenv_values(env_path).get("DEEPSEEK_API_KEY", "")
-            if key and not key.startswith("your_"):
+            if key and "your_" not in key:
                 return key
         except ImportError:
             with open(env_path) as f:
@@ -135,7 +135,7 @@ def load_deepseek_key() -> str:
                     if line.startswith("DEEPSEEK_API_KEY=") and "your_" not in line:
                         return line.split("=", 1)[1].strip()
     key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if key and not key.startswith("your_"):
+    if key and "your_" not in key:
         return key
     log("ERROR: No DEEPSEEK_API_KEY found in .env or environment")
     sys.exit(1)
@@ -212,8 +212,13 @@ def _post_ai(
 
 def _redact(text: str, secret: str) -> str:
     """Replace a credential with a marker before it reaches the log."""
-    if secret and secret in text:
-        return text.replace(secret, "***")
+    if not secret:
+        return text
+    if secret in text:
+        text = text.replace(secret, "***")
+    # Providers sometimes echo a masked tail: "Your api key: ****abcd is invalid".
+    if len(secret) >= 4:
+        text = text.replace("****" + secret[-4:], "****")
     return text
 
 
@@ -221,13 +226,19 @@ def _http_error_detail(exc: requests.RequestException, secret: str) -> str:
     """One-line error summary: credential scrubbed, 4xx body excerpted.
 
     ``raise_for_status`` puts no response body in its message, so a rejected
-    model name would otherwise surface as a bare status code.
+    model name would otherwise surface as a bare status code. The body is
+    redacted *before* it is cut, so a credential straddling the cut cannot
+    survive as a prefix, and newlines are flattened so a body cannot forge
+    extra log lines.
     """
     detail = str(exc)
-    body = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
+    try:
+        body = str(getattr(getattr(exc, "response", None), "text", "") or "").strip()
+    except Exception:  # an unreadable body must not hide the error itself
+        body = ""
     if body:
-        detail = f"{detail} body={body[:200]}"
-    return _redact(detail, secret)
+        detail = f"{detail} body={_redact(body, secret)[:200]}"
+    return _redact(detail, secret).replace("\n", " ").replace("\r", " ")
 
 
 def _get_deepseek_key() -> str:
