@@ -450,7 +450,7 @@ def _generate_regular_briefings(
     prompt_template: str,
     model: str,
     *,
-    max_tokens: int = 2500,
+    max_tokens: int = 4000,
 ) -> list[tuple[str, list]]:
     """Generate one or more complete briefings, splitting oversized batches.
 
@@ -1154,7 +1154,7 @@ def run_pipeline_resource() -> int:
         prompt = prompt_tmpl.replace("{items}", f"{ds.display_name}\n{items_text}")
 
         try:
-            content_text = call_ai(prompt, model=model_default, max_tokens=1200)
+            content_text = call_ai(prompt, model=model_default, max_tokens=4000)
             display_url = source_cfg.get("list_url", source_cfg.get("url", ""))
             full_content = (
                 f"# {ds.display_name} - {DATE}\n\n"
