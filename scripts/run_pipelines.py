@@ -31,8 +31,6 @@ CONFIG_DIR = os.path.join(PROJECT_ROOT, "config")
 SOURCES_JSON = os.path.join(CONFIG_DIR, "sources.json")
 DATE = datetime.datetime.now().strftime("%Y-%m-%d")
 
-GLM_KEY = ""
-
 
 def _get_freshrss_user() -> str:
     env_path = os.path.join(PROJECT_ROOT, ".env")
@@ -116,7 +114,7 @@ def load_glm_key() -> str:
                     if line.startswith("GLM_API_KEY=") and "your_" not in line:
                         return line.split("=", 1)[1].strip()
     key = os.environ.get("GLM_API_KEY", "")
-    if key:
+    if key and not key.startswith("your_"):
         return key
     return ""
 
@@ -137,7 +135,7 @@ def load_deepseek_key() -> str:
                     if line.startswith("DEEPSEEK_API_KEY=") and "your_" not in line:
                         return line.split("=", 1)[1].strip()
     key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if key:
+    if key and not key.startswith("your_"):
         return key
     log("ERROR: No DEEPSEEK_API_KEY found in .env or environment")
     sys.exit(1)
@@ -165,6 +163,21 @@ def _resolve_fallback_model(explicit: str | None) -> str:
     return (
         explicit or os.environ.get("DAILYINFO_FALLBACK_MODEL") or DEFAULT_FALLBACK_MODEL
     )
+
+
+def _warn_if_fallback_looks_like_openrouter(model: str) -> None:
+    """Warn when the fallback model id looks like a leftover OpenRouter id.
+
+    The value now has to be a Zhipu model name. An old ``moonshotai/...``
+    left in ``.env`` would 400 on every attempt and leave only
+    "empty response after retries" behind, naming the primary model --
+    which is the wrong place to go looking.
+    """
+    if "/" in model:
+        log(
+            f"[WARN] DAILYINFO_FALLBACK_MODEL 形似 OpenRouter id（{model}）；"
+            "智谱官方端点会拒绝，请改用智谱模型名"
+        )
 
 
 def _post_ai(
@@ -197,6 +210,26 @@ def _post_ai(
     return resp.json()
 
 
+def _redact(text: str, secret: str) -> str:
+    """Replace a credential with a marker before it reaches the log."""
+    if secret and secret in text:
+        return text.replace(secret, "***")
+    return text
+
+
+def _http_error_detail(exc: requests.RequestException, secret: str) -> str:
+    """One-line error summary: credential scrubbed, 4xx body excerpted.
+
+    ``raise_for_status`` puts no response body in its message, so a rejected
+    model name would otherwise surface as a bare status code.
+    """
+    detail = str(exc)
+    body = (getattr(getattr(exc, "response", None), "text", "") or "").strip()
+    if body:
+        detail = f"{detail} body={body[:200]}"
+    return _redact(detail, secret)
+
+
 def _get_deepseek_key() -> str:
     """Load and cache the DeepSeek API key (exits if missing)."""
     global _DEEPSEEK_KEY_CACHE
@@ -206,6 +239,17 @@ def _get_deepseek_key() -> str:
 
 
 _DEEPSEEK_KEY_CACHE: str | None = None
+
+
+def _get_glm_key() -> str:
+    """Load and cache the Zhipu fallback key (empty string when unset)."""
+    global _GLM_KEY_CACHE
+    if _GLM_KEY_CACHE is None:
+        _GLM_KEY_CACHE = load_glm_key()
+    return _GLM_KEY_CACHE
+
+
+_GLM_KEY_CACHE: str | None = None
 
 
 def call_ai(
@@ -223,13 +267,17 @@ def call_ai(
     """
     fallback = _resolve_fallback_model(fallback_model)
     ds_key = _get_deepseek_key()
+    glm_key = _get_glm_key()
 
     # ── Primary: DeepSeek API ──────────────────────────────────────
     for i in range(3):
         try:
             data = _post_ai(DEEPSEEK_API_URL, ds_key, model, prompt, max_tokens)
         except requests.RequestException as exc:
-            log(f"  [call_ai] {model} attempt {i + 1}/3 http_error={exc}")
+            log(
+                f"  [call_ai] {model} attempt {i + 1}/3 "
+                f"http_error={_http_error_detail(exc, ds_key)}"
+            )
             time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
             continue
 
@@ -249,7 +297,7 @@ def call_ai(
         )
         time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
 
-    if not GLM_KEY:
+    if not glm_key:
         raise BriefingGenerationError(
             f"call_ai: primary {model} exhausted and fallback disabled "
             "(GLM_API_KEY not configured)"
@@ -262,14 +310,17 @@ def call_ai(
         try:
             data = _post_ai(
                 GLM_API_URL,
-                GLM_KEY,
+                glm_key,
                 fallback,
                 prompt,
                 max_tokens,
                 extra_body=GLM_REASONING_LOW,
             )
         except requests.RequestException as exc:
-            log(f"  [call_ai] {fallback} attempt {i + 1}/2 http_error={exc}")
+            log(
+                f"  [call_ai] {fallback} attempt {i + 1}/2 "
+                f"http_error={_http_error_detail(exc, glm_key)}"
+            )
             time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
             continue
 
@@ -1111,10 +1162,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    global GLM_KEY, FORCE_ALL, FORCE_SOURCES
-    GLM_KEY = load_glm_key()
-    if not GLM_KEY:
+    global FORCE_ALL, FORCE_SOURCES
+    if not _get_glm_key():
         log("[WARN] 兜底已禁用：未配置 GLM_API_KEY")
+    _warn_if_fallback_looks_like_openrouter(_resolve_fallback_model(None))
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
     if FORCE_ALL or FORCE_SOURCES:

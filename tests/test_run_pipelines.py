@@ -385,7 +385,7 @@ def _install_call_ai_stubs(monkeypatch, responses, logs):
     """Queue ``responses`` for successive requests.post calls and capture logs."""
     import run_pipelines as rp
 
-    monkeypatch.setattr(rp, "GLM_KEY", "sk-test")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-test")
     monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-test-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
@@ -1180,7 +1180,6 @@ def test_load_deepseek_key_skips_placeholder_values(tmp_path, monkeypatch):
 def test_call_ai_uses_deepseek_primary_glm_fallback(monkeypatch):
     """Primary calls api.deepseek.com (3 tries), fallback calls open.bigmodel.cn."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
-    monkeypatch.setenv("GLM_API_KEY", "sk-glm")
 
     import run_pipelines as rp
 
@@ -1193,7 +1192,7 @@ def test_call_ai_uses_deepseek_primary_glm_fallback(monkeypatch):
             raise rp.requests.RequestException("deepseek transient error")
         return _StubAIResponse(content="glm fallback reply", finish_reason="stop")
 
-    monkeypatch.setattr(rp, "GLM_KEY", rp.load_glm_key())
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-glm")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
     monkeypatch.setattr(rp.requests, "post", fake_post)
@@ -1227,7 +1226,7 @@ def test_call_ai_skips_fallback_when_glm_key_missing(monkeypatch):
         call_urls.append(url)
         raise rp.requests.RequestException("deepseek transient error")
 
-    monkeypatch.setattr(rp, "GLM_KEY", "")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: None)
     monkeypatch.setattr(rp.requests, "post", fake_post)
@@ -1238,3 +1237,107 @@ def test_call_ai_skips_fallback_when_glm_key_missing(monkeypatch):
     assert "GLM_API_KEY not configured" in str(excinfo.value)
     assert len(call_urls) == 3, f"fallback must not fire, got {call_urls}"
     assert all("bigmodel.cn" not in u for u in call_urls)
+
+
+# ---------------------------------------------------------------------------
+# Credential loading — placeholder rejection on every source
+# ---------------------------------------------------------------------------
+
+
+def test_load_glm_key_rejects_env_placeholder(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # empty dir → no .env
+    monkeypatch.setenv("GLM_API_KEY", "your_glm_key_here")
+
+    assert rp.load_glm_key() == ""
+
+
+def test_load_deepseek_key_rejects_env_placeholder(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "your_api_key_here")
+
+    with pytest.raises(SystemExit):
+        rp.load_deepseek_key()
+
+
+# ---------------------------------------------------------------------------
+# Error logging — credential redaction and response-body excerpt
+# ---------------------------------------------------------------------------
+
+
+def test_redact_replaces_secret_and_tolerates_empty():
+    import run_pipelines as rp
+
+    assert rp._redact("bearer sk-secret rejected", "sk-secret") == "bearer *** rejected"
+    assert rp._redact("nothing to hide", "") == "nothing to hide"
+    assert rp._redact("nothing to hide", "sk-absent") == "nothing to hide"
+
+
+def test_http_error_detail_includes_response_body():
+    import run_pipelines as rp
+
+    class _FakeResponse:
+        text = '{"error": {"message": "model not found"}}'
+
+    exc = rp.requests.HTTPError("400 Client Error")
+    exc.response = _FakeResponse()
+
+    detail = rp._http_error_detail(exc, "sk-secret")
+
+    assert "400 Client Error" in detail
+    assert "model not found" in detail
+
+
+def test_call_ai_redacts_credential_from_error_log(monkeypatch):
+    """A credential echoed inside an exception must never reach the log."""
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-super-secret")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    def fake_post(url, *args, **kwargs):
+        raise rp.requests.exceptions.InvalidHeader(
+            "Invalid leading whitespace, reserved character(s), or return "
+            "character(s) in header value: 'Bearer sk-super-secret'"
+        )
+
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    assert logs, "expected at least one logged attempt"
+    assert "sk-super-secret" not in "\n".join(logs)
+
+
+# ---------------------------------------------------------------------------
+# Fallback model id — migration warning
+# ---------------------------------------------------------------------------
+
+
+def test_warns_when_fallback_model_looks_like_openrouter(monkeypatch):
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    rp._warn_if_fallback_looks_like_openrouter("moonshotai/kimi-k2.5")
+
+    assert any("OpenRouter" in m for m in logs), logs
+
+
+def test_no_warning_for_native_glm_model(monkeypatch):
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    rp._warn_if_fallback_looks_like_openrouter("glm-5.3-flash")
+
+    assert logs == []
