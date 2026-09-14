@@ -24,9 +24,7 @@ import pytest
 # Point every .env lookup at a path that does not exist, before collection
 # imports anything that derives a constant from it. The fixture below repeats
 # this per test; doing it here too covers the imports that happen first.
-os.environ.setdefault(
-    "DAILYINFO_ENV_FILE", str(Path(__file__).parent / "no-such.env")
-)
+os.environ.setdefault("DAILYINFO_ENV_FILE", str(Path(__file__).parent / "no-such.env"))
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 SCRIPTS_DIR = REPO_ROOT / "scripts"

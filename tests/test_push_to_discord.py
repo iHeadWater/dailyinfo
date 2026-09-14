@@ -284,9 +284,7 @@ def test_send_error_log_redacts_the_bot_token(monkeypatch):
     monkeypatch.setattr(pd.time, "sleep", lambda *_: None)
 
     def boom(*args, **kwargs):
-        raise pd.requests.exceptions.InvalidHeader(
-            "header value: 'Bot sk-bot-secret'"
-        )
+        raise pd.requests.exceptions.InvalidHeader("header value: 'Bot sk-bot-secret'")
 
     monkeypatch.setattr(pd.requests, "post", boom)
 
