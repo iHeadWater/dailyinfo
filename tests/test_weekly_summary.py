@@ -356,3 +356,53 @@ class TestCollectWeekBriefings:
         assert len(result) == 1
         # Should keep briefings/ version (scanned first)
         assert result[0][1] == content_b
+
+
+# ---------------------------------------------------------------------------
+# Credential handling — the same rules the pipeline loaders follow
+# ---------------------------------------------------------------------------
+
+
+def test_load_deepseek_key_rejects_the_shipped_placeholder(tmp_path, monkeypatch):
+    import weekly_summary as ws
+
+    env = tmp_path / ".env"
+    env.write_text("DEEPSEEK_API_KEY=sk-your_deepseek_key_here\n", encoding="utf-8")
+    monkeypatch.setattr(ws, "ENV_PATH", env)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit):
+        ws._load_deepseek_key()
+
+
+def test_load_deepseek_key_rejects_an_env_placeholder(tmp_path, monkeypatch):
+    import weekly_summary as ws
+
+    monkeypatch.setattr(ws, "ENV_PATH", tmp_path / ".env")  # absent
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-your_deepseek_key_here")
+
+    with pytest.raises(SystemExit):
+        ws._load_deepseek_key()
+
+
+def test_call_deepseek_redacts_the_credential(monkeypatch):
+    import weekly_summary as ws
+
+    logs: list[str] = []
+    monkeypatch.setattr(ws, "_load_deepseek_key", lambda: "sk-super-secret")
+    monkeypatch.setattr(ws.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(ws, "log", lambda msg: logs.append(msg))
+
+    def boom(*args, **kwargs):
+        raise ws.requests.exceptions.InvalidHeader(
+            "header value: 'Bearer sk-super-secret'"
+        )
+
+    monkeypatch.setattr(ws.requests, "post", boom)
+
+    with pytest.raises(RuntimeError):
+        ws.call_deepseek("prompt")
+
+    joined = "\n".join(logs)
+    assert [m for m in logs if "attempt 1/3" in m], logs
+    assert "sk-super-secret" not in joined, joined

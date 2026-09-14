@@ -16,6 +16,8 @@ import sys
 import time
 import urllib.request
 
+from logsafe import one_line
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 
@@ -49,6 +51,19 @@ def load_env(key):
                 if line.startswith(f"{key}="):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
     return os.environ.get(key, "")
+
+
+def _generate_briefing(name, prompt, api_key):
+    """Generate one briefing, logging and swallowing a failure.
+
+    Split out so the failure path -- which must not print the credential --
+    is reachable from a test.
+    """
+    try:
+        return call_ai(prompt, api_key)
+    except Exception as e:
+        log(f"  {name}: AI call failed: {one_line(str(e), api_key)}")
+        return None
 
 
 def call_ai(prompt, api_key, model="deepseek-flash", max_tokens=1500):
@@ -137,12 +152,12 @@ def main():
     args = parser.parse_args()
 
     api_key = load_env("DEEPSEEK_API_KEY")
-    if not api_key or api_key.startswith("your_"):
+    if not api_key or "your_" in api_key:
         log("ERROR: DEEPSEEK_API_KEY not set in .env")
         sys.exit(1)
 
     discord_token = load_env("DISCORD_BOT_TOKEN")
-    if not discord_token or discord_token.startswith("your_"):
+    if not discord_token or "your_" in discord_token:
         log("ERROR: DISCORD_BOT_TOKEN not set in .env")
         sys.exit(1)
 
@@ -223,10 +238,8 @@ def main():
             .replace("{date}", today)
         )
 
-        try:
-            briefing = call_ai(prompt, api_key)
-        except Exception as e:
-            log(f"  {name}: AI call failed: {e}")
+        briefing = _generate_briefing(name, prompt, api_key)
+        if briefing is None:
             continue
 
         header = f"> 📬 **补推** | {display_name} {label}（{date_range_start} ~ {date_range_end}）\n\n"

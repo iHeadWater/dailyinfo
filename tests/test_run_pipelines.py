@@ -107,6 +107,27 @@ def test_get_freshrss_user_falls_back_to_env_user(tmp_path, monkeypatch):
     assert rp._get_freshrss_user() == "fallback-user"
 
 
+def test_resolve_fallback_model_reads_the_dotenv_file(tmp_path, monkeypatch):
+    """.env.example presents this as a .env entry, so .env must be honoured."""
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DAILYINFO_FALLBACK_MODEL=glm-from-dotenv\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DAILYINFO_FALLBACK_MODEL", raising=False)
+
+    assert rp._resolve_fallback_model(None) == "glm-from-dotenv"
+
+
+def test_resolve_fallback_model_prefers_the_environment(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DAILYINFO_FALLBACK_MODEL=glm-from-dotenv\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DAILYINFO_FALLBACK_MODEL", "glm-from-env")
+
+    assert rp._resolve_fallback_model(None) == "glm-from-env"
+
+
 def test_load_glm_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
     import run_pipelines as rp
 
@@ -1333,111 +1354,6 @@ def test_manual_parse_reads_the_glm_value_not_the_whole_line(tmp_path, monkeypat
 # ---------------------------------------------------------------------------
 # Error logging — credential redaction and response-body excerpt
 # ---------------------------------------------------------------------------
-
-
-def test_redact_replaces_secret_and_tolerates_empty():
-    import run_pipelines as rp
-
-    assert rp._redact("bearer sk-secret rejected", "sk-secret") == "bearer *** rejected"
-    assert rp._redact("nothing to hide", "") == "nothing to hide"
-    assert rp._redact("nothing to hide", "sk-absent") == "nothing to hide"
-
-
-def test_redact_masks_provider_masked_key_tail():
-    """DeepSeek echoes 'Your api key: ****<last4>'; that must not survive either."""
-    import run_pipelines as rp
-
-    redacted = rp._redact("Your api key: ****abcd is invalid", "sk-0123456789abcd")
-
-    assert "****abcd" not in redacted, redacted
-
-
-def test_redact_masks_a_repeated_provider_tail_to_a_fixpoint():
-    """One pass turns ****abcdabcdabcd into ****abcdabcd -- the tail survives."""
-    import run_pipelines as rp
-
-    redacted = rp._redact("****abcdabcdabcd", "sk-0123456789abcd")
-
-    assert "abcd" not in redacted, redacted
-
-
-def test_http_error_detail_redacts_before_truncating():
-    """A secret straddling the 200-char cut must not survive as a prefix."""
-    import run_pipelines as rp
-
-    secret = "sk-AAAABBBBCCCCDDDDEEEEFFFF"
-    body = "x" * 190 + secret  # 10 chars of the secret fall inside body[:200]
-
-    class _FakeResponse:
-        text = body
-
-    exc = rp.requests.HTTPError("400 Client Error")
-    exc.response = _FakeResponse()
-
-    detail = rp._http_error_detail(exc, secret)
-
-    assert secret not in detail
-    assert "sk-AAAABBB" not in detail, detail
-
-
-def test_http_error_detail_keeps_output_on_one_line():
-    """A body with newlines must not be able to forge extra log lines."""
-    import run_pipelines as rp
-
-    class _FakeResponse:
-        text = "oops\n[WARN] forged line"
-
-    exc = rp.requests.HTTPError("400 Client Error")
-    exc.response = _FakeResponse()
-
-    detail = rp._http_error_detail(exc, "sk-secret")
-
-    assert "\n" not in detail, detail
-    assert len(detail.splitlines()) == 1, detail
-
-
-def test_http_error_detail_flattens_unicode_line_breaks():
-    """\\n and \\r are not the only line boundaries a body can carry."""
-    import run_pipelines as rp
-
-    class _FakeResponse:
-        text = "a\u2028[WARN] forged\x85next\u2029end"
-
-    exc = rp.requests.HTTPError("400 Client Error")
-    exc.response = _FakeResponse()
-
-    detail = rp._http_error_detail(exc, "sk-secret")
-
-    assert len(detail.splitlines()) == 1, detail
-
-
-def test_http_error_detail_survives_a_response_that_raises():
-    import run_pipelines as rp
-
-    class _ExplodingResponse:
-        @property
-        def text(self):
-            raise RuntimeError("body unavailable")
-
-    exc = rp.requests.HTTPError("400 Client Error")
-    exc.response = _ExplodingResponse()
-
-    assert "400 Client Error" in rp._http_error_detail(exc, "sk-secret")
-
-
-def test_http_error_detail_includes_response_body():
-    import run_pipelines as rp
-
-    class _FakeResponse:
-        text = '{"error": {"message": "model not found"}}'
-
-    exc = rp.requests.HTTPError("400 Client Error")
-    exc.response = _FakeResponse()
-
-    detail = rp._http_error_detail(exc, "sk-secret")
-
-    assert "400 Client Error" in detail
-    assert "model not found" in detail
 
 
 def test_call_ai_redacts_credential_from_error_log(monkeypatch):

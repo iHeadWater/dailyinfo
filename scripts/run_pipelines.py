@@ -24,6 +24,7 @@ import time
 import requests
 
 from datasource import DataSource, RSSDataSource, build_feed_url_map
+from logsafe import http_error_detail, one_line
 from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -168,10 +169,39 @@ class BriefingGenerationError(ValueError):
     """Raised when an AI response is empty, truncated, or structurally incomplete."""
 
 
+def _read_dotenv_value(name: str) -> str:
+    """Read one plain setting from ``.env``, or ``""`` when it is absent.
+
+    `.env.example` documents ``DAILYINFO_FALLBACK_MODEL`` as a .env entry, but
+    nothing injects .env into the environment -- reading ``os.environ`` alone
+    silently ignores what an operator configured there.
+    """
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    if not os.path.exists(env_path):
+        return ""
+    try:
+        from dotenv import dotenv_values
+
+        return dotenv_values(env_path).get(name, "") or ""
+    except ImportError:
+        prefix = f"{name}="
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith(prefix):
+                    continue
+                value = line[len(prefix) :].split("#", 1)[0].strip()
+                return value.strip('"').strip("'")
+    return ""
+
+
 def _resolve_fallback_model(explicit: str | None) -> str:
-    """Pick the fallback model: explicit arg > env override > built-in default."""
+    """Pick the fallback model: explicit arg > env > .env > built-in default."""
     return (
-        explicit or os.environ.get("DAILYINFO_FALLBACK_MODEL") or DEFAULT_FALLBACK_MODEL
+        explicit
+        or os.environ.get("DAILYINFO_FALLBACK_MODEL")
+        or _read_dotenv_value("DAILYINFO_FALLBACK_MODEL")
+        or DEFAULT_FALLBACK_MODEL
     )
 
 
@@ -220,49 +250,6 @@ def _post_ai(
     return resp.json()
 
 
-def _redact(text: str, secret: str) -> str:
-    """Replace a credential with a marker before it reaches the log."""
-    if not secret:
-        return text
-    if secret in text:
-        text = text.replace(secret, "***")
-    # Providers sometimes echo a masked tail: "Your api key: ****abcd is invalid".
-    # Repeat to a fixpoint -- one pass over "****abcdabcdabcd" leaves the tail.
-    if len(secret) >= 4:
-        # One linear pass. The loop this replaces was O(n^2) on a body shaped
-        # "****" + tail * n, which the provider can produce at will.
-        text = re.sub(r"\*{4}(?:" + re.escape(secret[-4:]) + r")+", "****", text)
-    return text
-
-
-def _one_line(text: str, secret: str) -> str:
-    """Redact a credential and flatten every line break into one log line.
-
-    ``splitlines`` covers the full set of boundaries (\\n, \\r, U+2028, U+2029,
-    U+0085, \\v, \\f), so a provider-controlled string cannot forge log lines.
-    """
-    return " ".join(_redact(text, secret).splitlines())
-
-
-def _http_error_detail(exc: requests.RequestException, secret: str) -> str:
-    """One-line error summary: credential scrubbed, 4xx body excerpted.
-
-    ``raise_for_status`` puts no response body in its message, so a rejected
-    model name would otherwise surface as a bare status code. The body is
-    redacted *before* it is cut, so a credential straddling the cut cannot
-    survive as a prefix, and newlines are flattened so a body cannot forge
-    extra log lines.
-    """
-    detail = str(exc)
-    try:
-        body = str(getattr(getattr(exc, "response", None), "text", "") or "").strip()
-    except Exception:  # an unreadable body must not hide the error itself
-        body = ""
-    if body:
-        detail = f"{detail} body={_redact(body, secret)[:200]}"
-    return _one_line(detail, secret)
-
-
 def _get_deepseek_key() -> str:
     """Load and cache the DeepSeek API key (exits if missing)."""
     global _DEEPSEEK_KEY_CACHE
@@ -309,7 +296,7 @@ def call_ai(
         except requests.RequestException as exc:
             log(
                 f"  [call_ai] {model} attempt {i + 1}/3 "
-                f"http_error={_http_error_detail(exc, ds_key)}"
+                f"http_error={http_error_detail(exc, ds_key)}"
             )
             time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
             continue
@@ -330,7 +317,7 @@ def call_ai(
         reason = str(choice.get("finish_reason") or error_message or "unknown")
         log(
             f"  [call_ai] {model} attempt {i + 1}/3 incomplete "
-            f"(finish_reason={_one_line(reason, ds_key)}, chars={len(content)})"
+            f"(finish_reason={one_line(reason, ds_key)}, chars={len(content)})"
         )
         time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
 
@@ -356,7 +343,7 @@ def call_ai(
         except requests.RequestException as exc:
             log(
                 f"  [call_ai] {fallback} attempt {i + 1}/2 "
-                f"http_error={_http_error_detail(exc, glm_key)}"
+                f"http_error={http_error_detail(exc, glm_key)}"
             )
             time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
             continue
@@ -377,7 +364,7 @@ def call_ai(
         reason = str(choice.get("finish_reason") or error_message or "unknown")
         log(
             f"  [call_ai] {fallback} attempt {i + 1}/2 incomplete "
-            f"(finish_reason={_one_line(reason, glm_key)}, chars={len(content)})"
+            f"(finish_reason={one_line(reason, glm_key)}, chars={len(content)})"
         )
         time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
 

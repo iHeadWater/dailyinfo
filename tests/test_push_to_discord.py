@@ -272,3 +272,25 @@ def test_send_to_discord_suppresses_all_mentions(monkeypatch):
     assert pd.send_to_discord("chan-123", "@everyone look at this") is True
     assert captured
     assert captured[0]["allowed_mentions"] == {"parse": []}
+
+
+def test_send_error_log_redacts_the_bot_token(monkeypatch):
+    """requests' InvalidHeader embeds the header value, i.e. the token."""
+    import push_to_discord as pd
+
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "DISCORD_BOT_TOKEN", "sk-bot-secret")
+    monkeypatch.setattr(pd, "log", lambda msg: logs.append(msg))
+    monkeypatch.setattr(pd.time, "sleep", lambda *_: None)
+
+    def boom(*args, **kwargs):
+        raise pd.requests.exceptions.InvalidHeader(
+            "header value: 'Bot sk-bot-secret'"
+        )
+
+    monkeypatch.setattr(pd.requests, "post", boom)
+
+    assert pd.send_to_discord("chan-1", "hello") is False
+
+    joined = "\n".join(logs)
+    assert "sk-bot-secret" not in joined, joined
