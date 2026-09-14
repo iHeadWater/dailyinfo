@@ -15,7 +15,6 @@ import re
 import requests
 
 # Providers sometimes echo a masked tail: "Your api key: ****abcd is invalid".
-_MASK_PREFIX = "****"
 _MASK = "****"
 
 # Longest provider-controlled excerpt that reaches a log line.

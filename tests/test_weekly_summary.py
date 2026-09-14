@@ -406,3 +406,58 @@ def test_call_deepseek_redacts_the_credential(monkeypatch):
     joined = "\n".join(logs)
     assert [m for m in logs if "attempt 1/3" in m], logs
     assert "sk-super-secret" not in joined, joined
+
+
+def test_load_deepseek_key_returns_a_real_env_key(tmp_path, monkeypatch):
+    """The negative tests above cannot tell "rejected" from "never returns"."""
+    import weekly_summary as ws
+
+    monkeypatch.setattr(ws, "ENV_PATH", tmp_path / ".env")  # absent
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-real-env")
+
+    assert ws._load_deepseek_key() == "sk-real-env"
+
+
+def test_load_deepseek_key_returns_a_real_dotenv_key(tmp_path, monkeypatch):
+    import weekly_summary as ws
+
+    env = tmp_path / ".env"
+    env.write_text("DEEPSEEK_API_KEY=sk-real-file\n", encoding="utf-8")
+    monkeypatch.setattr(ws, "ENV_PATH", env)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    assert ws._load_deepseek_key() == "sk-real-file"
+
+
+def test_call_deepseek_redacts_and_flattens_the_finish_reason(monkeypatch):
+    """The other of weekly's two log sites, which had no coverage."""
+    import weekly_summary as ws
+
+    logs: list[str] = []
+    monkeypatch.setattr(ws, "_load_deepseek_key", lambda: "sk-super-secret")
+    monkeypatch.setattr(ws.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(ws, "log", lambda msg: logs.append(msg))
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {"content": ""},
+                        "finish_reason": "sk-super-secret [WARN] forged",
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(ws.requests, "post", lambda *a, **k: _Resp())
+
+    with pytest.raises(RuntimeError):
+        ws.call_deepseek("prompt")
+
+    joined = "\n".join(logs)
+    assert "finish_reason=" in joined, logs
+    assert "sk-super-secret" not in joined, joined
+    assert all(len(m.splitlines()) == 1 for m in logs), logs

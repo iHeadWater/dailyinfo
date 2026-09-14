@@ -291,9 +291,10 @@ def test_resolve_fallback_model_env_override(monkeypatch):
     assert rp._resolve_fallback_model(None) == "from-env/model"
 
 
-def test_resolve_fallback_model_default(monkeypatch):
+def test_resolve_fallback_model_default(tmp_path, monkeypatch):
     import run_pipelines as rp
 
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # no .env to read
     monkeypatch.delenv("DAILYINFO_FALLBACK_MODEL", raising=False)
     assert rp._resolve_fallback_model(None) == rp.DEFAULT_FALLBACK_MODEL
 
@@ -1198,7 +1199,7 @@ def test_load_deepseek_key_skips_placeholder_values(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_call_ai_uses_deepseek_primary_glm_fallback(monkeypatch):
+def test_call_ai_uses_deepseek_primary_glm_fallback(tmp_path, monkeypatch):
     """Primary calls api.deepseek.com (3 tries), fallback calls open.bigmodel.cn."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
 
@@ -1213,6 +1214,7 @@ def test_call_ai_uses_deepseek_primary_glm_fallback(monkeypatch):
             raise rp.requests.RequestException("deepseek transient error")
         return _StubAIResponse(content="glm fallback reply", finish_reason="stop")
 
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # no .env to read
     monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-glm")
     monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)

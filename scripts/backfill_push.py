@@ -16,8 +16,6 @@ import sys
 import time
 import urllib.request
 
-from logsafe import one_line
-
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "scripts"))
 
@@ -53,12 +51,16 @@ def load_env(key):
     return os.environ.get(key, "")
 
 
-def _generate_briefing(name, prompt, api_key):
+def _generate_briefing(name: str, prompt: str, api_key: str) -> str | None:
     """Generate one briefing, logging and swallowing a failure.
 
     Split out so the failure path -- which must not print the credential --
-    is reachable from a test.
+    is reachable from a test. Imported locally for the same reason ``call_ai``
+    imports requests locally: the module's repo imports must follow the
+    sys.path insert above.
     """
+    from logsafe import one_line
+
     try:
         return call_ai(prompt, api_key)
     except Exception as e:
@@ -120,7 +122,11 @@ def discord_send(token, channel_id, content, dry_run=False):
                     log(f"  Discord error {resp.status} on chunk {i+1}")
                     return False
         except Exception as e:
-            log(f"  Discord send failed: {e}")
+            # http.client.putheader raises with the whole header value, so a
+            # token carrying a stray CR/LF prints itself without this.
+            from logsafe import one_line
+
+            log(f"  Discord send failed: {one_line(str(e), token)}")
             return False
         if i < len(chunks) - 1:
             time.sleep(1)
@@ -240,6 +246,7 @@ def main():
 
         briefing = _generate_briefing(name, prompt, api_key)
         if briefing is None:
+            log(f"  {name}: 跳过（无内容）")
             continue
 
         header = f"> 📬 **补推** | {display_name} {label}（{date_range_start} ~ {date_range_end}）\n\n"

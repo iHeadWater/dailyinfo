@@ -74,6 +74,19 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
         if name in sys.modules:
             importlib.reload(sys.modules[name])
 
+    # No module may read the developer's real .env. A value sitting there would
+    # otherwise change test outcomes -- and the operator who configures a
+    # feature in .env is exactly the one who would see the suite go red.
+    # Best-effort: modules not yet imported are pinned by the tests that use
+    # them (weekly_summary.ENV_PATH, for one).
+    for mod_name, attr, value in (
+        ("run_pipelines", "PROJECT_ROOT", str(tmp_path)),
+        ("push_to_discord", "PROJECT_ROOT", str(tmp_path)),
+    ):
+        mod = sys.modules.get(mod_name)
+        if mod is not None:
+            monkeypatch.setattr(mod, attr, value, raising=False)
+
     yield data_root
 
     # Drop cached modules so the next test imports cleanly under its own env.

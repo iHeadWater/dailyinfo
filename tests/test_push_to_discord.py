@@ -293,4 +293,7 @@ def test_send_error_log_redacts_the_bot_token(monkeypatch):
     assert pd.send_to_discord("chan-1", "hello") is False
 
     joined = "\n".join(logs)
+    # Assert something was logged, so deleting the log line cannot satisfy the
+    # absence check below by logging nothing.
+    assert any("发送错误" in m or "发送失败" in m for m in logs), logs
     assert "sk-bot-secret" not in joined, joined
