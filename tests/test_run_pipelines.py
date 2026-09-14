@@ -1598,3 +1598,16 @@ def test_call_ai_redacts_glm_credential_from_error_log(monkeypatch):
     # satisfy the absence check below by logging nothing.
     assert "attempt 1/2" in joined, joined
     assert "sk-glm-super-secret" not in joined, joined
+
+
+def test_read_dotenv_value_manual_branch(tmp_path, monkeypatch):
+    """The python-dotenv-free path, which had no coverage at all."""
+    import sys
+
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DAILYINFO_FALLBACK_MODEL=glm-manual\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setitem(sys.modules, "dotenv", None)
+
+    assert rp._read_dotenv_value("DAILYINFO_FALLBACK_MODEL") == "glm-manual"

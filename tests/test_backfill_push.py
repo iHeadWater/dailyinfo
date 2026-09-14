@@ -17,7 +17,7 @@ def test_ai_failure_is_logged_without_the_credential(monkeypatch):
     assert bp._generate_briefing("nature", "prompt", "sk-super-secret") is None
 
     joined = "\n".join(logs)
-    assert "AI call failed" in joined, logs
+    assert "auth header rejected" in joined, logs  # detail survived redaction
     assert "sk-super-secret" not in joined, joined
 
 
@@ -48,3 +48,18 @@ def test_discord_send_error_is_logged_without_the_token(monkeypatch):
     joined = "\n".join(logs)
     assert "Discord send failed" in joined, logs
     assert "sk-bot-secret" not in joined, joined
+
+
+def test_empty_generation_is_logged_as_skipped_not_as_a_failure(monkeypatch):
+    """None covers both a failure and a null content field; say which."""
+    import backfill_push as bp
+
+    logs: list[str] = []
+    monkeypatch.setattr(bp, "log", lambda msg: logs.append(msg))
+    monkeypatch.setattr(bp, "call_ai", lambda prompt, key: "")
+
+    assert bp._generate_briefing("nature", "prompt", "sk-key") is None
+
+    joined = "\n".join(logs)
+    assert "无内容" in joined, logs
+    assert "AI call failed" not in joined, logs

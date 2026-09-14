@@ -66,6 +66,12 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("DAILYINFO_ENV", "dev")
     monkeypatch.setenv("DISCORD_BOT_TOKEN", "test-token")
     monkeypatch.delenv("GLM_API_KEY", raising=False)
+    # Point paths.ENV_FILE at a file that does not exist, before anything
+    # derives a constant from it: a value in the developer's real .env would
+    # otherwise change test outcomes, and the operator who sets one -- the
+    # feature this branch adds, for one -- is exactly the one who would see
+    # the suite go red.
+    monkeypatch.setenv("DAILYINFO_ENV_FILE", str(tmp_path / "no-such.env"))
 
     import paths  # noqa: F401
 
@@ -74,14 +80,14 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
         if name in sys.modules:
             importlib.reload(sys.modules[name])
 
-    # No module may read the developer's real .env. A value sitting there would
-    # otherwise change test outcomes -- and the operator who configures a
-    # feature in .env is exactly the one who would see the suite go red.
-    # Best-effort: modules not yet imported are pinned by the tests that use
-    # them (weekly_summary.ENV_PATH, for one).
+    # The .env readers that build their own path from PROJECT_ROOT are not
+    # covered by DAILYINFO_ENV_FILE, so pin them too. A module can only be
+    # pinned once it is imported -- weekly_summary is imported at collection,
+    # the other two are reloaded just above.
     for mod_name, attr, value in (
         ("run_pipelines", "PROJECT_ROOT", str(tmp_path)),
         ("push_to_discord", "PROJECT_ROOT", str(tmp_path)),
+        ("weekly_summary", "ENV_PATH", tmp_path / "no-such.env"),
     ):
         mod = sys.modules.get(mod_name)
         if mod is not None:
@@ -89,9 +95,12 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
 
     yield data_root
 
-    # Drop cached modules so the next test imports cleanly under its own env.
-    for name in ("cli", "push_to_discord", "run_pipelines", "zotero_notebooklm"):
-        sys.modules.pop(name, None)
+    # Drop ``cli`` so the next test imports it under its own env. The other
+    # modules deliberately stay cached: the pins above only reach a module
+    # that is already in sys.modules, and popping them is what made an earlier
+    # version of this fixture silently do nothing. The reload loop at setup
+    # refreshes their constants instead.
+    sys.modules.pop("cli", None)
 
 
 @pytest.fixture

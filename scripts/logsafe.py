@@ -18,7 +18,7 @@ import requests
 _MASK = "****"
 
 # Longest provider-controlled excerpt that reaches a log line.
-_BODY_EXCERPT_CHARS = 200
+BODY_EXCERPT_CHARS = 200
 
 
 def redact(text: str, secret: str) -> str:
@@ -57,5 +57,5 @@ def http_error_detail(exc: requests.RequestException, secret: str) -> str:
     except Exception:  # an unreadable body must not hide the error itself
         body = ""
     if body:
-        detail = f"{detail} body={redact(body, secret)[:_BODY_EXCERPT_CHARS]}"
+        detail = f"{detail} body={redact(body, secret)[:BODY_EXCERPT_CHARS]}"
     return one_line(detail, secret)

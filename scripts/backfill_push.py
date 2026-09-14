@@ -62,10 +62,14 @@ def _generate_briefing(name: str, prompt: str, api_key: str) -> str | None:
     from logsafe import one_line
 
     try:
-        return call_ai(prompt, api_key)
+        content = call_ai(prompt, api_key)
     except Exception as e:
         log(f"  {name}: AI call failed: {one_line(str(e), api_key)}")
         return None
+    if not content:
+        log(f"  {name}: 跳过（无内容）")
+        return None
+    return content
 
 
 def call_ai(prompt, api_key, model="deepseek-flash", max_tokens=1500):
@@ -246,7 +250,6 @@ def main():
 
         briefing = _generate_briefing(name, prompt, api_key)
         if briefing is None:
-            log(f"  {name}: 跳过（无内容）")
             continue
 
         header = f"> 📬 **补推** | {display_name} {label}（{date_range_start} ~ {date_range_end}）\n\n"

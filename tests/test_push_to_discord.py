@@ -296,4 +296,5 @@ def test_send_error_log_redacts_the_bot_token(monkeypatch):
     # Assert something was logged, so deleting the log line cannot satisfy the
     # absence check below by logging nothing.
     assert any("发送错误" in m or "发送失败" in m for m in logs), logs
+    assert "header value" in joined, joined  # the detail survived redaction
     assert "sk-bot-secret" not in joined, joined

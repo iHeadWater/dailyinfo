@@ -8,7 +8,7 @@ from datetime import datetime
 import time
 import shutil
 
-from logsafe import one_line
+from logsafe import BODY_EXCERPT_CHARS, one_line
 from paths import BRIEFINGS_DIR, CURRENT_ENV, PUSHED_DIR, STATE_DIR, get_channel_id
 
 DISCORD_API = "https://discord.com/api/v10"
@@ -197,7 +197,10 @@ def _post_single_message(channel_id, headers, data, chunk_index):
                 time.sleep(wait)
                 last_err = "429 rate limit"
                 continue
-            log(f"  ❌ 第 {chunk_index} 部分发送失败: {resp.status_code} - {resp.text}")
+            log(
+                f"  ❌ 第 {chunk_index} 部分发送失败: {resp.status_code} - "
+                f"{one_line(resp.text, DISCORD_BOT_TOKEN)[:BODY_EXCERPT_CHARS]}"
+            )
             return False
         except Exception as e:
             # Sanitised once here: requests' InvalidHeader embeds the whole
