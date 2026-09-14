@@ -229,9 +229,9 @@ def _redact(text: str, secret: str) -> str:
     # Providers sometimes echo a masked tail: "Your api key: ****abcd is invalid".
     # Repeat to a fixpoint -- one pass over "****abcdabcdabcd" leaves the tail.
     if len(secret) >= 4:
-        masked = "****" + secret[-4:]
-        while masked in text:
-            text = text.replace(masked, "****")
+        # One linear pass. The loop this replaces was O(n^2) on a body shaped
+        # "****" + tail * n, which the provider can produce at will.
+        text = re.sub(r"\*{4}(?:" + re.escape(secret[-4:]) + r")+", "****", text)
     return text
 
 
@@ -321,11 +321,13 @@ def call_ai(
         if content and finish_reason != "length":
             return content
 
-        # finish_reason is already coerced to "unknown" above, so reading it
-        # here would make the provider's own error message unreachable.
-        reason = choice.get("finish_reason") or (
-            (data.get("error") or {}).get("message") or "unknown"
-        )
+        # Read finish_reason raw: the coerced value above is already truthy, so
+        # using it here would make the provider's own error message
+        # unreachable. Both sides are coerced because a provider can return an
+        # int or a non-dict error, and this string ends up in a log line.
+        error = data.get("error")
+        error_message = error.get("message") if isinstance(error, dict) else error
+        reason = str(choice.get("finish_reason") or error_message or "unknown")
         log(
             f"  [call_ai] {model} attempt {i + 1}/3 incomplete "
             f"(finish_reason={_one_line(reason, ds_key)}, chars={len(content)})"
@@ -366,11 +368,13 @@ def call_ai(
         if content and finish_reason != "length":
             return content
 
-        # finish_reason is already coerced to "unknown" above, so reading it
-        # here would make the provider's own error message unreachable.
-        reason = choice.get("finish_reason") or (
-            (data.get("error") or {}).get("message") or "unknown"
-        )
+        # Read finish_reason raw: the coerced value above is already truthy, so
+        # using it here would make the provider's own error message
+        # unreachable. Both sides are coerced because a provider can return an
+        # int or a non-dict error, and this string ends up in a log line.
+        error = data.get("error")
+        error_message = error.get("message") if isinstance(error, dict) else error
+        reason = str(choice.get("finish_reason") or error_message or "unknown")
         log(
             f"  [call_ai] {fallback} attempt {i + 1}/2 incomplete "
             f"(finish_reason={_one_line(reason, glm_key)}, chars={len(content)})"

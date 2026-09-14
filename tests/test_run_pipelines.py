@@ -1282,7 +1282,7 @@ def test_load_glm_key_rejects_dotenv_placeholder(tmp_path, monkeypatch):
     """The same rejection, reached through the .env branch."""
     import run_pipelines as rp
 
-    _write_env(tmp_path, "GLM_API_KEY=your_glm_key_here\n")
+    _write_env(tmp_path, "GLM_API_KEY=sk-your_glm_key_here\n")
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
     monkeypatch.delenv("GLM_API_KEY", raising=False)
 
@@ -1541,7 +1541,7 @@ def test_call_ai_redacts_the_provider_supplied_finish_reason(monkeypatch):
         rp.requests,
         "post",
         lambda *a, **k: _StubAIResponse(
-            content="", finish_reason="sk-super-secret\\u2028[WARN] forged"
+            content="", finish_reason="sk-super-secret\u2028[WARN] forged"
         ),
     )
 
@@ -1552,6 +1552,103 @@ def test_call_ai_redacts_the_provider_supplied_finish_reason(monkeypatch):
     assert "finish_reason=" in joined, joined
     assert "sk-super-secret" not in joined, joined
     assert all(len(m.splitlines()) == 1 for m in logs), logs
+
+
+def test_call_ai_redacts_and_flattens_the_fallback_finish_reason(monkeypatch):
+    """The fallback loop's incomplete-response log is its own site."""
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-glm-secret")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    def fake_post(url, *args, **kwargs):
+        if "deepseek" in url:
+            raise rp.requests.RequestException("deepseek transient error")
+        return _StubAIResponse(
+            content="", finish_reason="sk-glm-secret [WARN] forged"
+        )
+
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    joined = "\n".join(logs)
+    assert "attempt 1/2" in joined, joined
+    assert "sk-glm-secret" not in joined, joined
+    assert all(len(m.splitlines()) == 1 for m in logs), logs
+
+
+def test_call_ai_logs_the_provider_error_message_without_a_finish_reason(
+    monkeypatch,
+):
+    """That branch was dead while finish_reason was pre-coerced to "unknown"."""
+    import run_pipelines as rp
+
+    class _Raw:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": ""}}],
+                "error": {"message": "model not found"},
+            }
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg, _l=logs: _l.append(msg))
+    monkeypatch.setattr(rp.requests, "post", lambda *a, **k: _Raw())
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    assert "finish_reason=model not found" in "\n".join(logs), logs
+
+
+def test_call_ai_survives_a_malformed_provider_response(monkeypatch):
+    """A provider can return a non-string finish_reason or a non-dict error.
+
+    These fields feed the log line, so a bad type must not abort the call on
+    its first attempt -- the retry ladder and the fallback still have a job.
+    """
+    import run_pipelines as rp
+
+    class _Raw:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    payloads = [
+        {"choices": [{"message": {"content": ""}, "finish_reason": 7}]},
+        {"choices": [{"message": {"content": ""}}], "error": "boom"},
+        {"choices": [{"message": {"content": ""}}], "error": {"message": 12345}},
+    ]
+
+    for payload in payloads:
+        logs: list[str] = []
+        monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+        monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+        monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(rp, "log", lambda msg, _l=logs: _l.append(msg))
+        monkeypatch.setattr(
+            rp.requests, "post", lambda *a, _p=payload, **k: _Raw(_p)
+        )
+
+        with pytest.raises(ValueError):  # not TypeError/AttributeError
+            rp.call_ai("prompt")
+
+        assert logs, payload
 
 
 def test_call_ai_redacts_glm_credential_from_error_log(monkeypatch):
