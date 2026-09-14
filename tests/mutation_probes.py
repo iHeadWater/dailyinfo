@@ -90,6 +90,19 @@ PROBES: tuple[Probe, ...] = (
             "::test_empty_generation_is_logged_as_skipped_not_as_a_failure"
         ),
     ),
+    Probe(
+        # The default batch size never reached the sources, so each one sent
+        # its whole article list in a single AI call. Found by running the
+        # real pipeline, not by any unit test -- which is why it gets a pin.
+        label="the documented batch size reaches a source that does not set one",
+        path="scripts/datasource.py",
+        old="        merged = {**defaults, **config}",
+        new="        merged = dict(config)",
+        test=(
+            "tests/test_datasource_rss.py"
+            "::test_get_batches_honours_the_default_batch_size"
+        ),
+    ),
 )
 
 
