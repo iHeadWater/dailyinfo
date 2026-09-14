@@ -111,8 +111,13 @@ def load_glm_key() -> str:
             with open(env_path) as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("GLM_API_KEY=") and "your_" not in line:
-                        return line.split("=", 1)[1].strip()
+                    if not line.startswith("GLM_API_KEY="):
+                        continue
+                    # Test the value, not the line: a real key may be trailed
+                    # by a comment that happens to mention "your_".
+                    value = line.split("=", 1)[1].split("#", 1)[0].strip()
+                    if value and "your_" not in value:
+                        return value
     key = os.environ.get("GLM_API_KEY", "")
     if key and "your_" not in key:
         return key
@@ -132,8 +137,13 @@ def load_deepseek_key() -> str:
             with open(env_path) as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("DEEPSEEK_API_KEY=") and "your_" not in line:
-                        return line.split("=", 1)[1].strip()
+                    if not line.startswith("DEEPSEEK_API_KEY="):
+                        continue
+                    # Test the value, not the line: a real key may be trailed
+                    # by a comment that happens to mention "your_".
+                    value = line.split("=", 1)[1].split("#", 1)[0].strip()
+                    if value and "your_" not in value:
+                        return value
     key = os.environ.get("DEEPSEEK_API_KEY", "")
     if key and "your_" not in key:
         return key
@@ -217,9 +227,21 @@ def _redact(text: str, secret: str) -> str:
     if secret in text:
         text = text.replace(secret, "***")
     # Providers sometimes echo a masked tail: "Your api key: ****abcd is invalid".
+    # Repeat to a fixpoint -- one pass over "****abcdabcdabcd" leaves the tail.
     if len(secret) >= 4:
-        text = text.replace("****" + secret[-4:], "****")
+        masked = "****" + secret[-4:]
+        while masked in text:
+            text = text.replace(masked, "****")
     return text
+
+
+def _one_line(text: str, secret: str) -> str:
+    """Redact a credential and flatten every line break into one log line.
+
+    ``splitlines`` covers the full set of boundaries (\\n, \\r, U+2028, U+2029,
+    U+0085, \\v, \\f), so a provider-controlled string cannot forge log lines.
+    """
+    return " ".join(_redact(text, secret).splitlines())
 
 
 def _http_error_detail(exc: requests.RequestException, secret: str) -> str:
@@ -238,7 +260,7 @@ def _http_error_detail(exc: requests.RequestException, secret: str) -> str:
         body = ""
     if body:
         detail = f"{detail} body={_redact(body, secret)[:200]}"
-    return _redact(detail, secret).replace("\n", " ").replace("\r", " ")
+    return _one_line(detail, secret)
 
 
 def _get_deepseek_key() -> str:
@@ -299,12 +321,14 @@ def call_ai(
         if content and finish_reason != "length":
             return content
 
-        reason = (
-            finish_reason or (data.get("error") or {}).get("message") or "empty"
+        # finish_reason is already coerced to "unknown" above, so reading it
+        # here would make the provider's own error message unreachable.
+        reason = choice.get("finish_reason") or (
+            (data.get("error") or {}).get("message") or "unknown"
         )
         log(
             f"  [call_ai] {model} attempt {i + 1}/3 incomplete "
-            f"(finish_reason={reason}, chars={len(content)})"
+            f"(finish_reason={_one_line(reason, ds_key)}, chars={len(content)})"
         )
         time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
 
@@ -342,12 +366,14 @@ def call_ai(
         if content and finish_reason != "length":
             return content
 
-        reason = (
-            finish_reason or (data.get("error") or {}).get("message") or "empty"
+        # finish_reason is already coerced to "unknown" above, so reading it
+        # here would make the provider's own error message unreachable.
+        reason = choice.get("finish_reason") or (
+            (data.get("error") or {}).get("message") or "unknown"
         )
         log(
             f"  [call_ai] {fallback} attempt {i + 1}/2 incomplete "
-            f"(finish_reason={reason}, chars={len(content)})"
+            f"(finish_reason={_one_line(reason, glm_key)}, chars={len(content)})"
         )
         time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
 

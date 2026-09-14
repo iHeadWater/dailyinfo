@@ -1278,6 +1278,58 @@ def test_load_deepseek_key_rejects_dotenv_placeholder(tmp_path, monkeypatch):
         rp.load_deepseek_key()
 
 
+def test_load_glm_key_rejects_dotenv_placeholder(tmp_path, monkeypatch):
+    """The same rejection, reached through the .env branch."""
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "GLM_API_KEY=your_glm_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+
+    assert rp.load_glm_key() == ""
+
+
+def test_load_glm_key_rejects_a_literal_that_only_contains_the_marker(
+    tmp_path, monkeypatch
+):
+    """The shipped GLM placeholder starts with your_, so it cannot tell the two
+    predicates apart. This literal only contains the marker -- and can."""
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # empty dir -> no .env
+    monkeypatch.setenv("GLM_API_KEY", "sk-your_glm_key_here")
+
+    assert rp.load_glm_key() == ""
+
+
+def test_manual_parse_reads_the_value_not_the_whole_line(tmp_path, monkeypatch):
+    """A real key trailed by a comment mentioning your_ must not be rejected."""
+    import sys
+
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DEEPSEEK_API_KEY=sk-real-value  # was your_api_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "dotenv", None)  # force the ImportError path
+
+    assert rp.load_deepseek_key() == "sk-real-value"
+
+
+def test_manual_parse_reads_the_glm_value_not_the_whole_line(tmp_path, monkeypatch):
+    """Same fix on the GLM loader, which has its own copy of the parser."""
+    import sys
+
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "GLM_API_KEY=sk-real-glm  # was your_glm_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "dotenv", None)
+
+    assert rp.load_glm_key() == "sk-real-glm"
+
+
 # ---------------------------------------------------------------------------
 # Error logging — credential redaction and response-body excerpt
 # ---------------------------------------------------------------------------
@@ -1298,6 +1350,15 @@ def test_redact_masks_provider_masked_key_tail():
     redacted = rp._redact("Your api key: ****abcd is invalid", "sk-0123456789abcd")
 
     assert "****abcd" not in redacted, redacted
+
+
+def test_redact_masks_a_repeated_provider_tail_to_a_fixpoint():
+    """One pass turns ****abcdabcdabcd into ****abcdabcd -- the tail survives."""
+    import run_pipelines as rp
+
+    redacted = rp._redact("****abcdabcdabcd", "sk-0123456789abcd")
+
+    assert "abcd" not in redacted, redacted
 
 
 def test_http_error_detail_redacts_before_truncating():
@@ -1332,6 +1393,22 @@ def test_http_error_detail_keeps_output_on_one_line():
     detail = rp._http_error_detail(exc, "sk-secret")
 
     assert "\n" not in detail, detail
+    assert len(detail.splitlines()) == 1, detail
+
+
+def test_http_error_detail_flattens_unicode_line_breaks():
+    """\\n and \\r are not the only line boundaries a body can carry."""
+    import run_pipelines as rp
+
+    class _FakeResponse:
+        text = "a\u2028[WARN] forged\x85next\u2029end"
+
+    exc = rp.requests.HTTPError("400 Client Error")
+    exc.response = _FakeResponse()
+
+    detail = rp._http_error_detail(exc, "sk-secret")
+
+    assert len(detail.splitlines()) == 1, detail
 
 
 def test_http_error_detail_survives_a_response_that_raises():
@@ -1416,14 +1493,15 @@ def test_no_warning_for_native_glm_model(monkeypatch):
 
 
 def test_main_wires_its_startup_warnings(monkeypatch):
-    """Pin the call sites: a helper nothing calls is a helper that does nothing."""
+    """Pin the call sites: a helper nothing calls is a helper that does nothing.
+
+    Both states of the key are exercised, so nesting one warning inside the
+    other's condition cannot pass.
+    """
     import sys
 
     import run_pipelines as rp
 
-    logs: list[str] = []
-    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
-    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
     monkeypatch.setattr(
         rp, "_resolve_fallback_model", lambda explicit: "moonshotai/kimi-k2.5"
     )
@@ -1437,11 +1515,43 @@ def test_main_wires_its_startup_warnings(monkeypatch):
         monkeypatch.setattr(rp, name, lambda: 0)
     monkeypatch.setattr(sys, "argv", ["run_pipelines.py", "--pipeline", "1"])
 
-    rp.main()
+    for key in ("", "sk-glm"):
+        logs: list[str] = []
+        monkeypatch.setattr(rp, "log", lambda msg, _l=logs: _l.append(msg))
+        monkeypatch.setattr(rp, "_get_glm_key", lambda k=key: k)
+
+        rp.main()
+
+        joined = "\n".join(logs)
+        assert "OpenRouter" in joined, (key, joined)
+        if not key:
+            assert "GLM_API_KEY" in joined, joined
+
+
+def test_call_ai_redacts_the_provider_supplied_finish_reason(monkeypatch):
+    """finish_reason is provider-controlled text and also reaches the log."""
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-super-secret")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+    monkeypatch.setattr(
+        rp.requests,
+        "post",
+        lambda *a, **k: _StubAIResponse(
+            content="", finish_reason="sk-super-secret\\u2028[WARN] forged"
+        ),
+    )
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
 
     joined = "\n".join(logs)
-    assert "GLM_API_KEY" in joined, joined
-    assert "OpenRouter" in joined, joined
+    assert "finish_reason=" in joined, joined
+    assert "sk-super-secret" not in joined, joined
+    assert all(len(m.splitlines()) == 1 for m in logs), logs
 
 
 def test_call_ai_redacts_glm_credential_from_error_log(monkeypatch):
@@ -1469,4 +1579,7 @@ def test_call_ai_redacts_glm_credential_from_error_log(monkeypatch):
 
     joined = "\n".join(logs)
     assert "switching to fallback" in joined
+    # Assert the attempt was logged at all, so deleting the log line cannot
+    # satisfy the absence check below by logging nothing.
+    assert "attempt 1/2" in joined, joined
     assert "sk-glm-super-secret" not in joined, joined
