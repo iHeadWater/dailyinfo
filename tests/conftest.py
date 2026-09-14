@@ -12,6 +12,7 @@ filesystem side effects never leak across tests or onto the developer's real
 from __future__ import annotations
 
 import importlib
+import os
 import sqlite3
 import sys
 import time
@@ -19,6 +20,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
+
+# Point every .env lookup at a path that does not exist, before collection
+# imports anything that derives a constant from it. The fixture below repeats
+# this per test; doing it here too covers the imports that happen first.
+os.environ.setdefault(
+    "DAILYINFO_ENV_FILE", str(Path(__file__).parent / "no-such.env")
+)
 
 REPO_ROOT = Path(__file__).parent.parent.resolve()
 SCRIPTS_DIR = REPO_ROOT / "scripts"
@@ -83,11 +91,16 @@ def tmp_data_root(tmp_path, monkeypatch) -> Path:
     # The .env readers that build their own path from PROJECT_ROOT are not
     # covered by DAILYINFO_ENV_FILE, so pin them too. A module can only be
     # pinned once it is imported -- weekly_summary is imported at collection,
-    # the other two are reloaded just above.
+    # the others are reloaded just above.
     for mod_name, attr, value in (
         ("run_pipelines", "PROJECT_ROOT", str(tmp_path)),
         ("push_to_discord", "PROJECT_ROOT", str(tmp_path)),
+        ("backfill_push", "PROJECT_ROOT", str(tmp_path)),
         ("weekly_summary", "ENV_PATH", tmp_path / "no-such.env"),
+        # weekly_summary is not reloaded, so its copies of these stay bound to
+        # whatever paths derived at collection.
+        ("weekly_summary", "BRIEFINGS_DIR", paths.BRIEFINGS_DIR),
+        ("weekly_summary", "PUSHED_DIR", paths.PUSHED_DIR),
     ):
         mod = sys.modules.get(mod_name)
         if mod is not None:

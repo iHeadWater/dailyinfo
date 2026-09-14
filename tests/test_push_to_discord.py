@@ -298,3 +298,28 @@ def test_send_error_log_redacts_the_bot_token(monkeypatch):
     assert any("发送错误" in m or "发送失败" in m for m in logs), logs
     assert "header value" in joined, joined  # the detail survived redaction
     assert "sk-bot-secret" not in joined, joined
+
+
+def test_send_failure_redacts_and_bounds_the_response_body(monkeypatch):
+    """Empty end-to-end evidence in the audit: a non-200 body is
+    provider-controlled and is the last unredacted string in this module."""
+    import push_to_discord as pd
+
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "DISCORD_BOT_TOKEN", "sk-bot-secret")
+    monkeypatch.setattr(pd, "log", lambda msg: logs.append(msg))
+    monkeypatch.setattr(pd.time, "sleep", lambda *_: None)
+
+    class _Resp:
+        status_code = 400
+        text = "token=sk-bot-secret\n[WARN] forged " + "x" * 300
+
+    monkeypatch.setattr(pd.requests, "post", lambda *a, **k: _Resp())
+
+    assert pd.send_to_discord("chan-1", "hello") is False
+
+    joined = "\n".join(logs)
+    assert "400" in joined, logs
+    assert "sk-bot-secret" not in joined, joined
+    assert "x" * 250 not in joined, joined  # body excerpt is bounded
+    assert all(len(m.splitlines()) == 1 for m in logs), logs
