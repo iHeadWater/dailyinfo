@@ -104,6 +104,7 @@ Each pipeline is independent — a failure in one does not affect the others. Co
 - **AI fallback**: 3 retries with exponential backoff (2s/5s/10s), then switches to fallback model for 2 more attempts
 - **Batch splitting**: `max_articles_per_batch=10` (default); incomplete AI responses trigger recursive halving
 - **Tolerant feed matching**: `resolve_feed_id` tries exact URL -> strip query params -> strip scheme+trailing slash
+- **Log redaction**: `logsafe.py` is the single place deciding what a log line may contain — a provider's 401 body can echo a masked key tail, and `requests`' `InvalidHeader` embeds the whole header value. Four scripts share it; never format an exception into a log line by hand.
 
 ## Source Configuration
 
@@ -147,6 +148,13 @@ clean tree — it edits files and restores them.
 CI also runs the whole suite a second time against a generated decoy `.env`
 (`tests/decoy_env.py`), because CI has no `.env` and therefore never noticed
 that a value there could change test outcomes.
+
+`tests/check_providers.py` exercises both halves of the model chain against the
+live APIs — manual, never CI, because it spends real credentials and real money.
+Run it after any change to the model configuration
+(`uv run python tests/check_providers.py`). Each check asserts *which* provider
+answered: the fallback's output is indistinguishable from the primary's, so a
+returned string proves nothing on its own.
 
 ## Agent skills
 
