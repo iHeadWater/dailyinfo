@@ -78,8 +78,7 @@ def _write_env(tmp_path, contents: str):
 def test_get_freshrss_user_reads_env_file(tmp_path, monkeypatch):
     import run_pipelines as rp
 
-    _write_env(tmp_path, "FRESHRSS_USER=alice\n")
-    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(rp, "ENV_FILE", _write_env(tmp_path, "FRESHRSS_USER=alice\n"))
 
     assert rp._get_freshrss_user() == "alice"
 
@@ -107,42 +106,63 @@ def test_get_freshrss_user_falls_back_to_env_user(tmp_path, monkeypatch):
     assert rp._get_freshrss_user() == "fallback-user"
 
 
-def test_load_api_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
+def test_resolve_fallback_model_reads_the_dotenv_file(tmp_path, monkeypatch):
+    """.env.example presents this as a .env entry, so .env must be honoured."""
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DAILYINFO_FALLBACK_MODEL=glm-from-dotenv\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DAILYINFO_FALLBACK_MODEL", raising=False)
+
+    assert rp._resolve_fallback_model(None) == "glm-from-dotenv"
+
+
+def test_resolve_fallback_model_prefers_the_environment(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DAILYINFO_FALLBACK_MODEL=glm-from-dotenv\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DAILYINFO_FALLBACK_MODEL", "glm-from-env")
+
+    assert rp._resolve_fallback_model(None) == "glm-from-env"
+
+
+def test_load_glm_key_from_env_var_when_no_dotenv(tmp_path, monkeypatch):
     import run_pipelines as rp
 
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # empty dir → no .env
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-env")
+    monkeypatch.setenv("GLM_API_KEY", "sk-test-env")
 
-    assert rp.load_api_key() == "sk-test-env"
+    assert rp.load_glm_key() == "sk-test-env"
 
 
-def test_load_api_key_returns_empty_when_missing(tmp_path, monkeypatch):
+def test_load_glm_key_returns_empty_when_missing(tmp_path, monkeypatch):
     import run_pipelines as rp
 
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
 
-    assert rp.load_api_key() == ""
+    assert rp.load_glm_key() == ""
 
 
-def test_load_api_key_prefers_dotenv_over_env(tmp_path, monkeypatch):
+def test_load_glm_key_prefers_dotenv_over_env(tmp_path, monkeypatch):
     import run_pipelines as rp
 
-    _write_env(tmp_path, "OPENROUTER_API_KEY=sk-from-dotenv\n")
+    _write_env(tmp_path, "GLM_API_KEY=sk-from-dotenv\n")
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-from-env")
+    monkeypatch.setenv("GLM_API_KEY", "sk-from-env")
 
-    assert rp.load_api_key() == "sk-from-dotenv"
+    assert rp.load_glm_key() == "sk-from-dotenv"
 
 
-def test_load_api_key_skips_placeholder_values(tmp_path, monkeypatch):
+def test_load_glm_key_skips_placeholder_values(tmp_path, monkeypatch):
     import run_pipelines as rp
 
-    _write_env(tmp_path, "OPENROUTER_API_KEY=your_api_key_here\n")
+    _write_env(tmp_path, "GLM_API_KEY=your_api_key_here\n")
     monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-real")
+    monkeypatch.setenv("GLM_API_KEY", "sk-real")
 
-    assert rp.load_api_key() == "sk-real"
+    assert rp.load_glm_key() == "sk-real"
 
 
 def test_has_real_briefing_today_detects_existing_content():
@@ -270,9 +290,10 @@ def test_resolve_fallback_model_env_override(monkeypatch):
     assert rp._resolve_fallback_model(None) == "from-env/model"
 
 
-def test_resolve_fallback_model_default(monkeypatch):
+def test_resolve_fallback_model_default(tmp_path, monkeypatch):
     import run_pipelines as rp
 
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # no .env to read
     monkeypatch.delenv("DAILYINFO_FALLBACK_MODEL", raising=False)
     assert rp._resolve_fallback_model(None) == rp.DEFAULT_FALLBACK_MODEL
 
@@ -362,7 +383,7 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
 
 
 class _StubAIResponse:
-    """Tiny stand-in for OpenRouter JSON responses used by call_ai tests."""
+    """Tiny stand-in for Zhipu GLM JSON responses used by call_ai tests."""
 
     def __init__(self, content: str = "", finish_reason: str = "stop"):
         self._payload = {
@@ -385,7 +406,7 @@ def _install_call_ai_stubs(monkeypatch, responses, logs):
     """Queue ``responses`` for successive requests.post calls and capture logs."""
     import run_pipelines as rp
 
-    monkeypatch.setattr(rp, "API_KEY", "sk-test")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-test")
     monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-test-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
@@ -1173,35 +1194,419 @@ def test_load_deepseek_key_skips_placeholder_values(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Dual-provider call_ai — DeepSeek primary, OpenRouter fallback
+# Dual-provider call_ai — DeepSeek primary, Zhipu GLM fallback
 # ---------------------------------------------------------------------------
 
 
-def test_call_ai_uses_deepseek_primary_openrouter_fallback(monkeypatch):
-    """Primary calls api.deepseek.com (3 tries), fallback calls openrouter.ai."""
+def test_call_ai_uses_deepseek_primary_glm_fallback(tmp_path, monkeypatch):
+    """Primary calls api.deepseek.com (3 tries), fallback calls open.bigmodel.cn."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or")
 
     import run_pipelines as rp
 
     logs: list[str] = []
-    call_urls: list[str] = []
+    calls: list[tuple[str, dict]] = []
 
     def fake_post(url, *args, **kwargs):
-        call_urls.append(url)
+        calls.append((url, kwargs.get("json") or {}))
         if "deepseek" in url:
             raise rp.requests.RequestException("deepseek transient error")
-        return _StubAIResponse(content="kimi fallback reply", finish_reason="stop")
+        return _StubAIResponse(content="glm fallback reply", finish_reason="stop")
 
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # no .env to read
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-glm")
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
     monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
     monkeypatch.setattr(rp.requests, "post", fake_post)
 
     result = rp.call_ai("summarise")
 
-    assert result == "kimi fallback reply"
-    deepseek_calls = [u for u in call_urls if "deepseek" in u]
-    openrouter_calls = [u for u in call_urls if "openrouter" in u]
-    assert len(deepseek_calls) == 3, f"expected 3 deepseek attempts, got {call_urls}"
-    assert len(openrouter_calls) == 1, f"expected 1 openrouter attempt, got {call_urls}"
+    assert result == "glm fallback reply"
+    deepseek_calls = [u for u, _ in calls if "deepseek" in u]
+    glm_calls = [(u, body) for u, body in calls if "bigmodel.cn" in u]
+    assert len(deepseek_calls) == 3, f"expected 3 deepseek attempts, got {calls}"
+    assert len(glm_calls) == 1, f"expected 1 glm attempt, got {calls}"
+    assert glm_calls[0][1]["model"] == "glm-5.3-flash", glm_calls[0][1]
+    # GLM always thinks and bills thinking against max_tokens — the fallback
+    # must ask for the cheap level; the primary must not receive the field.
+    assert glm_calls[0][1]["reasoning_effort"] == "low", glm_calls[0][1]
+    primary_bodies = [body for u, body in calls if "deepseek" in u]
+    assert all("reasoning_effort" not in b for b in primary_bodies), primary_bodies
     assert "switching to fallback" in "\n".join(logs)
+
+
+def test_call_ai_skips_fallback_when_glm_key_missing(monkeypatch):
+    """No GLM_API_KEY disables the fallback instead of firing a tokenless request."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-ds")
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+
+    import run_pipelines as rp
+
+    call_urls: list[str] = []
+
+    def fake_post(url, *args, **kwargs):
+        call_urls.append(url)
+        raise rp.requests.RequestException("deepseek transient error")
+
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: None)
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    with pytest.raises(ValueError) as excinfo:
+        rp.call_ai("summarise")
+
+    assert "GLM_API_KEY not configured" in str(excinfo.value)
+    assert len(call_urls) == 3, f"fallback must not fire, got {call_urls}"
+    assert all("bigmodel.cn" not in u for u in call_urls)
+
+
+# ---------------------------------------------------------------------------
+# Credential loading — placeholder rejection on every source
+# ---------------------------------------------------------------------------
+
+
+def test_load_glm_key_rejects_env_placeholder(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # empty dir → no .env
+    monkeypatch.setenv("GLM_API_KEY", "your_glm_key_here")
+
+    assert rp.load_glm_key() == ""
+
+
+def test_load_deepseek_key_rejects_env_placeholder(tmp_path, monkeypatch):
+    """The literal is the one .env.example actually ships, not a tidy variant."""
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-your_deepseek_key_here")
+
+    with pytest.raises(SystemExit):
+        rp.load_deepseek_key()
+
+
+def test_load_deepseek_key_rejects_dotenv_placeholder(tmp_path, monkeypatch):
+    """Same shipped literal, reached through the .env branch."""
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DEEPSEEK_API_KEY=sk-your_deepseek_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit):
+        rp.load_deepseek_key()
+
+
+def test_load_glm_key_rejects_dotenv_placeholder(tmp_path, monkeypatch):
+    """The same rejection, reached through the .env branch."""
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "GLM_API_KEY=sk-your_glm_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+
+    assert rp.load_glm_key() == ""
+
+
+def test_load_glm_key_rejects_a_literal_that_only_contains_the_marker(
+    tmp_path, monkeypatch
+):
+    """The shipped GLM placeholder starts with your_, so it cannot tell the two
+    predicates apart. This literal only contains the marker -- and can."""
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))  # empty dir -> no .env
+    monkeypatch.setenv("GLM_API_KEY", "sk-your_glm_key_here")
+
+    assert rp.load_glm_key() == ""
+
+
+def test_manual_parse_reads_the_value_not_the_whole_line(tmp_path, monkeypatch):
+    """A real key trailed by a comment mentioning your_ must not be rejected."""
+    import sys
+
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DEEPSEEK_API_KEY=sk-real-value  # was your_api_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "dotenv", None)  # force the ImportError path
+
+    assert rp.load_deepseek_key() == "sk-real-value"
+
+
+def test_manual_parse_reads_the_glm_value_not_the_whole_line(tmp_path, monkeypatch):
+    """Same fix on the GLM loader, which has its own copy of the parser."""
+    import sys
+
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "GLM_API_KEY=sk-real-glm  # was your_glm_key_here\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    monkeypatch.setitem(sys.modules, "dotenv", None)
+
+    assert rp.load_glm_key() == "sk-real-glm"
+
+
+# ---------------------------------------------------------------------------
+# Error logging — credential redaction and response-body excerpt
+# ---------------------------------------------------------------------------
+
+
+def test_call_ai_redacts_credential_from_error_log(monkeypatch):
+    """A credential echoed inside an exception must never reach the log."""
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-super-secret")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    def fake_post(url, *args, **kwargs):
+        raise rp.requests.exceptions.InvalidHeader(
+            "Invalid leading whitespace, reserved character(s), or return "
+            "character(s) in header value: 'Bearer sk-super-secret'"
+        )
+
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    assert logs, "expected at least one logged attempt"
+    assert "sk-super-secret" not in "\n".join(logs)
+
+
+# ---------------------------------------------------------------------------
+# Fallback model id — migration warning
+# ---------------------------------------------------------------------------
+
+
+def test_warns_when_fallback_model_looks_like_openrouter(monkeypatch):
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    rp._warn_if_fallback_looks_like_openrouter("moonshotai/kimi-k2.5")
+
+    assert any("OpenRouter" in m for m in logs), logs
+
+
+def test_no_warning_for_native_glm_model(monkeypatch):
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    rp._warn_if_fallback_looks_like_openrouter("glm-5.3-flash")
+
+    assert logs == []
+
+
+def test_main_wires_its_startup_warnings(monkeypatch):
+    """Pin the call sites: a helper nothing calls is a helper that does nothing.
+
+    Both states of the key are exercised, so nesting one warning inside the
+    other's condition cannot pass.
+    """
+    import sys
+
+    import run_pipelines as rp
+
+    monkeypatch.setattr(
+        rp, "_resolve_fallback_model", lambda explicit: "moonshotai/kimi-k2.5"
+    )
+    for name in (
+        "run_pipeline_papers",
+        "run_pipeline_ai_news",
+        "run_pipeline_arxiv",
+        "run_pipeline_code",
+        "run_pipeline_resource",
+    ):
+        monkeypatch.setattr(rp, name, lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["run_pipelines.py", "--pipeline", "1"])
+
+    for key in ("", "sk-glm"):
+        logs: list[str] = []
+        monkeypatch.setattr(rp, "log", lambda msg, _l=logs: _l.append(msg))
+        monkeypatch.setattr(rp, "_get_glm_key", lambda k=key: k)
+
+        rp.main()
+
+        joined = "\n".join(logs)
+        assert "OpenRouter" in joined, (key, joined)
+        if not key:
+            assert "GLM_API_KEY" in joined, joined
+
+
+def test_call_ai_redacts_the_provider_supplied_finish_reason(monkeypatch):
+    """finish_reason is provider-controlled text and also reaches the log."""
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-super-secret")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+    monkeypatch.setattr(
+        rp.requests,
+        "post",
+        lambda *a, **k: _StubAIResponse(
+            content="", finish_reason="sk-super-secret\u2028[WARN] forged"
+        ),
+    )
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    joined = "\n".join(logs)
+    assert "finish_reason=" in joined, joined
+    assert "sk-super-secret" not in joined, joined
+    assert all(len(m.splitlines()) == 1 for m in logs), logs
+
+
+def test_call_ai_redacts_and_flattens_the_fallback_finish_reason(monkeypatch):
+    """The fallback loop's incomplete-response log is its own site."""
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-glm-secret")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    def fake_post(url, *args, **kwargs):
+        if "deepseek" in url:
+            raise rp.requests.RequestException("deepseek transient error")
+        return _StubAIResponse(
+            content="", finish_reason="sk-glm-secret [WARN] forged"
+        )
+
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    joined = "\n".join(logs)
+    assert "attempt 1/2" in joined, joined
+    assert "sk-glm-secret" not in joined, joined
+    assert all(len(m.splitlines()) == 1 for m in logs), logs
+
+
+def test_call_ai_logs_the_provider_error_message_without_a_finish_reason(
+    monkeypatch,
+):
+    """That branch was dead while finish_reason was pre-coerced to "unknown"."""
+    import run_pipelines as rp
+
+    class _Raw:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{"message": {"content": ""}}],
+                "error": {"message": "model not found"},
+            }
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg, _l=logs: _l.append(msg))
+    monkeypatch.setattr(rp.requests, "post", lambda *a, **k: _Raw())
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    assert "finish_reason=model not found" in "\n".join(logs), logs
+
+
+def test_call_ai_survives_a_malformed_provider_response(monkeypatch):
+    """A provider can return a non-string finish_reason or a non-dict error.
+
+    These fields feed the log line, so a bad type must not abort the call on
+    its first attempt -- the retry ladder and the fallback still have a job.
+    """
+    import run_pipelines as rp
+
+    class _Raw:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    payloads = [
+        {"choices": [{"message": {"content": ""}, "finish_reason": 7}]},
+        {"choices": [{"message": {"content": ""}}], "error": "boom"},
+        {"choices": [{"message": {"content": ""}}], "error": {"message": 12345}},
+    ]
+
+    for payload in payloads:
+        logs: list[str] = []
+        monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+        monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
+        monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(rp, "log", lambda msg, _l=logs: _l.append(msg))
+        monkeypatch.setattr(
+            rp.requests, "post", lambda *a, _p=payload, **k: _Raw(_p)
+        )
+
+        with pytest.raises(ValueError):  # not TypeError/AttributeError
+            rp.call_ai("prompt")
+
+        assert logs, payload
+
+
+def test_call_ai_redacts_glm_credential_from_error_log(monkeypatch):
+    """The fallback loop guards the GLM key; that needs its own regression test."""
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-ds")
+    monkeypatch.setattr(rp, "_get_glm_key", lambda: "sk-glm-super-secret")
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
+
+    def fake_post(url, *args, **kwargs):
+        if "deepseek" in url:
+            raise rp.requests.RequestException("deepseek transient error")
+        raise rp.requests.exceptions.InvalidHeader(
+            "Invalid leading whitespace, reserved character(s), or return "
+            "character(s) in header value: 'Bearer sk-glm-super-secret'"
+        )
+
+    monkeypatch.setattr(rp.requests, "post", fake_post)
+
+    with pytest.raises(ValueError):
+        rp.call_ai("prompt")
+
+    joined = "\n".join(logs)
+    assert "switching to fallback" in joined
+    # Assert the attempt was logged at all, so deleting the log line cannot
+    # satisfy the absence check below by logging nothing.
+    assert "attempt 1/2" in joined, joined
+    assert "sk-glm-super-secret" not in joined, joined
+
+
+def test_read_dotenv_value_manual_branch(tmp_path, monkeypatch):
+    """The python-dotenv-free path, which had no coverage at all."""
+    import sys
+
+    import run_pipelines as rp
+
+    _write_env(tmp_path, "DAILYINFO_FALLBACK_MODEL=glm-manual\n")
+    monkeypatch.setattr(rp, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setitem(sys.modules, "dotenv", None)
+
+    assert rp._read_dotenv_value("DAILYINFO_FALLBACK_MODEL") == "glm-manual"

@@ -27,7 +27,7 @@ You wake up to a curated digest of everything relevant to your field — no feed
 | | |
 |---|---|
 | **Five pipelines** | Papers (30+ journals, including Chinese water-resources journals) · AI news · arXiv CS.AI (up to 500 preprints/day) · GitHub trending + HuggingFace models · University updates |
-| **Chinese-first briefings** | AI summaries in Chinese with automatic fallback to an OpenRouter model when the primary API fails |
+| **Chinese-first briefings** | AI summaries in Chinese with automatic fallback to a Zhipu GLM model when the primary API fails |
 | **Configuration-driven** | Add RSS, scrape, or API sources in `config/sources.json` — no code changes required |
 | **Idempotent & safe to rerun** | Sources with today's briefing are skipped; pushed files are never re-sent |
 | **Resilient** | Retries with exponential backoff, batch splitting on partial AI responses, per-source isolation |
@@ -132,9 +132,9 @@ dailyinfo push
 | `FRESHRSS_USER` | FreshRSS username |
 | `FRESHRSS_PASSWORD` | FreshRSS initial password |
 | `DAILYINFO_DATA_ROOT` | Override default data root |
-| `OPENROUTER_API_KEY` | OpenRouter API key (optional, used for fallback model) |
+| `GLM_API_KEY` | Zhipu GLM API key (optional, used for fallback model) |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) |
-| `DAILYINFO_FALLBACK_MODEL` | Fallback model when DeepSeek returns empty (default `moonshotai/kimi-k2.5`) |
+| `DAILYINFO_FALLBACK_MODEL` | Fallback model when DeepSeek returns empty (default `glm-5.3-flash`, a Zhipu model name) |
 
 ## Scheduling and Agents
 

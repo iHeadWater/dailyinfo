@@ -298,19 +298,29 @@ class DataSource(ABC):
 
     @staticmethod
     def create(config: dict, defaults: dict, **ctx) -> "DataSource":
-        """Factory: instantiate the correct subclass for config['type']."""
-        t = config.get("type") or config.get("source_type", "scrape")
+        """Factory: instantiate the correct subclass for config['type'].
+
+        The per-source config is layered over ``defaults`` before dispatch.
+        Subclasses read settings straight out of the dict they are handed --
+        ``max_articles_per_batch`` among them, from two different places -- so
+        a documented default that never reaches them is not a default. Every
+        source in config/sources.json relies on that default and none sets it,
+        which is how each one came to send its whole article list in a single
+        AI call and truncate.
+        """
+        merged = {**defaults, **config}
+        t = merged.get("type") or merged.get("source_type", "scrape")
         if t == "rss":
             return RSSDataSource(
-                config,
+                merged,
                 defaults,
                 db=ctx.get("db"),
                 full_map=ctx.get("full_map", {}),
                 base_map=ctx.get("base_map", {}),
             )
         if t == "api":
-            return APIDataSource(config, defaults)
-        return ScrapeDataSource(config, defaults)
+            return APIDataSource(merged, defaults)
+        return ScrapeDataSource(merged, defaults)
 
 
 # ---------------------------------------------------------------------------

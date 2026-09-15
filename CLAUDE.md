@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DailyInfo is an automated research intelligence aggregation and push system for AI for Science researchers. It collects RSS feeds, scrapes websites, and queries APIs, then uses DeepSeek V4 Pro (OpenRouter Kimi K2.5 as fallback) to generate Chinese-language summaries pushed to Discord channels.
+DailyInfo is an automated research intelligence aggregation and push system for AI for Science researchers. It collects RSS feeds, scrapes websites, and queries APIs, then uses DeepSeek (Zhipu GLM as fallback) to generate Chinese-language summaries pushed to Discord channels.
 
 **Core pipeline**: FreshRSS collection -> AI summary generation (markdown to disk) -> Discord push + archive
 
@@ -15,7 +15,7 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 - Python 3.10+, package manager: uv (primary) / pip (fallback)
 - CLI: Click 8+
 - RSS: FreshRSS (Docker/SQLite, `restart: always`, auto-start via myopenclaw launchd)
-- AI: DeepSeek V4 Pro official API (fallback: OpenRouter `moonshotai/kimi-k2.5`)
+- AI: DeepSeek official API, primary `deepseek-flash` (fallback: Zhipu official API `glm-5.3-flash`)
 - Push: Discord Bot API via `requests`
 - Docs: MkDocs Material (GitHub Pages)
 - Lint: Ruff, Format: Black, Test: pytest 8+
@@ -109,7 +109,7 @@ Each pipeline is independent — a failure in one does not affect the others. Co
 
 Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`.
 
-Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-v4-flash`.
+Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-flash`.
 
 Prompt templates under `prompt_templates` key use placeholders: `{count}`, `{display_name}`, `{article_list}`, `{items}`, `{date}`, `{content}`.
 
@@ -120,7 +120,7 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 ## Environment Variables
 
 Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`
-Optional: `OPENROUTER_API_KEY` (fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`
+Optional: `GLM_API_KEY` (Zhipu fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`, `DAILYINFO_ENV_FILE` (**test-only** — redirects every `.env` lookup; set only by `tests/conftest.py`)
 
 Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPERS_PATH`)已随 zotero_sync 迁移至 mylibrary,本仓库不再需要。
 
@@ -132,6 +132,21 @@ Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPER
 - `fake_call_ai` fixture stubs `run_pipelines.call_ai` with deterministic response, disables `time.sleep`
 - `rss_db` fixture provides in-memory SQLite with fresh/stale entry fixtures
 - Test files mirror source: `test_{module}.py` for `scripts/{module}.py`
+
+**Every fix lands with proof that its test can fail** — either a mutation
+(revert the fix, show the test go red) or a measured number. "The suite is
+green" is not verification: on the branch that introduced this rule, seven
+review rounds each found a fix that was unverified or did not do what its
+message said, and none of them were visible in a passing run.
+
+`tests/mutation_probes.py` holds the standing mutations and runs in CI
+(`.github/workflows/tests.yml`). Add a probe when you close a gap; the script
+fails loudly if an anchor moves rather than skipping silently. Run it from a
+clean tree — it edits files and restores them.
+
+CI also runs the whole suite a second time against a generated decoy `.env`
+(`tests/decoy_env.py`), because CI has no `.env` and therefore never noticed
+that a value there could change test outcomes.
 
 ## Agent skills
 

@@ -51,7 +51,28 @@ def load_env(key):
     return os.environ.get(key, "")
 
 
-def call_ai(prompt, api_key, model="deepseek-v4-flash", max_tokens=1500):
+def _generate_briefing(name: str, prompt: str, api_key: str) -> str | None:
+    """Generate one briefing, logging and swallowing a failure.
+
+    Split out so the failure path -- which must not print the credential --
+    is reachable from a test. Imported locally for the same reason ``call_ai``
+    imports requests locally: the module's repo imports must follow the
+    sys.path insert above.
+    """
+    from logsafe import one_line
+
+    try:
+        content = call_ai(prompt, api_key)
+    except Exception as e:
+        log(f"  {name}: AI call failed: {one_line(str(e), api_key)}")
+        return None
+    if not content:
+        log(f"  {name}: 跳过（无内容）")
+        return None
+    return content
+
+
+def call_ai(prompt, api_key, model="deepseek-flash", max_tokens=1500):
     import requests
 
     resp = requests.post(
@@ -105,7 +126,11 @@ def discord_send(token, channel_id, content, dry_run=False):
                     log(f"  Discord error {resp.status} on chunk {i+1}")
                     return False
         except Exception as e:
-            log(f"  Discord send failed: {e}")
+            # http.client.putheader raises with the whole header value, so a
+            # token carrying a stray CR/LF prints itself without this.
+            from logsafe import one_line
+
+            log(f"  Discord send failed: {one_line(str(e), token)}")
             return False
         if i < len(chunks) - 1:
             time.sleep(1)
@@ -137,12 +162,12 @@ def main():
     args = parser.parse_args()
 
     api_key = load_env("DEEPSEEK_API_KEY")
-    if not api_key or api_key.startswith("your_"):
+    if not api_key or "your_" in api_key:
         log("ERROR: DEEPSEEK_API_KEY not set in .env")
         sys.exit(1)
 
     discord_token = load_env("DISCORD_BOT_TOKEN")
-    if not discord_token or discord_token.startswith("your_"):
+    if not discord_token or "your_" in discord_token:
         log("ERROR: DISCORD_BOT_TOKEN not set in .env")
         sys.exit(1)
 
@@ -223,10 +248,8 @@ def main():
             .replace("{date}", today)
         )
 
-        try:
-            briefing = call_ai(prompt, api_key)
-        except Exception as e:
-            log(f"  {name}: AI call failed: {e}")
+        briefing = _generate_briefing(name, prompt, api_key)
+        if briefing is None:
             continue
 
         header = f"> 📬 **补推** | {display_name} {label}（{date_range_start} ~ {date_range_end}）\n\n"

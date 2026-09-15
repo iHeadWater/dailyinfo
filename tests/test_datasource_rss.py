@@ -123,6 +123,57 @@ def test_get_batches_splits_and_caps(rss_db):
     assert [len(b) for b in batches] == [2, 2, 2]
 
 
+def test_get_batches_honours_the_default_batch_size(rss_db):
+    """The documented default must reach a source that does not set its own.
+
+    Every source in config/sources.json relies on it -- none sets
+    max_articles_per_batch -- and the value never reached them, so each source
+    sent its entire article list in a single AI call.
+    """
+    from datasource import DataSource, Item, build_feed_url_map
+
+    full_map, base_map = build_feed_url_map(rss_db)
+    ds = DataSource.create(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+        },
+        {"lookback_hours": 24, "max_articles_per_batch": 4},
+        db=rss_db,
+        full_map=full_map,
+        base_map=base_map,
+    )
+
+    items = [Item(title=f"t{i}", date="2024-01-01") for i in range(10)]
+
+    assert [len(b) for b in ds.get_batches(items)] == [4, 4, 2]
+
+
+def test_a_source_still_overrides_the_default_batch_size(rss_db):
+    from datasource import DataSource, Item, build_feed_url_map
+
+    full_map, base_map = build_feed_url_map(rss_db)
+    ds = DataSource.create(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+            "max_articles_per_batch": 3,
+        },
+        {"lookback_hours": 24, "max_articles_per_batch": 4},
+        db=rss_db,
+        full_map=full_map,
+        base_map=base_map,
+    )
+
+    items = [Item(title=f"t{i}", date="2024-01-01") for i in range(10)]
+
+    assert [len(b) for b in ds.get_batches(items)] == [3, 3, 3, 1]
+
+
 def test_get_batches_without_limit_returns_single_batch(rss_db):
     from datasource import Item
 

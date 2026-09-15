@@ -40,7 +40,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 │  │  • Pipeline 4: Code trending → AI summary → briefings/code   │   │
 │  │  • Pipeline 5: University news → AI summary → briefings/res. │   │
 │  │                                                              │   │
-│  │  DeepSeek V4 Pro API (primary); OpenRouter fallback (kimi-k2.5)    │   │
+│  │  DeepSeek API (primary); Zhipu GLM fallback (glm-5.3-flash)  │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                         ▼ Markdown files                            │
 │                   ~/.myagentdata/dailyinfo/briefings/{category}/    │

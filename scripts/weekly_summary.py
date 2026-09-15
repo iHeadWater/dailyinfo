@@ -24,10 +24,11 @@ from pathlib import Path
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
+from logsafe import http_error_detail, one_line
 from paths import BRIEFINGS_DIR, PUSHED_DIR
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-DEEPSEEK_MODEL = "deepseek-v4-flash"
+DEEPSEEK_MODEL = "deepseek-flash"
 _BACKOFF_SECONDS = [2, 5, 10]
 
 # ── Data structures ──────────────────────────────────────────────────────────
@@ -67,16 +68,23 @@ def log(msg: str) -> None:
 # ── API key loading ──────────────────────────────────────────────────────────
 
 
+ENV_PATH = Path(__file__).parent.parent / ".env"
+
+
 def _load_deepseek_key() -> str:
     key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if key:
+    if key and "your_" not in key:
         return key
-    env_path = Path(__file__).parent.parent / ".env"
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
             line = line.strip()
-            if line.startswith("DEEPSEEK_API_KEY="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
+            if not line.startswith("DEEPSEEK_API_KEY="):
+                continue
+            value = (
+                line.split("=", 1)[1].split("#", 1)[0].strip().strip('"').strip("'")
+            )
+            if value and "your_" not in value:
+                return value
     log("ERROR: DEEPSEEK_API_KEY not found in .env or environment")
     sys.exit(1)
 
@@ -117,10 +125,14 @@ def call_deepseek(prompt: str, max_tokens: int = 4096) -> str:
                 return content
             log(
                 f"  [call_deepseek] attempt {i + 1}/3 incomplete "
-                f"(finish_reason={finish_reason}, chars={len(content)})"
+                f"(finish_reason={one_line(str(finish_reason), api_key)}, "
+                f"chars={len(content)})"
             )
         except requests.RequestException as exc:
-            log(f"  [call_deepseek] attempt {i + 1}/3 http_error={exc}")
+            log(
+                f"  [call_deepseek] attempt {i + 1}/3 "
+                f"http_error={http_error_detail(exc, api_key)}"
+            )
 
         if i < 2:
             time.sleep(_BACKOFF_SECONDS[i])
