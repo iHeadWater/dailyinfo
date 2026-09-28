@@ -76,7 +76,7 @@ uv run mkdocs serve              # Local preview
 | Pipeline | Sources | Output |
 |----------|---------|--------|
 | 1 | Papers (30+ journals, Chinese water journals via RSS + scrape/API) | `papers/` |
-| 2 | AI News (smolai via RSS with deep-content) | `ai_news/` |
+| 2 | AI News (Latent Space AINews via RSS with deep-content) | `ai_news/` |
 | 3 | arXiv CS.AI (RSS, up to 500 articles) | `arxiv/` |
 | 4 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
 | 5 | DLUT university sites (scrape + API) | `resource/` |
@@ -110,7 +110,7 @@ Each pipeline is independent — a failure in one does not affect the others. Co
 
 Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`.
 
-Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-flash`.
+Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-flash`, `max_content_chars: 12000` (plain-text cap for `use_content` sources; `>= 200`, truncation marker appended).
 
 Prompt templates under `prompt_templates` key use placeholders: `{count}`, `{display_name}`, `{article_list}`, `{items}`, `{date}`, `{content}`.
 

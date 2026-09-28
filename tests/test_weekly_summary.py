@@ -292,7 +292,7 @@ class TestEndToEnd:
             "%Y-%m-%d"
         )
         fixture_content = read_fixture("ai_news_2026-06-27.md")
-        (pushed_dir / f"smolai_news_briefing_{recent}.md").write_text(
+        (pushed_dir / f"latent_space_briefing_{recent}.md").write_text(
             fixture_content, encoding="utf-8"
         )
 

@@ -95,7 +95,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
 - **去重**：`lookback_hours > 24` 的低频源检查 `pushed/<category>/` 里的同名文件
 
 ### Pipeline 2: AI News
-- **Input**: FreshRSS SQLite DB (smolai via deep-content processing)
+- **Input**: FreshRSS SQLite DB (Latent Space AINews via deep-content processing)
 - **Output**: `briefings/ai_news/`
 
 ### Pipeline 3: arXiv CS.AI

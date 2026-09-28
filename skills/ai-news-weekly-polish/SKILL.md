@@ -203,13 +203,14 @@ Write to `weekly_recap_{DATE}_polished.md`. Preserve the HTML comment metadata l
 
 ```markdown
 ---
-> 📮 **信息来源**：本文基于 dailyinfo 每日 AI News 简报生成，原始新闻来自 [smol.ai](https://smol.ai) 的 AI 领域资讯聚合。关键事件细节经 WebSearch 交叉验证。数据截至本周日。
+> 📮 **信息来源**：本文基于 dailyinfo 每日 AI News 简报生成，原始新闻来自 [Latent Space](https://www.latent.space/) 的 AINews 日报。关键事件细节经 WebSearch 交叉验证。数据截至本周日。
 ```
 
 规则：
 - 放在文章最后，与其他内容用 `---` 分隔线隔开
 - 使用 `>` 引用块格式，视觉上与正文区分
 - 内容固定，不需要每期修改（日期除外，用"本周日"即可）
+- 来源名是**动态内容**：更换 ai_news 数据源时必须同步更新（见 `config/sources.json`），不要沿用旧来源名
 - 如果本期有 WebSearch 验证过的事件，可以加一句"本期对 {N} 个事件进行了交叉验证"（可选）
 - **不要**用"值得一提的是""值得注意的是"等套话包装这个脚注——它就是一段来源声明，不需要装饰
 
