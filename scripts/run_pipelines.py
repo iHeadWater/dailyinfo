@@ -166,6 +166,12 @@ DEFAULT_FALLBACK_MODEL = "glm-5.3-flash"
 # emitting any content. "low" is the cheapest level it accepts (low/high/max).
 GLM_REASONING_LOW = {"reasoning_effort": "low"}
 
+# Deep-content sources feed whole articles to a reasoning model whose
+# reasoning is billed against max_tokens -- a full AINews post measured
+# ~8.5k tokens before its first output token. Live-verified with a
+# production-size prompt against both the primary and the GLM fallback.
+_DEEP_CONTENT_MAX_TOKENS = 64000
+
 _BACKOFF_SECONDS = (2, 5, 10)
 
 
@@ -772,22 +778,23 @@ def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
     """
     name, category = ds.name, ds.category
     model = feed_cfg.get("model") or model_default
-    tmpl_key = feed_cfg.get("prompt_template", "smolai_categorized")
-    tmpl = templates.get(tmpl_key, "")
+    tmpl_key = feed_cfg.get("prompt_template")
+    tmpl = templates.get(tmpl_key, "") if tmpl_key else ""
+    if not tmpl:
+        log(f"  SKIP {name}: no prompt template")
+        return 0
     saved = 0
 
     committed_items: list = []
     failed_items: list = []
     for idx, item in enumerate(items := ds.fetch()):
-        prompt = (
-            tmpl.replace("{content}", item.content).replace("{date}", DATE)
-            if tmpl
-            else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
-        )
+        prompt = tmpl.replace("{content}", item.content).replace("{date}", DATE)
         suffix = f"_part{idx + 1}" if len(items) > 1 else ""
         filename = f"{name}_briefing_{DATE}{suffix}.md"
         try:
-            content_text = call_ai(prompt, model=model, max_tokens=2000)
+            content_text = call_ai(
+                prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS
+            )
             save(category, filename,
                  f"# AI Daily Digest - {DATE}\n\n{content_text}")
             saved += 1
@@ -801,13 +808,11 @@ def _process_deep_content_source(ds, feed_cfg: dict, model_default: str,
     if failed_items:
         log(f"    Phase 2: retrying {len(failed_items)} failed deep-content articles")
         for retry_idx, item in enumerate(failed_items, start=1):
-            prompt = (
-                tmpl.replace("{content}", item.content).replace("{date}", DATE)
-                if tmpl
-                else f"Summarize the following AI news in Chinese by category:\n\n{item.content}"
-            )
+            prompt = tmpl.replace("{content}", item.content).replace("{date}", DATE)
             try:
-                content_text = call_ai(prompt, model=model, max_tokens=3000)
+                content_text = call_ai(
+                    prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS
+                )
                 filename = f"{name}_briefing_{DATE}_retry{retry_idx}.md"
                 save(category, filename,
                      f"# AI Daily Digest - {DATE}\n\n{content_text}")
@@ -833,7 +838,7 @@ def _run_category_pipeline(category: str, *,
 
     Handles both RSS and non-RSS sources. If *create_marker* is True,
     the arXiv generation marker is created before processing and removed
-    in a finally block. If *deep_content* is True, the smolai use_content
+    in a finally block. If *deep_content* is True, the use_content
     path is used instead of the regular batched path.
     """
     cfg, defaults, templates = _load_sources()
