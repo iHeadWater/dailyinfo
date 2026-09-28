@@ -125,6 +125,35 @@ PROBES: tuple[Probe, ...] = (
         test="tests/test_run_pipelines.py"
         "::test_every_source_prompt_template_resolves",
     ),
+    Probe(
+        # Tolerant matching would treat the query-stripped base URL as the
+        # same feed; a section feed must be matched exactly.
+        label="subscription matching is exact, not query-stripped",
+        path="scripts/freshrss_admin.py",
+        old='"SELECT 1 FROM feed WHERE url = ?", [url]',
+        new='"SELECT 1 FROM feed WHERE url = ?", [url.split("?")[0]]',
+        test="tests/test_freshrss_admin.py"
+        "::test_ensure_subscription_ignores_query_stripped_variants",
+    ),
+    Probe(
+        # A helper nothing calls is a helper that does nothing: the wiring
+        # into the category pipeline needs its own pin.
+        label="the category run reaches the subscription sync",
+        path="scripts/run_pipelines.py",
+        old="    for name in _ensure_rss_subscriptions(cfg, db, category):",
+        new="    for name in []:",
+        test="tests/test_freshrss_admin.py"
+        "::test_a_category_run_subscribes_and_resolves_in_the_same_run",
+    ),
+    Probe(
+        # Without the commit the row is rolled back when the pipeline closes
+        # the connection: the log line still says "subscribed" every run.
+        label="a subscription is committed, not just inserted",
+        path="scripts/freshrss_admin.py",
+        old="    db.commit()\n",
+        new="",
+        test="tests/test_freshrss_admin.py::test_ensure_subscription_inserts_missing_feed",
+    ),
 )
 
 

@@ -112,6 +112,8 @@ Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories:
 
 Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-flash`, `max_content_chars: 12000` (plain-text cap for `use_content` sources; `>= 200`, truncation marker appended).
 
+RSS sources are auto-subscribed: the first pipeline run for a category inserts any missing FreshRSS subscription (`scripts/freshrss_admin.py`, exact-URL matching — never query-stripped), so adding an RSS source to `config/sources.json` is the whole of the setup (the first briefing still waits for one FreshRSS refresh cycle, i.e. the container's cron). An optional `freshrss_category` names the FreshRSS category for the new subscription (default: Uncategorized).
+
 Prompt templates under `prompt_templates` key use placeholders: `{count}`, `{display_name}`, `{article_list}`, `{items}`, `{date}`, `{content}`.
 
 API sources can specify a `parser` key (e.g. `"parser": "crossref"`) to select a custom response parser.

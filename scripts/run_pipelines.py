@@ -689,6 +689,55 @@ def _filter_sources(cfg: dict, category: str, *types: str) -> list[dict]:
     ]
 
 
+def _ensure_rss_subscriptions(cfg: dict, db, category: str) -> list[str]:
+    """Subscribe this category's enabled RSS sources; returns the new names.
+
+    Adding a source to config/sources.json is the whole of the setup: the
+    next pipeline run for its category creates the FreshRSS subscription.
+    A locked or read-only database degrades to a warning -- the rest of the
+    category run still works, and the next run retries the subscription.
+    """
+    from datasource import build_feed_url_map, resolve_feed_id
+    from freshrss_admin import ensure_subscription, resolve_category
+
+    added: list[str] = []
+    try:
+        full_map, base_map = build_feed_url_map(db)
+        for source in _filter_sources(cfg, category, "rss"):
+            # Canonicalise exactly as ensure_subscription will, or a padded
+            # config URL slips past both checks below and inserts a twin.
+            url = (source.get("url") or "").strip()
+            category_name = source.get("freshrss_category")
+            if category_name and resolve_category(db, category_name) is None:
+                log(
+                    f"  [WARN] {source['name']}: FreshRSS category"
+                    f" {category_name!r} not found -> Uncategorized"
+                )
+            similar = resolve_feed_id(url, full_map, base_map) if url else None
+            exact = db.execute("SELECT 1 FROM feed WHERE url = ?", [url]).fetchone()
+            if similar and not exact:
+                # The stored feed's name, not its URL: subscription URLs can
+                # carry private tokens, and this log line is for a human.
+                stored = db.execute(
+                    "SELECT name FROM feed WHERE id = ?", [similar]
+                ).fetchone()
+                log(
+                    f"  [WARN] {source['name']}: a similar feed is already"
+                    f" subscribed ({stored[0]}) -- subscribing the exact"
+                    " config URL anyway"
+                )
+            if ensure_subscription(
+                db,
+                url=url,
+                name=source.get("display_name") or source.get("name", ""),
+                category=category_name,
+            ):
+                added.append(source["name"])
+    except sqlite3.OperationalError as e:
+        log(f"  [WARN] subscription sync skipped: {e}")
+    return added
+
+
 def _process_regular_source(ds, feed_cfg: dict, model_default: str,
                             templates: dict, default_tmpl_key: str) -> int:
     """Process a single source: fetch -> batch -> AI -> merge -> save -> commit.
@@ -847,7 +896,7 @@ def _run_category_pipeline(category: str, *,
 
     # --- RSS sources ---
     try:
-        db = sqlite3.connect(FRESHRSS_DB)
+        db = sqlite3.connect(FRESHRSS_DB, timeout=30)
     except Exception as e:
         user = _get_freshrss_user()
         log(f"Pipeline {category} FAILED: cannot open FreshRSS DB ({e})")
@@ -855,6 +904,8 @@ def _run_category_pipeline(category: str, *,
         log(f"  Fix: set FRESHRSS_USER={user} in .env, or correct the username.")
         return 0
     db.row_factory = sqlite3.Row
+    for name in _ensure_rss_subscriptions(cfg, db, category):
+        log(f"  subscribed {name} -> FreshRSS")
     full_map, base_map = build_feed_url_map(db)
 
     if create_marker:
