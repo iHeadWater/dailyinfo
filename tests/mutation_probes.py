@@ -103,6 +103,28 @@ PROBES: tuple[Probe, ...] = (
             "::test_get_batches_honours_the_default_batch_size"
         ),
     ),
+    Probe(
+        # A cap bound alone cannot tell the word-boundary cut apart from the
+        # cap // 2 floor; the prose fixture pins which one fired.
+        label="the deep-content cut lands on a word boundary",
+        path="scripts/datasource.py",
+        old='                        plain.rfind(" ", 0, self.max_content_chars),',
+        new="                        -1,",
+        test=(
+            "tests/test_datasource_rss.py"
+            "::test_use_content_per_source_cap_overrides_default"
+        ),
+    ),
+    Probe(
+        # A use_content template may only use placeholders the deep-content
+        # path substitutes; anything else reaches the model verbatim.
+        label="a use_content template stays deep-compatible",
+        path="config/sources.json",
+        old="（来自 Latent Space 的 AINews 日报）",
+        new="（来自 Latent Space 的 AINews 日报）{count}",
+        test="tests/test_run_pipelines.py"
+        "::test_every_source_prompt_template_resolves",
+    ),
 )
 
 

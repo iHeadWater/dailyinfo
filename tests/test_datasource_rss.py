@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 import time
 
+import pytest
+
 DEFAULTS = {"lookback_hours": 24}
 
 
@@ -100,6 +102,113 @@ def test_fetch_use_content_filters_and_truncates(rss_db):
     long_item = next(it for it in items if it.title == "Deep Long")
     assert len(long_item.content) <= 12100
     assert long_item.content.endswith("[... content truncated ...]")
+
+
+def test_use_content_per_source_cap_overrides_default(rss_db):
+    """A source's ``max_content_chars`` replaces the 12000 default."""
+    ds = _make_rss(
+        {
+            "name": "deep",
+            "type": "rss",
+            "category": "ai_news",
+            "url": "https://deep.example.com/rss",
+            "use_content": True,
+            "max_content_chars": 500,
+        },
+        rss_db,
+    )
+
+    items = ds.fetch()
+    marker = "\n\n[... content truncated ...]"
+    for title in ("Deep Long", "Deep Normal"):
+        item = next(it for it in items if it.title == title)
+        assert item.content.endswith(marker)
+        assert len(item.content.removesuffix(marker)) <= 500
+
+    # The prose entry must be cut just before a space -- the word-boundary
+    # branch -- not at the cap // 2 floor.
+    from datasource import strip_html
+
+    normal = next(it for it in items if it.title == "Deep Normal")
+    body = normal.content.removesuffix(marker)
+    raw = rss_db.execute(
+        "SELECT content FROM entry WHERE title = ?", ("Deep Normal",)
+    ).fetchone()["content"]
+    assert strip_html(raw)[len(body)] == " "
+
+
+def test_use_content_larger_cap_keeps_content_untouched(rss_db):
+    """Raising the cap lets longer content through without truncation."""
+    ds = _make_rss(
+        {
+            "name": "deep",
+            "type": "rss",
+            "category": "ai_news",
+            "url": "https://deep.example.com/rss",
+            "use_content": True,
+            "max_content_chars": 30000,
+        },
+        rss_db,
+    )
+
+    items = ds.fetch()
+    long_item = next(it for it in items if it.title == "Deep Long")
+    assert long_item.content == "A" * 20000
+
+
+def test_use_content_rejects_unparsable_cap(rss_db):
+    """A bad max_content_chars must fail at construction, not mid-fetch."""
+    with pytest.raises(ValueError, match="max_content_chars"):
+        _make_rss(
+            {
+                "name": "deep",
+                "type": "rss",
+                "category": "ai_news",
+                "url": "https://deep.example.com/rss",
+                "use_content": True,
+                "max_content_chars": "huge",
+            },
+            rss_db,
+        )
+
+
+def test_use_content_rejects_cap_under_the_content_filter(rss_db):
+    """Caps near the silent-drop boundary (~142) are rejected with a margin:
+    below it the cap // 2 cut plus marker falls under the 100-char filter."""
+    with pytest.raises(ValueError, match="max_content_chars"):
+        _make_rss(
+            {
+                "name": "deep",
+                "type": "rss",
+                "category": "ai_news",
+                "url": "https://deep.example.com/rss",
+                "use_content": True,
+                "max_content_chars": 100,
+            },
+            rss_db,
+        )
+
+
+def test_use_content_default_cap_is_unchanged(rss_db):
+    """Without the new key the historical cap still applies.
+
+    "Deep Long" contains no spaces, so the word-boundary search misses and
+    the 10000 floor (cap - 2000) sets the cut — the pre-existing behaviour.
+    """
+    ds = _make_rss(
+        {
+            "name": "deep",
+            "type": "rss",
+            "category": "ai_news",
+            "url": "https://deep.example.com/rss",
+            "use_content": True,
+        },
+        rss_db,
+    )
+
+    items = ds.fetch()
+    long_item = next(it for it in items if it.title == "Deep Long")
+    assert long_item.content == "A" * 10000 + "\n\n[... content truncated ...]"
 
 
 def test_get_batches_splits_and_caps(rss_db):
