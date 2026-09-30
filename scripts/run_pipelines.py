@@ -29,8 +29,10 @@ from logsafe import http_error_detail, one_line
 from paths import BRIEFINGS_DIR, ENV_FILE, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
 from publication import (
     PublicationBriefingInput,
+    PublicationBundle,
     PublicationFinalizer,
     PublicationStore,
+    merge_bundle,
 )
 from publication.pipeline import (
     PublicationRunCollector,
@@ -157,7 +159,6 @@ def load_deepseek_key() -> str:
                 return key
         except ImportError:
             with open(env_path) as f:
-                values = {}
                 for line in f:
                     line = line.strip()
                     if not line.startswith("DEEPSEEK_API_KEY="):
@@ -522,8 +523,12 @@ def save(directory: str, filename: str, content: str) -> str:
 
 def _make_placeholder_briefing(ds, items: list) -> str:
     """Generate a placeholder briefing with titles and links for items that
-    failed AI generation. These items are still committed to seen to prevent
-    unbounded accumulation across retries."""
+    failed AI generation.
+
+    These items are deliberately *not* committed to seen: seen state never
+    expires, so committing one would drop it permanently instead of leaving it
+    for the next run to fetch and retry.  The source's own lookback window
+    bounds how long a failure can be retried."""
     lines = [f"# {ds.display_name} - {DATE}\n"]
     lines.append("⚠️ 以下文章 AI 摘要生成失败，仅保留标题和链接：\n")
     for idx, item in enumerate(items, 1):
@@ -907,10 +912,11 @@ def _finalize_category_publication(
         )
         PUBLICATION_GAPS.append(f"{category}: " + "; ".join(collector.failures))
     if not collector.results:
-        log(
-            f"  publication_id={publication_id} category={category} "
-            "action=skip item_count=0"
-        )
+        if not collector.failures:
+            log(
+                f"  publication_id={publication_id} category={category} "
+                "action=skip item_count=0"
+            )
         return
     body = collector.body
     if not body:
@@ -922,20 +928,14 @@ def _finalize_category_publication(
             f"{category} publication has items but no canonical body"
         )
     published_at = now_utc()
-    briefing = PublicationBriefingInput(
-        category=category,
-        date=DATE,
-        title=f"DailyInfo {category} briefing",
-        generated_at=published_at,
-        published_at=published_at,
-        body=body,
-    )
     try:
-        bundle = PublicationFinalizer(business_timezone=str(CONTENT_TIMEZONE)).finalize(
-            briefing,
-            collector.item_inputs(published_at=published_at),
-        )
-        result = PublicationStore().save(bundle)
+        store = PublicationStore()
+        try:
+            existing = store.load_bundle(publication_id)
+        except FileNotFoundError:
+            existing = None
+        bundle = _finalize_run(category, collector, existing, published_at)
+        result = store.save(bundle)
         collector.commit_deferred_seen()
     except Exception as exc:
         log(
@@ -949,6 +949,49 @@ def _finalize_category_publication(
         f"  publication_id={bundle.briefing.id} category={category} "
         f"action={result.action} item_count={len(bundle.items)}"
     )
+
+
+def _finalize_run(
+    category: str,
+    collector: PublicationRunCollector,
+    existing: PublicationBundle | None,
+    published_at,
+) -> PublicationBundle:
+    """Finalize one run, folding it into a bundle the run only partly covers.
+
+    A forced single-source re-run (``dailyinfo run -f <source>``) collects that
+    one source, and saving it as the day's bundle would drop every other source
+    from both delivery sinks.  So a run that does not re-cover every source the
+    bundle already has is merged instead:
+
+    - nothing in common -- the resumed source missed that day: append its body,
+      so its prose joins the bundle it was absent from;
+    - otherwise: merge the items and keep the existing body, because appending
+      a re-rendered source would duplicate prose the bundle already carries.
+
+    A run that re-covers every source of the bundle is a rebuild, and its body
+    replaces the old one rather than stacking on it.
+    """
+    finalizer = PublicationFinalizer(business_timezone=str(CONTENT_TIMEZONE))
+    briefing = PublicationBriefingInput(
+        category=category,
+        date=DATE,
+        title=f"DailyInfo {category} briefing",
+        generated_at=published_at,
+        published_at=published_at,
+        body=collector.body,
+    )
+    item_inputs = collector.item_inputs(published_at=published_at)
+    if existing is None:
+        return finalizer.finalize(briefing, item_inputs)
+
+    bundle_sources = {item.source.name for item in existing.items}
+    run_sources = {result.source_name for result in collector.results}
+    if bundle_sources and bundle_sources.issubset(run_sources):
+        return finalizer.finalize(briefing, item_inputs)
+
+    chunk = "" if (run_sources & bundle_sources) else collector.body
+    return merge_bundle(existing, item_inputs, chunk, updated_at=published_at)
 
 
 # =====================================================================
@@ -983,6 +1026,7 @@ def _process_regular_source_publication(
         items = ds.fetch()
     except Exception as exc:
         log(f"    FETCH ERR: {exc}")
+        collector.add_failure(f"{name}: fetch failed: {exc}")
         save(
             category,
             f"{name}_briefing_{DATE}.md",
@@ -1091,7 +1135,10 @@ def _process_regular_source_publication(
             f"{name}_briefing_{DATE}_failed.md",
             _make_placeholder_briefing(ds, failed_items),
         )
-    collector.defer_seen(ds, items)
+    # Only what was published is marked seen.  Seen state never expires, so
+    # committing a failed item here would lose it for good instead of leaving
+    # it for the next run to retry.
+    collector.defer_seen(ds, [result.raw_item for result in structured_results])
     return 1 if structured_results or failed_items else 0
 
 
@@ -1106,7 +1153,14 @@ def _process_deep_content_source_publication(
 
     name, category = ds.name, ds.category
     retrieved_at = now_utc()
-    items = ds.fetch()
+    try:
+        items = ds.fetch()
+    except Exception as exc:
+        # Unguarded, this aborted the whole category run: the sources after it
+        # never ran and nothing recorded why the category came up short.
+        log(f"    FETCH ERR: {exc}")
+        collector.add_failure(f"{name}: fetch failed: {exc}")
+        return 1
     if not items:
         collector.defer_seen(ds, items)
         return 0
@@ -1169,8 +1223,9 @@ def _process_deep_content_source_publication(
                 collector.add_failure(f"{name} item {index}: {retry_exc}")
                 filename = f"{name}_briefing_{DATE}_failed{index}.md"
                 save(category, filename, _make_placeholder_briefing(ds, [item]))
-                committed_items.append(item)
                 saved += 1
+                # Deliberately not committed to seen: seen state never expires,
+                # so a failed item committed here could never be retried.
 
     collector.defer_seen(ds, committed_items)
     return saved
@@ -1562,6 +1617,7 @@ def _run_pipeline_code_publication() -> int:
                 if attempt < 2:
                     time.sleep(_BACKOFF_SECONDS[attempt])
         if items is None:
+            collector.add_failure(f"{ds.name}: fetch failed")
             save(
                 "code",
                 f"{ds.name}_briefing_{DATE}.md",

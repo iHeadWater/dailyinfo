@@ -184,6 +184,60 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # Seen state never expires: committing a failed item drops it for good
+        # instead of leaving it for the next run to retry.
+        label="a failed item is not marked seen",
+        path="scripts/run_pipelines.py",
+        old="    collector.defer_seen(ds, [result.raw_item for result in structured_results])",
+        new="    collector.defer_seen(ds, items)",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_failed_item_is_not_marked_seen"
+        ),
+    ),
+    Probe(
+        # A source that could not be fetched is absent from the bundle, so
+        # without this the gap is invisible and the run still exits 0.
+        label="a fetch failure is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old=(
+            '        collector.add_failure(f"{name}: fetch failed: {exc}")\n'
+            "        save(\n"
+            "            category,"
+        ),
+        new=("        save(\n" "            category,"),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_fetch_failure_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        # An unguarded fetch in the deep-content path aborts the category run
+        # instead of recording one source's failure.
+        label="a deep-content fetch failure is recorded, not raised",
+        path="scripts/run_pipelines.py",
+        old=(
+            '        collector.add_failure(f"{name}: fetch failed: {exc}")\n'
+            "        return 1"
+        ),
+        new="        raise",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_deep_content_fetch_failure_does_not_kill_the_category"
+        ),
+    ),
+    Probe(
+        # Without the per-run reset a gap from an earlier run in the same
+        # process keeps the exit code non-zero forever.
+        label="gaps are reset at the start of a run",
+        path="scripts/run_pipelines.py",
+        old="    PUBLICATION_GAPS = []",
+        new="    pass",
+        test=(
+            "tests/test_publication_unified.py::test_main_resets_gaps_between_runs"
+        ),
+    ),
+    Probe(
         # A gap that does not reach the exit code is a gap cron cannot see.
         label="a canonical gap keeps the run non-zero",
         path="scripts/run_pipelines.py",

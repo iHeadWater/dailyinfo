@@ -206,6 +206,31 @@ Direct calls to the old helper functions retain their legacy Markdown-only
 behavior for compatibility; `dailyinfo run` is the supported integrated entry
 point.
 
+### Partial sources and resumed runs (2026-09)
+
+A source that fails to fetch, or that produces no valid structured output, no
+longer fails its category. Its items are simply absent from the bundle, the
+sources that did succeed are published as usual, and the gap is recorded: the
+run prints a `Canonical publication gaps` summary and exits non-zero.
+Item-level integrity still fails closed -- a malformed item rejects the bundle
+-- but a repeated identity is dropped before it reaches that check and the drop
+is logged.
+
+Seen-state is committed only for the items that reached the bundle. Seen state
+never expires, so committing a failed item here would drop it permanently
+instead of leaving it for the next run to retry.
+
+A run that covers only part of a category -- `dailyinfo run -f <source>` after
+that source failed -- is merged into the existing bundle instead of replacing
+it: items union by identity, and the resumed source's Markdown is appended to
+the body when the bundle did not carry that source already. A run that
+re-covers every source of the bundle is a rebuild, and its body replaces the
+old one.
+
+Nothing downstream marks a bundle as partial: Discord and the Web site both
+receive it as the day's briefing for that category. Completeness is visible
+only in the run log's gap line.
+
 Current source-shape audit:
 
 | Category | Pipeline/source shape retained before finalization | Current gap |
