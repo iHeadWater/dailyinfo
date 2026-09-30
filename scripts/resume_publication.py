@@ -194,7 +194,9 @@ def main(category: str, source: str) -> int:
             log(f"{category}: no Discord channel configured; skipped the delta.")
         else:
             if carries_the_day:
-                payload = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n{delta}"
+                payload = (
+                    f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n{delta}"
+                )
                 covered = before_ids | added
             else:
                 # The channel has none of today's briefing, so a supplement
@@ -212,9 +214,7 @@ def main(category: str, source: str) -> int:
                     return EXIT_FAILED
                 payload = bundle.briefing.body
                 covered = {item.id for item in bundle.items}
-            if not _post_and_record(
-                briefing_id, channel, payload, covered_ids=covered
-            ):
+            if not _post_and_record(briefing_id, channel, payload, covered_ids=covered):
                 exit_code = EXIT_FAILED
     else:
         log(f"{source}: nothing new to add to {briefing_id}")

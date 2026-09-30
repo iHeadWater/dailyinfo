@@ -234,9 +234,7 @@ PROBES: tuple[Probe, ...] = (
         path="scripts/run_pipelines.py",
         old="    PUBLICATION_GAPS = []",
         new="    pass",
-        test=(
-            "tests/test_publication_unified.py::test_main_resets_gaps_between_runs"
-        ),
+        test=("tests/test_publication_unified.py::test_main_resets_gaps_between_runs"),
     ),
     Probe(
         label="a code fetch failure is recorded as a gap",
@@ -268,9 +266,7 @@ PROBES: tuple[Probe, ...] = (
         path="scripts/resume_publication.py",
         old="            collector=collector,",
         new="            collector=None,",
-        test=(
-            "tests/test_resume_publication.py::test_resume_drives_the_real_dispatch"
-        ),
+        test=("tests/test_resume_publication.py::test_resume_drives_the_real_dispatch"),
     ),
     Probe(
         # A chunk has to be judged by the items it rendered, not by its source
@@ -289,9 +285,7 @@ PROBES: tuple[Probe, ...] = (
         # happened to render.
         label="the resume delta carries only the resumed source",
         path="scripts/resume_publication.py",
-        old=(
-            "        if part.source_name == source and set(part.item_ids) & added"
-        ),
+        old=("        if part.source_name == source and set(part.item_ids) & added"),
         new="        if set(part.item_ids) & added",
         test=(
             "tests/test_resume_publication.py"
@@ -487,8 +481,8 @@ PROBES: tuple[Probe, ...] = (
         # A void that failed silently leaves the day marked delivered forever.
         label="a failed void is recorded as a gap",
         path="scripts/run_pipelines.py",
-        old="            log(f\"  [delivery] could not void {briefing_id}:{sink}: {exc}\")\n            failed.append(sink)",
-        new="            log(f\"  [delivery] could not void {briefing_id}:{sink}: {exc}\")",
+        old='            log(f"  [delivery] could not void {briefing_id}:{sink}: {exc}")\n            failed.append(sink)',
+        new='            log(f"  [delivery] could not void {briefing_id}:{sink}: {exc}")',
         test=(
             "tests/test_publication_unified.py"
             "::test_a_void_failure_is_recorded_as_a_gap"
@@ -593,7 +587,7 @@ PROBES: tuple[Probe, ...] = (
         # An unreadable store used to escape as a traceback from mid-command.
         label="an unreadable store is reported, not raised",
         path="scripts/resume_publication.py",
-        old="    except Exception as exc:\n        log(f\"cannot read {briefing_id}: {exc}\")\n        return None",
+        old='    except Exception as exc:\n        log(f"cannot read {briefing_id}: {exc}")\n        return None',
         new="    except Exception as exc:\n        raise",
         test=(
             "tests/test_resume_publication.py"
@@ -605,10 +599,10 @@ PROBES: tuple[Probe, ...] = (
         label="a canonical gap keeps the run non-zero",
         path="scripts/run_pipelines.py",
         old=(
-            "        if total_saved > 0 and failed_pipelines == 0 "
-            "and not PUBLICATION_GAPS"
+            "0 if total_saved > 0 and failed_pipelines == 0 "
+            "and not PUBLICATION_GAPS else 1"
         ),
-        new="        if total_saved > 0 and failed_pipelines == 0",
+        new="0 if total_saved > 0 and failed_pipelines == 0 else 1",
         test=(
             "tests/test_publication_unified.py"
             "::test_a_canonical_gap_makes_run_exit_nonzero"

@@ -489,12 +489,20 @@ def test_seen_never_expires(rss_db):
     ds._save_seen()
 
     # Simulate _filter_seen after fetch: old URL should still be blocked
-    items = [Item(title="Old Paper", url=old_url, date=datetime.date.today().isoformat())]
+    items = [
+        Item(title="Old Paper", url=old_url, date=datetime.date.today().isoformat())
+    ]
     filtered = ds._filter_seen(items)
     assert len(filtered) == 0, "60-day-old URL should still be filtered by dedup"
 
     # commit_seen should not purge old records
-    new_items = [Item(title="New Paper", url="https://new.com/1", date=datetime.date.today().isoformat())]
+    new_items = [
+        Item(
+            title="New Paper",
+            url="https://new.com/1",
+            date=datetime.date.today().isoformat(),
+        )
+    ]
     ds.commit_seen(new_items)
     assert old_url in ds._seen, "commit_seen should not purge old records"
     assert len(ds._seen) == 2  # old + new both present

@@ -19,7 +19,6 @@ from .models import (
     SourceMetadata,
 )
 
-
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SECRET_PATTERNS = (

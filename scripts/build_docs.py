@@ -49,9 +49,7 @@ def sync_pictures() -> None:
         return
     # Find `pictures/<name>.png` references in README.md.
     readme_text = README.read_text(encoding="utf-8")
-    referenced = set(
-        re.findall(r"pictures/([A-Za-z0-9_.-]+\.png)", readme_text)
-    )
+    referenced = set(re.findall(r"pictures/([A-Za-z0-9_.-]+\.png)", readme_text))
     target = DOCS_DIR / "pictures"
     target.mkdir(parents=True, exist_ok=True)
     for name in referenced:

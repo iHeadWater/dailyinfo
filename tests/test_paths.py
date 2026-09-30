@@ -121,7 +121,9 @@ def test_env_staging_redirects_to_dailyinfo_staging(monkeypatch, tmp_path):
     paths = _reload_paths()
     monkeypatch.setattr(paths, "ENV_FILE", empty_env)
 
-    assert paths._resolve_data_root() == Path.home() / ".myagentdata" / "dailyinfo-staging"
+    assert (
+        paths._resolve_data_root() == Path.home() / ".myagentdata" / "dailyinfo-staging"
+    )
     assert paths.CURRENT_ENV == "staging"
 
 

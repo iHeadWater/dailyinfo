@@ -26,7 +26,6 @@ from publication import (
     serialize_delivery_state,
 )
 
-
 UTC = timezone.utc
 ATTEMPT_1 = datetime(2026, 8, 27, 3, 0, tzinfo=UTC)
 ATTEMPT_2 = datetime(2026, 8, 27, 3, 1, tzinfo=UTC)

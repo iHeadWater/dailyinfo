@@ -191,7 +191,14 @@ def rss_db():
     )
     conn.execute(
         "INSERT INTO entry(id_feed, title, link, content, date, lastSeen) VALUES (?,?,?,?,?,?)",
-        (3, "Deep Short", "https://deep.example.com/a/2", "<p>hi</p>", now - 15 * 60, now - 15 * 60),
+        (
+            3,
+            "Deep Short",
+            "https://deep.example.com/a/2",
+            "<p>hi</p>",
+            now - 15 * 60,
+            now - 15 * 60,
+        ),
     )
     conn.execute(
         "INSERT INTO entry(id_feed, title, link, content, date, lastSeen) VALUES (?,?,?,?,?,?)",

@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from datetime import date as Date, datetime
 from typing import List, Optional
 
-
 SCHEMA_VERSION = 1
 CANONICAL_CATEGORIES = ("papers", "ai_news", "code", "resource", "arxiv")
 

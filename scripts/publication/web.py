@@ -25,7 +25,6 @@ from .models import Item, PublicationBundle
 from .serialization import briefing_to_dict, item_to_dict
 from .validation import validate_bundle
 
-
 logger = logging.getLogger(__name__)
 
 WEB_SINK = "web"

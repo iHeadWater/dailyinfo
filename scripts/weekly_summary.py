@@ -11,6 +11,7 @@ Usage:
     python3 scripts/weekly_summary.py --days 14  # extend lookback
     python3 scripts/weekly_summary.py --threshold 0.35  # tune clustering
 """
+
 import argparse
 import datetime
 import os
@@ -80,9 +81,7 @@ def _load_deepseek_key() -> str:
             line = line.strip()
             if not line.startswith("DEEPSEEK_API_KEY="):
                 continue
-            value = (
-                line.split("=", 1)[1].split("#", 1)[0].strip().strip('"').strip("'")
-            )
+            value = line.split("=", 1)[1].split("#", 1)[0].strip().strip('"').strip("'")
             if value and "your_" not in value:
                 return value
     log("ERROR: DEEPSEEK_API_KEY not found in .env or environment")
@@ -253,7 +252,9 @@ def parse_briefing(date: str, content: str) -> list[NewsItem]:
         nonlocal current_bullet
         if current_bullet and section_has_data:
             items.append(
-                NewsItem(date=date, section=current_section or "未知", text=current_bullet)
+                NewsItem(
+                    date=date, section=current_section or "未知", text=current_bullet
+                )
             )
         current_bullet = None
 
@@ -269,11 +270,13 @@ def parse_briefing(date: str, content: str) -> list[NewsItem]:
             _flush_bullet()
             current_section = detected
             # Check the rest of the line and the next few lines for no-data
-            remaining = stripped[stripped.index(detected) + len(detected) :] if detected in stripped else ""
-            # Also check the next non-empty line
-            section_has_data = not (
-                _is_no_data(stripped) or _is_no_data(remaining)
+            remaining = (
+                stripped[stripped.index(detected) + len(detected) :]
+                if detected in stripped
+                else ""
             )
+            # Also check the next non-empty line
+            section_has_data = not (_is_no_data(stripped) or _is_no_data(remaining))
             continue
 
         # Check for no-data in current section
@@ -408,7 +411,9 @@ def build_event_cards(clusters: list[list[NewsItem]]) -> list[EventCard]:
         )
 
     # Sort by significance: cross-day events first, then by mention count
-    cards.sort(key=lambda c: (c.day_count > 1, c.day_count, c.mention_count), reverse=True)
+    cards.sort(
+        key=lambda c: (c.day_count > 1, c.day_count, c.mention_count), reverse=True
+    )
     for i, card in enumerate(cards):
         card.id = i + 1
     return cards
@@ -433,7 +438,9 @@ def _render_event_cards(cards: list[EventCard]) -> str:
             continue
         cross = sum(1 for c in section_cards if c.day_count >= 2)
         single = sum(1 for c in section_cards if c.day_count < 2)
-        lines.append(f"## {section}（{len(section_cards)} 事件: {cross} 跨日, {single} 单日）")
+        lines.append(
+            f"## {section}（{len(section_cards)} 事件: {cross} 跨日, {single} 单日）"
+        )
         lines.append("")
         for card in section_cards:
             tag = "跨日" if card.day_count >= 2 else "单日"
@@ -514,7 +521,9 @@ def run_weekly_summary(
     out_path = out_dir / f"weekly_recap_{DATE}.md"
 
     if out_path.exists() and not force:
-        log(f"  weekly recap already exists for {DATE}, skip (use --force to overwrite)")
+        log(
+            f"  weekly recap already exists for {DATE}, skip (use --force to overwrite)"
+        )
         return 0
 
     # 1. Collect
@@ -523,8 +532,10 @@ def run_weekly_summary(
     if not dated_briefings:
         log("  no ai_news briefings found in the past week, abort")
         return 1
-    log(f"  found {len(dated_briefings)} briefings: "
-        f"{dated_briefings[0][0]} ~ {dated_briefings[-1][0]}")
+    log(
+        f"  found {len(dated_briefings)} briefings: "
+        f"{dated_briefings[0][0]} ~ {dated_briefings[-1][0]}"
+    )
 
     # 2. Parse
     all_items: list[NewsItem] = []
@@ -534,26 +545,33 @@ def run_weekly_summary(
     if not all_items:
         log("  no parseable items found, abort")
         return 1
-    log(f"  parsed {len(all_items)} individual news items from "
-        f"{len(dated_briefings)} briefings")
+    log(
+        f"  parsed {len(all_items)} individual news items from "
+        f"{len(dated_briefings)} briefings"
+    )
 
     # 3. Cluster
     clusters = cluster_items(all_items, threshold=sim_threshold)
-    log(f"  clustered into {len(clusters)} event groups "
-        f"(threshold={sim_threshold})")
+    log(
+        f"  clustered into {len(clusters)} event groups " f"(threshold={sim_threshold})"
+    )
 
     # 4. Build event cards
     event_cards = build_event_cards(clusters)
     major = sum(1 for c in event_cards if c.day_count >= 2)
     minor = sum(1 for c in event_cards if c.day_count < 2)
-    log(f"  event cards: {len(event_cards)} total "
-        f"({major} cross-day, {minor} single-day)")
+    log(
+        f"  event cards: {len(event_cards)} total "
+        f"({major} cross-day, {minor} single-day)"
+    )
 
     # Show top events for transparency
     for card in event_cards[:5]:
         cross = "↔" if card.day_count >= 2 else "○"
-        log(f"    {cross} [{card.section}] {card.title[:60]}... "
-            f"({card.day_count}d, {card.mention_count}m)")
+        log(
+            f"    {cross} [{card.section}] {card.title[:60]}... "
+            f"({card.day_count}d, {card.mention_count}m)"
+        )
 
     if not event_cards:
         log("  no event cards generated, abort")
@@ -562,9 +580,11 @@ def run_weekly_summary(
     # 5. Build prompt
     prompt = build_weekly_prompt(event_cards)
     old_size_est = sum(len(c) for _, c in dated_briefings)
-    log(f"  prompt: {len(prompt)} chars ({len(event_cards)} cards) "
+    log(
+        f"  prompt: {len(prompt)} chars ({len(event_cards)} cards) "
         f"vs old raw dump ~{old_size_est} chars "
-        f"({len(prompt) / max(old_size_est, 1) * 100:.0f}% of old size)")
+        f"({len(prompt) / max(old_size_est, 1) * 100:.0f}% of old size)"
+    )
 
     # 6. Call AI
     log(f"  calling AI (model={DEEPSEEK_MODEL})...")
@@ -594,15 +614,20 @@ def main() -> None:
         description="Generate weekly AI news recap with event clustering"
     )
     parser.add_argument(
-        "--days", type=int, default=7,
+        "--days",
+        type=int,
+        default=7,
         help="Lookback window in days (default: 7)",
     )
     parser.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Overwrite existing recap for today",
     )
     parser.add_argument(
-        "--threshold", type=float, default=0.15,
+        "--threshold",
+        type=float,
+        default=0.15,
         help="Similarity threshold for clustering (0.0-1.0, default: 0.15)",
     )
     args = parser.parse_args()

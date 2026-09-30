@@ -17,7 +17,6 @@ from publication import (
 )
 from publication.identity import resolve_item_id
 
-
 UTC = timezone.utc
 
 

@@ -18,7 +18,6 @@ from publication import (
 )
 from publication.pipeline import results_from_response
 
-
 UTC = timezone.utc
 
 
@@ -121,9 +120,7 @@ def test_a_repeated_item_does_not_lose_the_category(monkeypatch):
     assert len(bundle.items) == 1
     assert len(bundle.briefing.item_ids) == 1
     # The drop is reported, not silent.
-    assert any(
-        "duplicate" in line and "nature" in line for line in logs
-    ), logs
+    assert any("duplicate" in line and "nature" in line for line in logs), logs
 
 
 def _bundle_for(source_name, url, external_id=None):
@@ -199,7 +196,9 @@ def _publish_nature():
     import run_pipelines as rp
 
     collector = PublicationRunCollector("papers")
-    collector.add(_results_for("nature", "https://www.nature.com/articles/x", "10.1000/x"))
+    collector.add(
+        _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
+    )
     collector.add_body("# nature\n\nnature chunk", source_name="nature")
     rp._finalize_category_publication("papers", collector)
     return rp
@@ -450,7 +449,9 @@ def test_a_resource_news_source_fetch_failure_is_recorded_as_a_gap(monkeypatch):
 def test_a_deep_content_fetch_failure_does_not_kill_the_category():
     import run_pipelines as rp
 
-    ds, _seen = _source("latent_space", "ai_news", fetch_error=RuntimeError("feed down"))
+    ds, _seen = _source(
+        "latent_space", "ai_news", fetch_error=RuntimeError("feed down")
+    )
     collector = PublicationRunCollector("ai_news")
 
     rp._process_deep_content_source_publication(ds, {}, "stub/model", {}, collector)
@@ -746,7 +747,6 @@ def test_an_inflight_send_cannot_overwrite_a_merge():
 
 def test_a_void_failure_is_recorded_as_a_gap(monkeypatch):
     """If the record cannot be voided, say so: nothing will re-send."""
-    import run_pipelines as rp
     from publication import DeliveryStateStore
 
     rp = _publish_nature()

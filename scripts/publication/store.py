@@ -31,7 +31,6 @@ from .validation import (
     validate_category,
 )
 
-
 logger = logging.getLogger(__name__)
 
 

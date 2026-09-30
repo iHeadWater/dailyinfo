@@ -11,7 +11,6 @@ from datasource import Item as PipelineItem
 from publication import PublicationRunCollector, PublicationStore
 from publication.pipeline import results_from_response
 
-
 UTC = timezone.utc
 
 
@@ -308,9 +307,7 @@ def test_resume_dispatches_only_the_requested_source(monkeypatch):
             commit_seen=lambda values: None,
         )
 
-    monkeypatch.setattr(
-        rp, "DataSource", SimpleNamespace(create=staticmethod(make_ds))
-    )
+    monkeypatch.setattr(rp, "DataSource", SimpleNamespace(create=staticmethod(make_ds)))
     monkeypatch.setattr(
         rp,
         "sqlite3",
@@ -392,9 +389,7 @@ def test_resume_does_not_post_a_chunk_a_concurrent_run_published(
         only_source=None,
     ):
         other = PublicationRunCollector("papers")
-        other.add(
-            _results_for("science", "https://www.science.org/doi/y", "10.1000/y")
-        )
+        other.add(_results_for("science", "https://www.science.org/doi/y", "10.1000/y"))
         other.add_body("# science\n\nscience chunk", source_name="science")
         rp._finalize_category_publication("papers", other)
 
@@ -501,7 +496,14 @@ def test_resume_signals_a_delivery_that_is_still_missing(resume_env, monkeypatch
     store = DeliveryStateStore()
     store.void(briefing_id, "discord")
 
-    def run_nothing_new(category, *, create_marker=False, deep_content=False, collector=None, only_source=None):
+    def run_nothing_new(
+        category,
+        *,
+        create_marker=False,
+        deep_content=False,
+        collector=None,
+        only_source=None,
+    ):
         return 0
 
     monkeypatch.setattr(rp, "_run_category_pipeline", run_nothing_new)
@@ -512,9 +514,7 @@ def test_resume_signals_a_delivery_that_is_still_missing(resume_env, monkeypatch
     assert any("dailyinfo push" in line for line in logs), logs
 
 
-def test_resume_does_not_claim_a_day_another_writer_extended(
-    resume_env, monkeypatch
-):
+def test_resume_does_not_claim_a_day_another_writer_extended(resume_env, monkeypatch):
     """The channel holds the pre-run content; a delta cannot speak for a co-writer's.
 
     A cron run (or another resume) that merges while this one is working puts

@@ -106,10 +106,7 @@ class TestParseBriefing:
         assert "continuation" in items[0].text
 
     def test_markdown_bold_stripped(self):
-        content = (
-            "## 🧠 模型进展\n"
-            "- **GLM-5.2** reaches top benchmark scores\n"
-        )
+        content = "## 🧠 模型进展\n" "- **GLM-5.2** reaches top benchmark scores\n"
         items = parse_briefing("2026-06-25", content)
         assert len(items) == 1
         assert "**" not in items[0].text
@@ -123,12 +120,21 @@ class TestClusterItems:
     def test_similar_items_cluster_together(self):
         """Two items about the same model on different days should cluster."""
         items = [
-            NewsItem("2026-06-24", "模型进展",
-                     "智谱GLM-5.2成为首个开源Agent前沿模型 在多项Agent基准测试中表现接近甚至超越顶尖闭源模型"),
-            NewsItem("2026-06-26", "模型进展",
-                     "Zhipu AI的GLM-5.2在多个人工分析Agent及代码竞技场中登顶 并在ARC-AGI-2上获开源模型最高分"),
-            NewsItem("2026-06-27", "模型进展",
-                     "GLM-5.2跻身顶级编程基准前列 在Code Arena前端编程测试中达到1595分超越了Opus 4.8"),
+            NewsItem(
+                "2026-06-24",
+                "模型进展",
+                "智谱GLM-5.2成为首个开源Agent前沿模型 在多项Agent基准测试中表现接近甚至超越顶尖闭源模型",
+            ),
+            NewsItem(
+                "2026-06-26",
+                "模型进展",
+                "Zhipu AI的GLM-5.2在多个人工分析Agent及代码竞技场中登顶 并在ARC-AGI-2上获开源模型最高分",
+            ),
+            NewsItem(
+                "2026-06-27",
+                "模型进展",
+                "GLM-5.2跻身顶级编程基准前列 在Code Arena前端编程测试中达到1595分超越了Opus 4.8",
+            ),
         ]
         # Chinese short texts have naturally low char-ngram cosine similarity.
         # Use a low threshold to catch the shared entity "GLM-5.2".
@@ -141,12 +147,17 @@ class TestClusterItems:
     def test_dissimilar_items_stay_separate(self):
         """Unrelated topics should remain in separate clusters."""
         items = [
-            NewsItem("2026-06-26", "模型进展",
-                     "OpenAI发布首款自研AI推理芯片Jalapeño 与Broadcom合作"),
-            NewsItem("2026-06-26", "产业新闻",
-                     "Hugging Face年经常性收入突破1亿美元里程碑"),
-            NewsItem("2026-06-26", "Agent/产品进展",
-                     "Anthropic将Claude深度集成到Slack"),
+            NewsItem(
+                "2026-06-26",
+                "模型进展",
+                "OpenAI发布首款自研AI推理芯片Jalapeño 与Broadcom合作",
+            ),
+            NewsItem(
+                "2026-06-26", "产业新闻", "Hugging Face年经常性收入突破1亿美元里程碑"
+            ),
+            NewsItem(
+                "2026-06-26", "Agent/产品进展", "Anthropic将Claude深度集成到Slack"
+            ),
         ]
         clusters = cluster_items(items, threshold=0.30)
 
@@ -226,18 +237,24 @@ class TestBuildWeeklyPrompt:
     def test_prompt_includes_four_sections(self):
         cards = [
             EventCard(
-                id=1, title="Cross-day event",
+                id=1,
+                title="Cross-day event",
                 section="模型进展",
                 mentions=[("2026-06-24", "text1"), ("2026-06-26", "text2")],
-                first_seen="2026-06-24", last_seen="2026-06-26",
-                day_count=2, mention_count=2,
+                first_seen="2026-06-24",
+                last_seen="2026-06-26",
+                day_count=2,
+                mention_count=2,
             ),
             EventCard(
-                id=2, title="Single day event",
+                id=2,
+                title="Single day event",
                 section="产业新闻",
                 mentions=[("2026-06-26", "text3")],
-                first_seen="2026-06-26", last_seen="2026-06-26",
-                day_count=1, mention_count=1,
+                first_seen="2026-06-26",
+                last_seen="2026-06-26",
+                day_count=1,
+                mention_count=1,
             ),
         ]
         prompt = build_weekly_prompt(cards)
@@ -253,14 +270,17 @@ class TestBuildWeeklyPrompt:
     def test_prompt_includes_event_details(self):
         cards = [
             EventCard(
-                id=1, title="GLM-5.2 benchmarks",
+                id=1,
+                title="GLM-5.2 benchmarks",
                 section="模型进展",
                 mentions=[
                     ("2026-06-24", "GLM-5.2 first appeared"),
                     ("2026-06-26", "GLM-5.2 tops benchmarks"),
                 ],
-                first_seen="2026-06-24", last_seen="2026-06-26",
-                day_count=2, mention_count=2,
+                first_seen="2026-06-24",
+                last_seen="2026-06-26",
+                day_count=2,
+                mention_count=2,
             ),
         ]
         prompt = build_weekly_prompt(cards)
@@ -277,7 +297,6 @@ class TestBuildWeeklyPrompt:
 class TestEndToEnd:
     def test_run_with_fake_ai(self, tmp_path, monkeypatch):
         """Full pipeline with a stubbed AI call writes expected output file."""
-        from pathlib import Path as P
 
         # Set up isolated data dir
         data_root = tmp_path / "data"
@@ -297,12 +316,8 @@ class TestEndToEnd:
         )
 
         # Patch paths
-        monkeypatch.setattr(
-            "weekly_summary.BRIEFINGS_DIR", briefings_dir
-        )
-        monkeypatch.setattr(
-            "weekly_summary.PUSHED_DIR", data_root / "pushed"
-        )
+        monkeypatch.setattr("weekly_summary.BRIEFINGS_DIR", briefings_dir)
+        monkeypatch.setattr("weekly_summary.PUSHED_DIR", data_root / "pushed")
 
         # Stub AI call
         fake_result = "# AI 行业周报\n\n## 导读\n本周核心主线：GLM-5.2发布。\n"

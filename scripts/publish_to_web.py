@@ -18,7 +18,6 @@ from publication import (
     sanitize_error,
 )
 
-
 CONTENT_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 

@@ -27,8 +27,8 @@ DISCORD_CONTENT_LIMIT = 2000
 DISCORD_CHUNK_LIMIT = 1950
 
 _ARXIV_MARKER = STATE_DIR / ".arxiv_generating"
-_ARXIV_POLL_INTERVAL = 30   # seconds between checks
-_ARXIV_MAX_WAIT = 1800      # 30 minutes total timeout
+_ARXIV_POLL_INTERVAL = 30  # seconds between checks
+_ARXIV_MAX_WAIT = 1800  # 30 minutes total timeout
 _DISCORD_RETRY_DELAYS = (2, 5, 10)
 
 
@@ -198,10 +198,12 @@ def _post_single_message(channel_id, headers, data, chunk_index):
                 return True
             # 429 Rate limit — honour Retry-After
             if resp.status_code == 429:
-                wait = float(resp.json().get(
-                    "retry_after",
-                    delay if delay is not None else _DISCORD_RETRY_DELAYS[-1],
-                ))
+                wait = float(
+                    resp.json().get(
+                        "retry_after",
+                        delay if delay is not None else _DISCORD_RETRY_DELAYS[-1],
+                    )
+                )
                 log(f"  ⏳ 触发限速，等待 {wait:.1f}s 后重试 (第 {attempt} 次)")
                 time.sleep(wait)
                 last_err = "429 rate limit"
@@ -217,7 +219,9 @@ def _post_single_message(channel_id, headers, data, chunk_index):
             # all three sites below.
             last_err = one_line(str(e), DISCORD_BOT_TOKEN)
             if delay is None:
-                log(f"  ❌ 发送错误（已重试 {len(_DISCORD_RETRY_DELAYS)} 次）: {last_err}")
+                log(
+                    f"  ❌ 发送错误（已重试 {len(_DISCORD_RETRY_DELAYS)} 次）: {last_err}"
+                )
                 return False
             log(f"  ⚠️  网络错误，{delay}s 后重试 (第 {attempt} 次): {last_err}")
             time.sleep(delay)
@@ -269,9 +273,7 @@ def _legacy_archive_has_briefing(category, date):
     category_dir = PUSHED_DIR / category
     if not category_dir.is_dir():
         return False
-    return any(
-        path.is_file() and date in path.name for path in category_dir.iterdir()
-    )
+    return any(path.is_file() and date in path.name for path in category_dir.iterdir())
 
 
 def _legacy_has_real_pending_file(category, date):
@@ -558,7 +560,9 @@ def push_category(category, channel_id, date=None, *, strict=False):
                 sent = True
                 _cleanup_placeholder_files(placeholder_paths)
         if strict and not sent:
-            raise RuntimeError(f"Discord empty-content notice failed for {category} {date}")
+            raise RuntimeError(
+                f"Discord empty-content notice failed for {category} {date}"
+            )
         return 0
 
     pushed_count = 0
@@ -596,7 +600,9 @@ def push_category(category, channel_id, date=None, *, strict=False):
         _cleanup_placeholder_files(placeholder_paths)
 
     if strict and delivery_failed:
-        raise RuntimeError(f"one or more Discord deliveries failed for {category} {date}")
+        raise RuntimeError(
+            f"one or more Discord deliveries failed for {category} {date}"
+        )
     return pushed_count
 
 
@@ -699,7 +705,9 @@ def main(date=None, categories=None, force=False):
                     log(f"  legacy 小计: {count} 份文件")
                 except Exception as exc:
                     failed += 1
-                    log(f"  ❌ {category} legacy delivery failed: {sanitize_error(exc)}")
+                    log(
+                        f"  ❌ {category} legacy delivery failed: {sanitize_error(exc)}"
+                    )
             else:
                 # Preserve the existing no-file notice for categories that
                 # have never produced a canonical or legacy briefing.

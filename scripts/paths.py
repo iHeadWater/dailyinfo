@@ -26,9 +26,7 @@ PROJECT_ROOT = pathlib.Path(__file__).parent.parent.resolve()
 # exist. A value sitting in the developer's real .env otherwise changes test
 # outcomes -- and the operator who sets one is exactly the one who would see
 # the suite go red.
-ENV_FILE = pathlib.Path(
-    os.environ.get("DAILYINFO_ENV_FILE") or (PROJECT_ROOT / ".env")
-)
+ENV_FILE = pathlib.Path(os.environ.get("DAILYINFO_ENV_FILE") or (PROJECT_ROOT / ".env"))
 
 # Valid environment names
 VALID_ENVS = ("dev", "staging", "prod")

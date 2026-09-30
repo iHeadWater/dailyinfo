@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Iterable, List, Mapping, Optional, Union
 
-
 DateLike = Union[date, datetime, str]
 _UNSET = object()
 

@@ -11,7 +11,6 @@ from .delivery import DeliveryStateStore, sanitize_error
 from .models import PublicationBundle
 from .validation import validate_bundle
 
-
 logger = logging.getLogger(__name__)
 
 

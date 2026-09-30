@@ -38,7 +38,6 @@ from publication.serialization import (
 from publication.store import CorruptPublicationError
 from publication.identity import resolve_item_id
 
-
 UTC = timezone.utc
 FIXTURES = Path(__file__).parent / "fixtures" / "publication_v1"
 

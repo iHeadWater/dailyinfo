@@ -23,7 +23,6 @@ from publication import (
 )
 from publication.web import _PublishLock
 
-
 UTC = timezone.utc
 NOW = datetime(2026, 8, 27, 3, 0, tzinfo=UTC)
 

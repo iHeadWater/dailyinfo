@@ -988,10 +988,9 @@ def _content_changed(before: PublicationBundle, after: PublicationBundle) -> boo
     comparing whole bundles would call an identical re-publication a change and
     cause a second delivery.
     """
-    return (
-        {item.id for item in before.items} != {item.id for item in after.items}
-        or before.briefing.body != after.briefing.body
-    )
+    return {item.id for item in before.items} != {
+        item.id for item in after.items
+    } or before.briefing.body != after.briefing.body
 
 
 def _void_delivery_state(briefing_id: str) -> list[str]:
@@ -1631,8 +1630,7 @@ def _process_deep_content_source(
             content_text = call_ai(
                 prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS
             )
-            save(category, filename,
-                 f"# AI Daily Digest - {DATE}\n\n{content_text}")
+            save(category, filename, f"# AI Daily Digest - {DATE}\n\n{content_text}")
             saved += 1
             committed_items.append(item)
             log(f"    -> saved {filename}")
@@ -2089,9 +2087,7 @@ def _run_pipeline_resource_publication() -> int:
                             f"{len(news_sources)} 个信源汇总*"
                         ),
                     )
-                    save(
-                        "resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", content
-                    )
+                    save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", content)
                     collector.add(results)
                     collector.add_body(content, source_name=_DLUT_NEWS_GROUP)
                     saved += 1
@@ -2232,9 +2228,7 @@ def _generate_unified_news(
     prompt = tmpl.replace("{items}", items_text).replace("{date}", DATE)
 
     try:
-        content_text = call_ai(
-            prompt, model=model_default, max_tokens=3000
-        )
+        content_text = call_ai(prompt, model=model_default, max_tokens=3000)
         full_content = (
             f"# 大连理工大学校园动态 - {DATE}\n\n"
             f"{content_text}\n\n"
@@ -2417,13 +2411,10 @@ def main() -> int:
             "Canonical publication gaps: "
             + f"{len(PUBLICATION_GAPS)} - the parts that succeeded were "
             "published; these sources failed this run and are absent from what "
-            "it published: "
-            + "; ".join(PUBLICATION_GAPS)
+            "it published: " + "; ".join(PUBLICATION_GAPS)
         )
     return (
-        0
-        if total_saved > 0 and failed_pipelines == 0 and not PUBLICATION_GAPS
-        else 1
+        0 if total_saved > 0 and failed_pipelines == 0 and not PUBLICATION_GAPS else 1
     )
 
 

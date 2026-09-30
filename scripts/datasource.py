@@ -13,7 +13,6 @@ import time
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-
 _BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -32,7 +31,11 @@ NOW = _now_beijing()
 
 def _resolve_state_dir() -> pathlib.Path:
     override = os.environ.get("DAILYINFO_DATA_ROOT", "")
-    root = pathlib.Path(override).expanduser() if override else pathlib.Path.home() / ".myagentdata" / "dailyinfo"
+    root = (
+        pathlib.Path(override).expanduser()
+        if override
+        else pathlib.Path.home() / ".myagentdata" / "dailyinfo"
+    )
     return root / "state"
 
 
@@ -73,8 +76,8 @@ def strip_html(text: str) -> str:
 def _normalise_url(url: str) -> str:
     """Normalise a feed URL for tolerant matching."""
     u = html_lib.unescape(url).strip()
-    u = re.sub(r"^https?://", "", u)          # strip scheme
-    u = u.rstrip("/")                          # strip trailing slash
+    u = re.sub(r"^https?://", "", u)  # strip scheme
+    u = u.rstrip("/")  # strip trailing slash
     return u
 
 
@@ -274,7 +277,6 @@ class DataSource(ABC):
                 self._seen[it.url] = today
         self._save_seen()
 
-
     @abstractmethod
     def fetch(self) -> list[Item]:
         """Fetch and return items filtered to the lookback window."""
@@ -373,7 +375,9 @@ class RSSDataSource(DataSource):
         entry_columns = {
             row[1] for row in self._db.execute("PRAGMA table_info(entry)").fetchall()
         }
-        guid_select = "guid AS feed_guid" if "guid" in entry_columns else "NULL AS feed_guid"
+        guid_select = (
+            "guid AS feed_guid" if "guid" in entry_columns else "NULL AS feed_guid"
+        )
 
         if self.use_content:
             rows = self._db.execute(
@@ -542,11 +546,11 @@ class ScrapeDataSource(DataSource):
         """水科学进展 (skxjz.nhri.cn) — fetch current issue list, then get real
         online-publication date from the first article page for _cutoff_dt filtering."""
         base_url = "http://skxjz.nhri.cn"
-        hdrs = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+        hdrs = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        }
 
-        resp = requests.get(
-            self.config["url"], headers=hdrs, timeout=20
-        )
+        resp = requests.get(self.config["url"], headers=hdrs, timeout=20)
         resp.encoding = resp.apparent_encoding or "utf-8"
 
         max_items = self.config.get("max_items", 30)
@@ -575,7 +579,9 @@ class ScrapeDataSource(DataSource):
                 base_url + raw_items[0][0], headers=hdrs, timeout=15
             )
             detail_resp.encoding = "utf-8"
-            date_m = re.search(r"online[^0-9]*(\d{4}-\d{2}-\d{2})", detail_resp.text, re.I)
+            date_m = re.search(
+                r"online[^0-9]*(\d{4}-\d{2}-\d{2})", detail_resp.text, re.I
+            )
             if date_m:
                 pub_date = date_m.group(1)
                 source_pub_date = pub_date
@@ -592,9 +598,7 @@ class ScrapeDataSource(DataSource):
                 date=pub_date,
                 url=base_url + path,
                 extra=(
-                    {"source_published_at": source_pub_date}
-                    if source_pub_date
-                    else {}
+                    {"source_published_at": source_pub_date} if source_pub_date else {}
                 ),
             )
             for path, title in raw_items
@@ -607,7 +611,9 @@ class ScrapeDataSource(DataSource):
         3. first article page → real publication date for _cutoff_dt filtering
         """
         base = "https://slzg.cbpt.cnki.net"
-        hdrs = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
+        hdrs = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        }
 
         index_resp = requests.get(
             f"{base}/portal/journal/portal/client/index", headers=hdrs, timeout=20
@@ -636,7 +642,7 @@ class ScrapeDataSource(DataSource):
         list_resp.encoding = "utf-8"
 
         paper_rgx = re.compile(
-            r'href=["\'](?:' + re.escape(base) + r')?'
+            r'href=["\'](?:' + re.escape(base) + r")?"
             r'(/portal/journal/portal/client/paper/([a-f0-9]{32}))["\'][^>]*>'
             r"([^<]{3,200})</a>",
             re.I,
@@ -682,9 +688,7 @@ class ScrapeDataSource(DataSource):
                 date=pub_date,
                 url=f"{base}{path}",
                 extra=(
-                    {"source_published_at": source_pub_date}
-                    if source_pub_date
-                    else {}
+                    {"source_published_at": source_pub_date} if source_pub_date else {}
                 ),
             )
             for path, _, title in raw_items
@@ -975,9 +979,7 @@ class APIDataSource(DataSource):
             items.append(
                 Item(
                     title=title,
-                    date=dt.strftime("%Y-%m-%d")
-                    if dt
-                    else NOW.strftime("%Y-%m-%d"),
+                    date=dt.strftime("%Y-%m-%d") if dt else NOW.strftime("%Y-%m-%d"),
                     url=row.get("URL", ""),
                     extra={
                         "doi": row.get("DOI", ""),
@@ -1022,7 +1024,9 @@ class APIDataSource(DataSource):
 
     def _enrich_chinese_titles(self, items: list[Item], url_template: str) -> None:
         """Fetch Chinese titles from per-article pages and replace English titles in-place."""
-        headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"
+        }
         for item in items:
             doi = item.extra.get("doi", "")
             if not doi:
@@ -1046,7 +1050,9 @@ class APIDataSource(DataSource):
         items = []
         for row in data[:max_items]:
             extracted = {out_k: row.get(src_k) for out_k, src_k in field_map.items()}
-            repo_id = row.get("id") or extracted.get("repo_id") or extracted.get("name", "")
+            repo_id = (
+                row.get("id") or extracted.get("repo_id") or extracted.get("name", "")
+            )
             extracted["repo_id"] = str(repo_id).strip() if repo_id else ""
             name = extracted.get("name", "") or extracted["repo_id"]
             items.append(
@@ -1132,13 +1138,21 @@ class APIDataSource(DataSource):
             items.append(
                 Item(
                     title=title[:100],
-                    date=(dt.strftime("%Y-%m-%d") if dt else (date_val[:10] if date_val else "unknown")),
+                    date=(
+                        dt.strftime("%Y-%m-%d")
+                        if dt
+                        else (date_val[:10] if date_val else "unknown")
+                    ),
                     url=list_url,
                     extra={
                         "item_id": item_id,
                         "item_time": date_val,
                         **(
-                            {"source_published_at": source_published_at.strftime("%Y-%m-%d")}
+                            {
+                                "source_published_at": source_published_at.strftime(
+                                    "%Y-%m-%d"
+                                )
+                            }
                             if source_published_at
                             else {}
                         ),

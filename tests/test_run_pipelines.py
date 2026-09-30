@@ -730,7 +730,8 @@ def test_retry_failed_items_succeeds_on_second_try(monkeypatch):
     monkeypatch.setattr(rp, "log", lambda *_: None)
 
     results = rp._retry_failed_items(
-        ds, failed_items,
+        ds,
+        failed_items,
         "请总结 {count} 篇 {display_name}：\n{article_list}\n{date}",
         "stub",
     )
@@ -764,7 +765,8 @@ def test_retry_failed_items_falls_back_to_placeholder(monkeypatch):
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
 
     results = rp._retry_failed_items(
-        ds, failed_items,
+        ds,
+        failed_items,
         "请总结 {count} 篇 {display_name}：\n{article_list}\n{date}",
         "stub",
     )
@@ -798,7 +800,9 @@ def test_merge_briefing_parts_single_part_passthrough():
         {"name": "single", "display_name": "Single Source", "category": "papers"},
         {"lookback_hours": 24},
     )
-    content = "## 📚 Single Source 今日简报 (2026-05-14) - 2篇文章\n\n1. **A**\n2. **B**"
+    content = (
+        "## 📚 Single Source 今日简报 (2026-05-14) - 2篇文章\n\n1. **A**\n2. **B**"
+    )
     items = [Item(title="A", date="2026-05-14"), Item(title="B", date="2026-05-14")]
 
     merged, all_items = rp._merge_briefing_parts(ds, [(content, items)])
@@ -843,8 +847,14 @@ def test_merge_briefing_parts_merges_multiple_parts():
         "2. **Delta**\n   > 摘要D\n\n"
         "🔭 **Today's Highlight**\n亮点2"
     )
-    items1 = [Item(title="Alpha", date="2026-05-14"), Item(title="Beta", date="2026-05-14")]
-    items2 = [Item(title="Gamma", date="2026-05-14"), Item(title="Delta", date="2026-05-14")]
+    items1 = [
+        Item(title="Alpha", date="2026-05-14"),
+        Item(title="Beta", date="2026-05-14"),
+    ]
+    items2 = [
+        Item(title="Gamma", date="2026-05-14"),
+        Item(title="Delta", date="2026-05-14"),
+    ]
 
     merged, all_items = rp._merge_briefing_parts(
         ds, [(part1_content, items1), (part2_content, items2)]
@@ -892,9 +902,7 @@ def test_merge_briefing_parts_without_highlights():
     items1 = [Item(title="Paper A", date="2026-05-14")]
     items2 = [Item(title="Paper B", date="2026-05-14")]
 
-    merged, all_items = rp._merge_briefing_parts(
-        ds, [(part1, items1), (part2, items2)]
-    )
+    merged, all_items = rp._merge_briefing_parts(ds, [(part1, items1), (part2, items2)])
 
     assert "2篇文章" in merged
     assert "1. **Paper A**" in merged
@@ -992,7 +1000,7 @@ def test_pipeline_resource_unified_news_saves_single_file(
     fake_requests.register("https://news.dlut.test/zhxw.htm", FakeResponse(200, html))
     fake_requests.register("https://news.dlut.test/xsky.htm", FakeResponse(200, html))
 
-    saved = rp.run_pipeline_resource()
+    rp.run_pipeline_resource()
 
     today = datetime.now().strftime("%Y-%m-%d")
     unified = BRIEFINGS_DIR / "resource" / f"dlut_news_briefing_{today}.md"
@@ -1029,6 +1037,7 @@ def test_pipeline_resource_unified_news_idempotent(
         raise AssertionError("network should not be hit when skipping")
 
     import requests
+
     monkeypatch.setattr(requests, "get", boom)
 
     saved = rp.run_pipeline_resource()
@@ -1043,7 +1052,6 @@ def test_pipeline_resource_url_dedup_across_sections(
     """Same URL appearing in two sections should only appear once in prompt."""
     import json
     import run_pipelines as rp
-    from paths import BRIEFINGS_DIR
 
     from datetime import datetime
 
@@ -1059,30 +1067,57 @@ def test_pipeline_resource_url_dedup_across_sections(
     )
 
     sources_json = tmp_path / "sources.json"
-    sources_json.write_text(json.dumps({
-        "defaults": {"lookback_hours": 48, "model": "stub/model"},
-        "prompt_templates": {"university_news_unified": "Unified: {items}"},
-        "sources": [
+    sources_json.write_text(
+        json.dumps(
             {
-                "name": "src_a", "display_name": "Section A", "category": "resource",
-                "enabled": True, "news_group": "dlut_news", "section": "综合新闻",
-                "url": "https://dlut.test/a", "base_url": "https://dlut.test/",
-                "selector": "li.bg-mask",
-                "fields": {"title": "h4 a", "url": "h4 a[href]",
-                           "date_day": "time > span", "date_ym": "time"},
-                "date_format": "dlut_news", "max_items": 10, "type": "scrape",
-            },
-            {
-                "name": "src_b", "display_name": "Section B", "category": "resource",
-                "enabled": True, "news_group": "dlut_news", "section": "学术科研",
-                "url": "https://dlut.test/b", "base_url": "https://dlut.test/",
-                "selector": "li.bg-mask",
-                "fields": {"title": "h4 a", "url": "h4 a[href]",
-                           "date_day": "time > span", "date_ym": "time"},
-                "date_format": "dlut_news", "max_items": 10, "type": "scrape",
-            },
-        ],
-    }), encoding="utf-8")
+                "defaults": {"lookback_hours": 48, "model": "stub/model"},
+                "prompt_templates": {"university_news_unified": "Unified: {items}"},
+                "sources": [
+                    {
+                        "name": "src_a",
+                        "display_name": "Section A",
+                        "category": "resource",
+                        "enabled": True,
+                        "news_group": "dlut_news",
+                        "section": "综合新闻",
+                        "url": "https://dlut.test/a",
+                        "base_url": "https://dlut.test/",
+                        "selector": "li.bg-mask",
+                        "fields": {
+                            "title": "h4 a",
+                            "url": "h4 a[href]",
+                            "date_day": "time > span",
+                            "date_ym": "time",
+                        },
+                        "date_format": "dlut_news",
+                        "max_items": 10,
+                        "type": "scrape",
+                    },
+                    {
+                        "name": "src_b",
+                        "display_name": "Section B",
+                        "category": "resource",
+                        "enabled": True,
+                        "news_group": "dlut_news",
+                        "section": "学术科研",
+                        "url": "https://dlut.test/b",
+                        "base_url": "https://dlut.test/",
+                        "selector": "li.bg-mask",
+                        "fields": {
+                            "title": "h4 a",
+                            "url": "h4 a[href]",
+                            "date_day": "time > span",
+                            "date_ym": "time",
+                        },
+                        "date_format": "dlut_news",
+                        "max_items": 10,
+                        "type": "scrape",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(rp, "SOURCES_JSON", str(sources_json))
     rp.FORCE_ALL = False
@@ -1093,6 +1128,7 @@ def test_pipeline_resource_url_dedup_across_sections(
     fake_requests.register("https://dlut.test/b", FakeResponse(200, html))
 
     prompts_seen = []
+
     def capture_ai(prompt, **kwargs):
         prompts_seen.append(prompt)
         return "[AI-SUMMARY]"
@@ -1104,7 +1140,9 @@ def test_pipeline_resource_url_dedup_across_sections(
     assert prompts_seen, "AI should have been called"
     # The same URL should not appear twice in the prompt
     url_occurrences = prompts_seen[0].count("info/1234.htm")
-    assert url_occurrences <= 1, f"duplicate URL in prompt: appeared {url_occurrences} times"
+    assert (
+        url_occurrences <= 1
+    ), f"duplicate URL in prompt: appeared {url_occurrences} times"
 
 
 def test_pipeline_code_smoke(monkeypatch, fake_requests, fake_call_ai):
@@ -1161,9 +1199,7 @@ def test_pipeline_code_skips_when_briefing_already_exists(
     assert existing.read_text(encoding="utf-8").startswith("# GitHub Trending")
 
 
-def test_pipeline_code_skips_when_fetch_fails(
-    monkeypatch, fake_requests, fake_call_ai
-):
+def test_pipeline_code_skips_when_fetch_fails(monkeypatch, fake_requests, fake_call_ai):
     """When the scraper raises after retries, pipeline writes a placeholder file."""
     import requests
 
@@ -1194,14 +1230,31 @@ def test_filter_sources_by_category_and_type():
     """_filter_sources returns enabled sources matching category and types."""
     import run_pipelines as rp
 
-    cfg = {"sources": [
-        {"name": "nature", "type": "rss", "category": "papers", "enabled": True},
-        {"name": "science", "type": "rss", "category": "papers", "enabled": True},
-        {"name": "arxiv_cs_ai", "type": "rss", "category": "arxiv", "enabled": True},
-        {"name": "latent_space", "type": "rss", "category": "ai_news", "enabled": True},
-        {"name": "skxjz", "type": "scrape", "category": "papers", "enabled": True},
-        {"name": "disabled_source", "type": "rss", "category": "papers", "enabled": False},
-    ]}
+    cfg = {
+        "sources": [
+            {"name": "nature", "type": "rss", "category": "papers", "enabled": True},
+            {"name": "science", "type": "rss", "category": "papers", "enabled": True},
+            {
+                "name": "arxiv_cs_ai",
+                "type": "rss",
+                "category": "arxiv",
+                "enabled": True,
+            },
+            {
+                "name": "latent_space",
+                "type": "rss",
+                "category": "ai_news",
+                "enabled": True,
+            },
+            {"name": "skxjz", "type": "scrape", "category": "papers", "enabled": True},
+            {
+                "name": "disabled_source",
+                "type": "rss",
+                "category": "papers",
+                "enabled": False,
+            },
+        ]
+    }
 
     # Filter papers RSS
     result = rp._filter_sources(cfg, "papers", "rss")
@@ -1560,9 +1613,7 @@ def test_call_ai_redacts_and_flattens_the_fallback_finish_reason(monkeypatch):
     def fake_post(url, *args, **kwargs):
         if "deepseek" in url:
             raise rp.requests.RequestException("deepseek transient error")
-        return _StubAIResponse(
-            content="", finish_reason="sk-glm-secret [WARN] forged"
-        )
+        return _StubAIResponse(content="", finish_reason="sk-glm-secret [WARN] forged")
 
     monkeypatch.setattr(rp.requests, "post", fake_post)
 
@@ -1634,9 +1685,7 @@ def test_call_ai_survives_a_malformed_provider_response(monkeypatch):
         monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
         monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
         monkeypatch.setattr(rp, "log", lambda msg, _l=logs: _l.append(msg))
-        monkeypatch.setattr(
-            rp.requests, "post", lambda *a, _p=payload, **k: _Raw(_p)
-        )
+        monkeypatch.setattr(rp.requests, "post", lambda *a, _p=payload, **k: _Raw(_p))
 
         with pytest.raises(ValueError):  # not TypeError/AttributeError
             rp.call_ai("prompt")

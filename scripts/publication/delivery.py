@@ -21,7 +21,6 @@ from urllib.parse import quote
 from .identity import briefing_id
 from .models import CANONICAL_CATEGORIES
 
-
 DELIVERY_SCHEMA_VERSION = 1
 
 # The sinks a void has to cover.  A third sink would otherwise keep a
