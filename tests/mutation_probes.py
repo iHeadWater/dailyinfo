@@ -582,8 +582,8 @@ PROBES: tuple[Probe, ...] = (
         # between a title and its quote, which Discord renders as two blocks.
         label="an item's title and quote stay together",
         path="scripts/run_pipelines.py",
-        old='        blocks.append("\n".join(lines))',
-        new='        blocks.append("\n\n".join(lines))',
+        old='        blocks.append("\\n".join(lines))',
+        new='        blocks.append("\\n\\n".join(lines))',
         test=(
             "tests/test_publication_unified.py"
             "::test_rendered_items_keep_the_title_and_its_quote_together"
