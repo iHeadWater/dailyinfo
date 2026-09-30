@@ -96,6 +96,51 @@ def test_get_freshrss_user_falls_back_to_sources_json(tmp_path, monkeypatch):
     assert rp._get_freshrss_user() == "from-json"
 
 
+def test_every_source_prompt_template_resolves():
+    """No source may reference a prompt template the real config lacks.
+
+    Renaming or deleting a template while a source still names it would
+    otherwise surface only at run time, as an easily-missed SKIP log line.
+    A ``use_content`` source must name one, and it may only use the
+    placeholders the deep-content path substitutes.
+    """
+    import json
+    import re
+    from pathlib import Path
+
+    cfg_path = Path(__file__).parent.parent / "config" / "sources.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+
+    templates = set(cfg["prompt_templates"])
+    missing = {
+        source["prompt_template"]
+        for source in cfg["sources"]
+        if source.get("prompt_template") and source["prompt_template"] not in templates
+    }
+    assert missing == set()
+
+    # The deep-content path skips sources without a template, so a
+    # ``use_content`` source must name one.
+    unkeyed = sorted(
+        source["name"]
+        for source in cfg["sources"]
+        if source.get("use_content") and not source.get("prompt_template")
+    )
+    assert unkeyed == []
+
+    # That path substitutes only {content} and {date}; any other placeholder
+    # would reach the model as literal text.
+    used = {
+        (source["name"], placeholder)
+        for source in cfg["sources"]
+        if source.get("use_content") and source.get("prompt_template")
+        for placeholder in re.findall(
+            r"\{(\w+)\}", cfg["prompt_templates"][source["prompt_template"]]
+        )
+    }
+    assert {ph for _, ph in used} <= {"content", "date"}, used
+
+
 def test_get_freshrss_user_falls_back_to_env_user(tmp_path, monkeypatch):
     import run_pipelines as rp
 
@@ -380,6 +425,37 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
 
     assert saved == 1
     assert not (STATE_DIR / "arxiv_cs_ai_zero_state.json").exists()
+
+
+def test_process_deep_content_source_skips_without_a_template(
+    monkeypatch, fake_call_ai
+):
+    """A use_content source with no resolvable template saves nothing.
+
+    The skip must not mark the items as seen: once the template is configured
+    the same articles are still eligible.
+    """
+    import run_pipelines as rp
+    from datasource import Item
+
+    committed = []
+
+    class _DeepDS:
+        name = "demo_ai"
+        category = "ai_news"
+
+        def fetch(self):
+            return [Item(title="t", date="2026-09-28", content="x" * 200)]
+
+        def commit_seen(self, items):
+            committed.append(items)
+
+    monkeypatch.setattr(rp, "log", lambda *_: None)
+
+    saved = rp._process_deep_content_source(_DeepDS(), {"name": "demo_ai"}, "stub", {})
+
+    assert saved == 0
+    assert committed == []
 
 
 class _StubAIResponse:
@@ -1122,7 +1198,7 @@ def test_filter_sources_by_category_and_type():
         {"name": "nature", "type": "rss", "category": "papers", "enabled": True},
         {"name": "science", "type": "rss", "category": "papers", "enabled": True},
         {"name": "arxiv_cs_ai", "type": "rss", "category": "arxiv", "enabled": True},
-        {"name": "smolai_news", "type": "rss", "category": "ai_news", "enabled": True},
+        {"name": "latent_space", "type": "rss", "category": "ai_news", "enabled": True},
         {"name": "skxjz", "type": "scrape", "category": "papers", "enabled": True},
         {"name": "disabled_source", "type": "rss", "category": "papers", "enabled": False},
     ]}

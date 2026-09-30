@@ -47,7 +47,7 @@ class Item:
     title: str
     date: str  # YYYY-MM-DD
     url: str = ""
-    content: str = ""  # populated by deep-content sources (e.g. SmolAI)
+    content: str = ""  # populated by deep-content sources (e.g. AINews digests)
     extra: dict = field(
         default_factory=dict
     )  # source-specific fields (stars, likes, …)
@@ -338,6 +338,21 @@ class RSSDataSource(DataSource):
             "max_articles_per_batch"
         )
         self.max_batches: int = config.get("max_batches", 1000)
+        raw_cap = config.get("max_content_chars", 12000)
+        try:
+            raw_cap = int(raw_cap)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                f"{self.name}: max_content_chars must be an integer, got {raw_cap!r}"
+            ) from None
+        if raw_cap < 200:
+            # Safety margin above the silent-drop boundary (~142): below it
+            # the cap // 2 cut plus marker falls under the 100-char filter
+            # and every item would be dropped without a log line.
+            raise ValueError(
+                f"{self.name}: max_content_chars must be >= 200, got {raw_cap}"
+            )
+        self.max_content_chars: int = raw_cap
 
     def fetch(self) -> list[Item]:
         if not self._db:
@@ -364,11 +379,16 @@ class RSSDataSource(DataSource):
             items = []
             for row in rows:
                 plain = strip_html(row["content"] or "")
-                if len(plain) > 12000:
-                    trunc = plain.rfind(" ", 0, 12000)
-                    plain = (
-                        plain[: max(trunc, 10000)] + "\n\n[... content truncated ...]"
+                if len(plain) > self.max_content_chars:
+                    # Cut on the last word boundary inside the cap, floored so a
+                    # small cap still keeps a useful body: at most 2000 below
+                    # the cap and never less than half of it.
+                    cut = max(
+                        plain.rfind(" ", 0, self.max_content_chars),
+                        self.max_content_chars - 2000,
+                        self.max_content_chars // 2,
                     )
+                    plain = plain[:cut] + "\n\n[... content truncated ...]"
                 if len(plain) < 100:
                     continue
                 items.append(
