@@ -32,7 +32,9 @@ from publication import (
     PublicationBundle,
     PublicationFinalizer,
     PublicationStore,
+    PublicationValidationError,
     merge_bundle,
+    resolve_item_input_identity,
 )
 from publication.pipeline import (
     PublicationRunCollector,
@@ -955,7 +957,7 @@ def _finalize_run(
     category: str,
     collector: PublicationRunCollector,
     existing: PublicationBundle | None,
-    published_at,
+    published_at: datetime.datetime,
 ) -> PublicationBundle:
     """Finalize one run, folding it into a bundle the run only partly covers.
 
@@ -979,19 +981,52 @@ def _finalize_run(
         title=f"DailyInfo {category} briefing",
         generated_at=published_at,
         published_at=published_at,
+        # Re-publishing an identity the store already has is an update, whether
+        # it replaced the body or merged into it; a first publication is not.
+        updated_at=published_at if existing is not None else None,
         body=collector.body,
     )
     item_inputs = collector.item_inputs(published_at=published_at)
     if existing is None:
         return finalizer.finalize(briefing, item_inputs)
-
-    bundle_sources = {item.source.name for item in existing.items}
-    run_sources = {result.source_name for result in collector.results}
-    if bundle_sources and bundle_sources.issubset(run_sources):
+    if _run_recovers_every_item(existing, item_inputs):
+        # The run re-covered everything the bundle holds, so this is a rebuild:
+        # its body replaces the old one instead of stacking on top of it.
         return finalizer.finalize(briefing, item_inputs)
 
-    chunk = "" if (run_sources & bundle_sources) else collector.body
-    return merge_bundle(existing, item_inputs, chunk, updated_at=published_at)
+    bundle_sources = {item.source.name for item in existing.items}
+    chunks = [
+        chunk
+        for source_name, chunk in collector.body_parts
+        if source_name not in bundle_sources
+    ]
+    return merge_bundle(
+        existing,
+        item_inputs,
+        chunks,
+        updated_at=published_at,
+        dropped=collector.dropped_duplicates,
+    )
+
+
+def _run_recovers_every_item(existing, item_inputs) -> bool:
+    """True when this run's items cover every item the bundle already holds.
+
+    "Covered" has to mean items, not sources: ``fetch`` is seen-filtered, so a
+    re-run of a source normally returns only what is new to it, and treating
+    that subset as a rebuild would drop everything published earlier.
+    """
+    existing_ids = {item.id for item in existing.items}
+    if not existing_ids:
+        return False
+    run_ids: set[str] = set()
+    for item_input in item_inputs:
+        try:
+            run_ids.add(resolve_item_input_identity(item_input).item_id)
+        except PublicationValidationError:
+            # A malformed item fails finalization; it does not decide coverage.
+            continue
+    return existing_ids.issubset(run_ids)
 
 
 # =====================================================================
@@ -1125,7 +1160,7 @@ def _process_regular_source_publication(
         content = _render_regular_publication(ds, structured_results)
         save(category, f"{name}_briefing_{DATE}.md", content)
         collector.add(structured_results)
-        collector.add_body(content)
+        collector.add_body(content, source_name=name)
         log(f"    -> saved {name}_briefing_{DATE}.md")
     if failed_items:
         # Preserve the existing retry/placeholder behavior for legacy sinks;
@@ -1197,7 +1232,7 @@ def _process_deep_content_source_publication(
             suffix = f"_part{index}" if len(items) > 1 else ""
             save(category, f"{name}_briefing_{DATE}{suffix}.md", content)
             collector.add([result])
-            collector.add_body(content)
+            collector.add_body(content, source_name=name)
             committed_items.append(item)
             saved += 1
             log(f"    -> saved {name}_briefing_{DATE}{suffix}.md")
@@ -1215,7 +1250,7 @@ def _process_deep_content_source_publication(
                 filename = f"{name}_briefing_{DATE}_retry{index}.md"
                 save(category, filename, content)
                 collector.add([result])
-                collector.add_body(content)
+                collector.add_body(content, source_name=name)
                 committed_items.append(item)
                 saved += 1
                 log(f"    -> saved {filename}")
@@ -1461,21 +1496,27 @@ def _process_deep_content_source(
 
 
 def _run_category_pipeline(
-    category: str, *, create_marker: bool = False, deep_content: bool = False
+    category: str,
+    *,
+    create_marker: bool = False,
+    deep_content: bool = False,
+    collector: PublicationRunCollector | None = None,
 ) -> int:
     """Generic pipeline for a single category.
 
     Handles both RSS and non-RSS sources. If *create_marker* is True,
     the arXiv generation marker is created before processing and removed
     in a finally block. If *deep_content* is True, the use_content
-    path is used instead of the regular batched path.
+    path is used instead of the regular batched path. A *collector* may be
+    supplied by a caller that needs the run's own output -- the resume path
+    does, to send the chunk it just recovered.
     """
     cfg, defaults, templates = _load_sources()
     model_default = defaults.get("model", "deepseek-flash")
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
-    publication_collector = (
-        PublicationRunCollector(category) if PUBLICATION_INTEGRATION else None
-    )
+    publication_collector = collector
+    if publication_collector is None and PUBLICATION_INTEGRATION:
+        publication_collector = PublicationRunCollector(category)
 
     # --- RSS sources ---
     try:
@@ -1659,7 +1700,7 @@ def _run_pipeline_code_publication() -> int:
             content = _render_code_publication(ds, results)
             save("code", f"{ds.name}_briefing_{DATE}.md", content)
             collector.add(results)
-            collector.add_body(content)
+            collector.add_body(content, source_name=ds.name)
             saved += 1
             log(f"    -> saved {ds.name}_briefing_{DATE}.md")
         except Exception as exc:
@@ -1859,7 +1900,7 @@ def _run_pipeline_resource_publication() -> int:
                         "resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", content
                     )
                     collector.add(results)
-                    collector.add_body(content)
+                    collector.add_body(content, source_name=_DLUT_NEWS_GROUP)
                     saved += 1
                     log(f"    -> saved {_DLUT_NEWS_GROUP}_briefing_{DATE}.md")
             except Exception as exc:
@@ -1933,7 +1974,7 @@ def _run_pipeline_resource_publication() -> int:
             )
             save("resource", f"{ds.name}_briefing_{DATE}.md", content)
             collector.add(results)
-            collector.add_body(content)
+            collector.add_body(content, source_name=ds.name)
             saved += 1
             log(f"    -> saved {ds.name}_briefing_{DATE}.md")
         except Exception as exc:
@@ -2182,7 +2223,8 @@ def main() -> int:
         log(
             "Canonical publication gaps: "
             + f"{len(PUBLICATION_GAPS)} - the parts that succeeded were "
-            "published; these sources are missing from today's bundles: "
+            "published; these sources failed this run and are absent from what "
+            "it published: "
             + "; ".join(PUBLICATION_GAPS)
         )
     return (

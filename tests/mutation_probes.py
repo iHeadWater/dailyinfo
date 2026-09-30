@@ -176,11 +176,11 @@ PROBES: tuple[Probe, ...] = (
         # bundle, which costs the category both sinks at once.
         label="a repeated item is dropped before the bundle is validated",
         path="scripts/publication/pipeline.py",
-        old="            if identity.item_id in self._item_ids:",
+        old="            if identity.item_id in seen:",
         new="            if False:",
         test=(
             "tests/test_publication_unified.py"
-            "::test_a_repeated_item_does_not_lose_the_category"
+            "::test_a_repeated_item_is_dropped_before_it_reaches_the_bundle"
         ),
     ),
     Probe(
@@ -235,6 +235,62 @@ PROBES: tuple[Probe, ...] = (
         new="    pass",
         test=(
             "tests/test_publication_unified.py::test_main_resets_gaps_between_runs"
+        ),
+    ),
+    Probe(
+        label="a code fetch failure is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old='            collector.add_failure(f"{ds.name}: fetch failed")',
+        new="            pass",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_code_source_fetch_failure_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        label="a resource news fetch failure is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old=(
+            '                collector.add_failure(f"{ds.name}: fetch failed: {exc}")\n'
+            "                continue"
+        ),
+        new="                continue",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_resource_news_source_fetch_failure_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        # Rebuilding from a run that only saw new items drops everything the
+        # earlier run published.
+        label="a partly-covering run merges instead of rebuilding",
+        path="scripts/run_pipelines.py",
+        old=(
+            "    existing_ids = {item.id for item in existing.items}\n"
+            "    if not existing_ids:\n"
+            "        return False"
+        ),
+        new=(
+            "    return True\n"
+            "    existing_ids = {item.id for item in existing.items}\n"
+            "    if not existing_ids:\n"
+            "        return False"
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_rerun_that_brings_new_items_keeps_the_older_ones"
+        ),
+    ),
+    Probe(
+        # A source the bundle never carried has to contribute its prose, even
+        # when another source in the same run did run before.
+        label="a new source's chunk reaches the merged body",
+        path="scripts/run_pipelines.py",
+        old="        if source_name not in bundle_sources",
+        new="        if False",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_new_source_brings_its_prose_even_when_another_source_also_ran"
         ),
     ),
     Probe(

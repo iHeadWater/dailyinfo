@@ -41,6 +41,9 @@ dailyinfo run -f arxiv_cs_ai    # Force regenerate one source
 dailyinfo push                   # Today's briefings
 dailyinfo push -d 2026-04-22    # Specific date
 
+# Resume one failed source into today's briefing (papers/ai_news/arxiv only)
+dailyinfo resume -c papers -s nature
+
 # Other
 dailyinfo status                 # Show today's briefing/pushed counts
 dailyinfo start/stop/restart     # FreshRSS Docker container

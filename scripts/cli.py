@@ -326,6 +326,35 @@ def push(date_str, categories, force):
 
 @cli.command()
 @click.option(
+    "-c",
+    "--category",
+    required=True,
+    type=click.Choice(["papers", "ai_news", "arxiv"]),
+    help="Category to resume (categories that run their sources individually).",
+)
+@click.option(
+    "-s",
+    "--source",
+    required=True,
+    help="Source name as written in config/sources.json (e.g. 'nature').",
+)
+def resume(category, source):
+    """Re-run one source and merge it into today's canonical briefing.
+
+    Recovery for a run that reported a `Canonical publication gaps` line: the
+    named source is re-run on its own, merged into the day's bundle, and only
+    its chunk is posted to Discord; the Web sink re-renders. Today only.
+    """
+    script = SCRIPTS_DIR / "resume_publication.py"
+    result = subprocess.run(
+        [_python(), str(script), "--category", category, "--source", source],
+        cwd=PROJECT_ROOT,
+    )
+    sys.exit(result.returncode)
+
+
+@cli.command()
+@click.option(
     "--sink",
     type=click.Choice(["discord", "web", "all"]),
     default="web",

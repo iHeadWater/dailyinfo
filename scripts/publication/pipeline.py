@@ -218,7 +218,7 @@ class PublicationRunCollector:
         self.failures: list[str] = []
         self.dropped_duplicates: list[str] = []
         self._item_ids: set[str] = set()
-        self._body_parts: list[str] = []
+        self._body_parts: list[tuple[str, str]] = []
         self._pending_seen: list[tuple[Any, list[Any]]] = []
 
     def add_failure(self, message: str) -> None:
@@ -243,6 +243,7 @@ class PublicationRunCollector:
         the finalizer computes.
         """
         kept: list[StructuredItemResult] = []
+        seen = set(self._item_ids)
         for result in results:
             try:
                 identity = resolve_item_input_identity(
@@ -255,23 +256,43 @@ class PublicationRunCollector:
                 # finalization, where it fails the bundle closed as designed.
                 kept.append(result)
                 continue
-            if identity.item_id in self._item_ids:
+            if identity.item_id in seen:
                 self.dropped_duplicates.append(
                     f"{identity.source_name}: {identity.item_id}"
                 )
                 continue
-            self._item_ids.add(identity.item_id)
+            seen.add(identity.item_id)
             kept.append(result)
         return kept
 
     def add(self, results: Iterable[StructuredItemResult]) -> None:
-        """Append results that ``take_new`` already filtered for this category."""
+        """Append results that ``take_new`` accepted, claiming their identities.
+
+        The claim happens here, not in ``take_new``, so an item is only counted
+        as collected once it really is.  A caller that retries an item after its
+        render or write failed would otherwise find its own id already claimed
+        and drop the retry as a duplicate of itself.
+        """
         for result in results:
+            try:
+                identity = resolve_item_input_identity(
+                    self._input_for(result, published_at=_IDENTITY_ONLY_TIMESTAMP)
+                )
+            except PublicationValidationError:
+                pass
+            else:
+                self._item_ids.add(identity.item_id)
             self.results.append(result)
 
-    def add_body(self, body: str) -> None:
+    def add_body(self, body: str, *, source_name: str) -> None:
+        """Append one source's rendered Markdown.
+
+        The source is recorded with the chunk because merging a partly-covered
+        run has to decide per source whether its prose is already in the
+        bundle; a single joined string cannot answer that.
+        """
         if body.strip():
-            self._body_parts.append(body.strip())
+            self._body_parts.append((source_name, body.strip()))
 
     def defer_seen(self, data_source: Any, items: list[Any]) -> None:
         """Defer source dedup-state mutation until canonical persistence succeeds."""
@@ -286,7 +307,12 @@ class PublicationRunCollector:
 
     @property
     def body(self) -> str:
-        return "\n\n".join(self._body_parts)
+        return "\n\n".join(chunk for _source, chunk in self._body_parts)
+
+    @property
+    def body_parts(self) -> list[tuple[str, str]]:
+        """The rendered chunks, each paired with the source that produced it."""
+        return list(self._body_parts)
 
     def _input_for(
         self, result: StructuredItemResult, *, published_at: datetime

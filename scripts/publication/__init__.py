@@ -39,6 +39,7 @@ from .pipeline import (
     structured_entries,
     structured_prompt,
 )
+from .finalizer import resolve_item_input_identity
 from .merge import merge_bundle
 from .serialization import (
     briefing_content_hash,
@@ -118,6 +119,7 @@ __all__ = [
     "StructuredResultError",
     "CorruptPublicationError",
     "merge_bundle",
+    "resolve_item_input_identity",
     "deserialize_bundle",
     "serialize_bundle",
     "source_namespace",

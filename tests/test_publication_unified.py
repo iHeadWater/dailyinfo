@@ -54,7 +54,9 @@ def _collector_with_one_source(category, source_name, url="https://example.org/a
     )
     collector = PublicationRunCollector(category)
     collector.add(results)
-    collector.add_body(f"# {source_name}\n\n{results[0].summary}")
+    collector.add_body(
+        f"# {source_name}\n\n{results[0].summary}", source_name=source_name
+    )
     return collector
 
 
@@ -85,6 +87,7 @@ def test_a_repeated_item_is_dropped_before_it_reaches_the_bundle():
     repeat = _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
 
     kept = collector.take_new(first)
+    collector.add(kept)
     dropped = collector.take_new(repeat)
 
     assert len(kept) == 1
@@ -108,7 +111,9 @@ def test_a_repeated_item_does_not_lose_the_category(monkeypatch):
     collector.take_new(
         _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
     )
-    collector.add_body("# nature\n\nStructured summary for item-0001.")
+    collector.add_body(
+        "# nature\n\nStructured summary for item-0001.", source_name="nature"
+    )
 
     rp._finalize_category_publication("papers", collector)
 
@@ -125,7 +130,10 @@ def _bundle_for(source_name, url, external_id=None):
     """A finalized one-source bundle, plus the chunk that produced its body."""
     collector = PublicationRunCollector("papers")
     collector.add(_results_for(source_name, url, external_id))
-    collector.add_body(f"# {source_name}\n\nStructured summary for item-0001.")
+    collector.add_body(
+        f"# {source_name}\n\nStructured summary for item-0001.",
+        source_name=source_name,
+    )
     published_at = datetime(2026, 8, 27, 2, tzinfo=UTC)
     bundle = PublicationFinalizer().finalize(
         PublicationBriefingInput(
@@ -192,7 +200,7 @@ def _publish_nature():
 
     collector = PublicationRunCollector("papers")
     collector.add(_results_for("nature", "https://www.nature.com/articles/x", "10.1000/x"))
-    collector.add_body("# nature\n\nnature chunk")
+    collector.add_body("# nature\n\nnature chunk", source_name="nature")
     rp._finalize_category_publication("papers", collector)
     return rp
 
@@ -203,7 +211,7 @@ def test_a_resumed_source_is_appended_to_the_day_it_missed():
 
     resumed = PublicationRunCollector("papers")
     resumed.add(_results_for("science", "https://www.science.org/doi/y", "10.1000/y"))
-    resumed.add_body("# science\n\nscience chunk")
+    resumed.add_body("# science\n\nscience chunk", source_name="science")
     rp._finalize_category_publication("papers", resumed)
 
     bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
@@ -214,20 +222,31 @@ def test_a_resumed_source_is_appended_to_the_day_it_missed():
 
 def test_a_forced_single_source_rerun_keeps_the_other_sources():
     """`run -f <source>` must not replace the day's bundle with its one source."""
-    rp = _publish_nature()
+    import run_pipelines as rp
+
+    first = PublicationRunCollector("papers")
+    first.add(_results_for("nature", "https://www.nature.com/articles/x", "10.1000/x"))
+    first.add(_results_for("science", "https://www.science.org/doi/y", "10.1000/y"))
+    first.add_body("# nature\n\nnature chunk", source_name="nature")
+    first.add_body("# science\n\nscience chunk", source_name="science")
+    rp._finalize_category_publication("papers", first)
 
     rerun = PublicationRunCollector("papers")
-    rerun.add(_results_for("nature", "https://www.nature.com/articles/x", "10.1000/x"))
-    rerun.add(_results_for("nature", "https://www.nature.com/articles/x2", "10.1000/x2"))
-    rerun.add_body("# nature\n\nnature chunk rewritten")
+    rerun.add(
+        _results_for("nature", "https://www.nature.com/articles/x2", "10.1000/x2")
+    )
+    rerun.add_body("# nature\n\nnature chunk rewritten", source_name="nature")
     rp._finalize_category_publication("papers", rerun)
 
     bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
-    assert {item.source.name for item in bundle.items} == {"nature"}
-    assert len(bundle.items) == 2
+    assert {item.source.name for item in bundle.items} == {"nature", "science"}
+    assert len(bundle.items) == 3
+    # The source that did not re-run keeps both its item and its prose.
+    assert "science chunk" in bundle.briefing.body
+    assert "nature chunk" in bundle.briefing.body
     # The re-run's own rendering is not appended: it would duplicate the prose
     # the bundle already carries for that source.
-    assert bundle.briefing.body.count("nature chunk") == 1
+    assert "nature chunk rewritten" not in bundle.briefing.body
 
 
 def test_a_full_rerun_replaces_the_bundle_without_duplicating_prose():
@@ -236,8 +255,8 @@ def test_a_full_rerun_replaces_the_bundle_without_duplicating_prose():
     full = PublicationRunCollector("papers")
     full.add(_results_for("nature", "https://www.nature.com/articles/x", "10.1000/x"))
     full.add(_results_for("science", "https://www.science.org/doi/y", "10.1000/y"))
-    full.add_body("# nature\n\nnature chunk")
-    full.add_body("# science\n\nscience chunk")
+    full.add_body("# nature\n\nnature chunk", source_name="nature")
+    full.add_body("# science\n\nscience chunk", source_name="science")
     rp._finalize_category_publication("papers", full)
 
     bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
@@ -318,6 +337,95 @@ def test_a_fetch_failure_is_recorded_as_a_gap(monkeypatch):
     assert any("nature" in failure for failure in collector.failures)
 
 
+def _raise(message):
+    def boom():
+        raise RuntimeError(message)
+
+    return boom
+
+
+def test_a_code_source_fetch_failure_is_recorded_as_a_gap(monkeypatch):
+    import run_pipelines as rp
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(rp, "log", lambda *_args: None)
+    monkeypatch.setattr(rp.time, "sleep", lambda *_args: None)
+    monkeypatch.setattr(
+        rp,
+        "_load_sources",
+        lambda: (
+            {
+                "sources": [
+                    {
+                        "name": "github_trending",
+                        "category": "code",
+                        "type": "scrape",
+                        "url": "https://example.org",
+                        "display_name": "GH",
+                    }
+                ]
+            },
+            {},
+            {},
+        ),
+    )
+    ds = SimpleNamespace(
+        name="github_trending",
+        display_name="GH",
+        category="code",
+        fetch=_raise("down"),
+        lookback_hours=24,
+    )
+    monkeypatch.setattr(
+        rp, "DataSource", SimpleNamespace(create=staticmethod(lambda *a, **kw: ds))
+    )
+
+    rp._run_pipeline_code_publication()
+
+    assert any("github_trending" in gap for gap in rp.PUBLICATION_GAPS)
+
+
+def test_a_resource_news_source_fetch_failure_is_recorded_as_a_gap(monkeypatch):
+    import run_pipelines as rp
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(rp, "log", lambda *_args: None)
+    monkeypatch.setattr(
+        rp,
+        "_load_sources",
+        lambda: (
+            {
+                "sources": [
+                    {
+                        "name": "dlut_zhxw",
+                        "category": "resource",
+                        "type": "scrape",
+                        "url": "https://example.org",
+                        "display_name": "DLUT",
+                        "news_group": rp._DLUT_NEWS_GROUP,
+                    }
+                ]
+            },
+            {},
+            {},
+        ),
+    )
+    ds = SimpleNamespace(
+        name="dlut_zhxw",
+        display_name="DLUT",
+        category="resource",
+        fetch=_raise("down"),
+        lookback_hours=24,
+    )
+    monkeypatch.setattr(
+        rp, "DataSource", SimpleNamespace(create=staticmethod(lambda *a, **kw: ds))
+    )
+
+    rp._run_pipeline_resource_publication()
+
+    assert any("dlut_zhxw" in gap for gap in rp.PUBLICATION_GAPS)
+
+
 def test_a_deep_content_fetch_failure_does_not_kill_the_category():
     import run_pipelines as rp
 
@@ -341,7 +449,7 @@ def test_a_finalized_gap_reaches_the_exit_code(monkeypatch):
     def pipeline_with_one_failed_source():
         collector = PublicationRunCollector("code")
         collector.add(_results_for("github_trending", "https://github.com/o/r"))
-        collector.add_body("# chunk")
+        collector.add_body("# chunk", source_name="github_trending")
         collector.add_failure("huggingface: fetch failed")
         rp._finalize_category_publication("code", collector)
         return 1
@@ -363,6 +471,76 @@ def test_main_resets_gaps_between_runs(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["run_pipelines.py", "--pipeline", "4"])
 
     assert rp.main() == 0
+
+
+def test_a_rerun_that_brings_new_items_keeps_the_older_ones():
+    """fetch() is seen-filtered, so a re-run only returns what is new.
+
+    Replacing the bundle with that subset dropped everything the morning run
+    had already published.
+    """
+    rp = _publish_nature()
+
+    afternoon = PublicationRunCollector("papers")
+    afternoon.add(
+        _results_for("nature", "https://www.nature.com/articles/x2", "10.1000/x2")
+    )
+    afternoon.add_body("# nature\n\nnature afternoon chunk", source_name="nature")
+    rp._finalize_category_publication("papers", afternoon)
+
+    bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
+    assert len(bundle.items) == 2
+
+
+def test_a_new_source_brings_its_prose_even_when_another_source_also_ran():
+    rp = _publish_nature()
+
+    run = PublicationRunCollector("papers")
+    run.add(_results_for("nature", "https://www.nature.com/articles/x2", "10.1000/x2"))
+    run.add(_results_for("science", "https://www.science.org/doi/y", "10.1000/y"))
+    run.add_body("# nature\n\nnature new chunk", source_name="nature")
+    run.add_body("# science\n\nscience chunk", source_name="science")
+    rp._finalize_category_publication("papers", run)
+
+    bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
+    # The source the bundle never carried contributes its prose ...
+    assert "science chunk" in bundle.briefing.body
+    # ... the prose it did carry survives ...
+    assert "nature chunk" in bundle.briefing.body
+    # ... and a re-rendered source is not stacked on top of itself.
+    assert "nature new chunk" not in bundle.briefing.body
+
+
+def test_a_retry_after_a_failed_write_is_not_a_duplicate(monkeypatch):
+    """The retry re-runs the same item; it must not be deduped against itself."""
+    import run_pipelines as rp
+
+    item = PipelineItem(
+        "Late paper",
+        "2026-08-27",
+        "https://arxiv.org/abs/2608.99999",
+        extra={"arxiv_id": "2608.99999"},
+    )
+    ds, _seen = _source("arxiv_cs_ai", "arxiv", items=[item])
+    monkeypatch.setattr(rp, "call_ai", lambda prompt, **_kwargs: _response("item-0001"))
+    collector = PublicationRunCollector("arxiv")
+
+    writes = {"n": 0}
+    real_save = rp.save
+
+    def flaky_save(category, filename, content):
+        writes["n"] += 1
+        if writes["n"] == 1:
+            raise OSError("disk full")
+        return real_save(category, filename, content)
+
+    monkeypatch.setattr(rp, "save", flaky_save)
+
+    rp._process_deep_content_source_publication(ds, {}, "stub/model", {}, collector)
+
+    assert len(collector.results) == 1
+    assert collector.dropped_duplicates == []
+    assert collector.failures == []
 
 
 def test_source_failure_publishes_the_successful_part():

@@ -38,44 +38,55 @@ def _input_from_item(item: Item) -> PublicationItemInput:
 def merge_bundle(
     existing: PublicationBundle,
     new_inputs: Iterable[PublicationItemInput],
-    new_body_chunk: str,
+    new_body_chunks: Iterable[str],
     *,
     updated_at: Optional[datetime] = None,
+    dropped: Optional[list[str]] = None,
 ) -> PublicationBundle:
-    """Append one resumed source to an existing bundle.
+    """Fold a partly-covering run into an existing bundle.
 
     A run that covers only part of a category -- a forced single-source re-run
     after that source failed -- must not replace the day's bundle, or every
-    other source disappears from both delivery sinks.  ``new_inputs`` are the
-    items that run produced and ``new_body_chunk`` is the Markdown it rendered;
-    items the bundle already carries are ignored, so re-running a source that
-    partly succeeded adds only what is new.
+    other source disappears from both delivery sinks.  So items are always
+    unioned by identity, never replaced: seen-filtering means a re-run only
+    returns items that are new to it, and taking that subset as the bundle
+    would drop everything the earlier run published.
 
-    The result is a freshly finalized bundle: same identity, more items, and a
-    body that ends with the appended chunk.  The appended chunk keeps its own
-    rendering, which is what lets a resumed source reach Discord on its own
-    (see ``scripts/resume_publication.py``).
+    ``new_body_chunks`` are the Markdown chunks the run rendered for sources
+    the bundle does not already carry; the caller decides which those are (it
+    has the per-source attribution).  A chunk the body already contains is
+    skipped, so re-rendering a source cannot stack its prose on top of itself.
+    Identities dropped as duplicates are appended to ``dropped`` when given, so
+    the caller can report them the same way an in-run duplicate is reported.
     """
+
+    if isinstance(new_body_chunks, str):
+        # A str is iterable, and a bare string would be appended one character
+        # at a time.
+        new_body_chunks = [new_body_chunks]
 
     known_ids = {item.id for item in existing.items}
     item_inputs = [_input_from_item(item) for item in existing.items]
     for item_input in new_inputs:
         try:
-            item_id = resolve_item_input_identity(item_input).item_id
+            identity = resolve_item_input_identity(item_input)
         except PublicationValidationError:
             # Keep it: finalization rejects a malformed item, and that check
             # belongs there rather than here.
             item_inputs.append(item_input)
             continue
-        if item_id in known_ids:
+        if identity.item_id in known_ids:
+            if dropped is not None:
+                dropped.append(f"{identity.source_name}: {identity.item_id}")
             continue
-        known_ids.add(item_id)
+        known_ids.add(identity.item_id)
         item_inputs.append(item_input)
 
     body = existing.briefing.body
-    chunk = new_body_chunk.strip()
-    if chunk:
-        body = f"{body}\n\n{chunk}"
+    for new_body_chunk in new_body_chunks:
+        chunk = new_body_chunk.strip()
+        if chunk and chunk not in body:
+            body = f"{body}\n\n{chunk}"
 
     return PublicationFinalizer().finalize(
         PublicationBriefingInput(

@@ -99,7 +99,9 @@ def test_realistic_five_category_structured_results_finalize(
     )
     collector = PublicationRunCollector(category)
     collector.add(results)
-    collector.add_body(f"# {category}\n\n{results[0].summary}")
+    collector.add_body(
+        f"# {category}\n\n{results[0].summary}", source_name=source_name
+    )
     published_at = datetime(2026, 8, 27, 2, tzinfo=UTC)
     bundle = PublicationFinalizer().finalize(
         PublicationBriefingInput(
