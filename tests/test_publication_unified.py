@@ -616,6 +616,20 @@ def test_an_unopenable_freshrss_db_is_recorded_as_a_gap(monkeypatch):
     assert any("FreshRSS" in failure for failure in collector.failures)
 
 
+def test_push_reports_a_failed_send_as_failed(monkeypatch):
+    """A transport failure is not "already delivered", and must not exit 0."""
+    import push_to_discord as push
+
+    rp = _publish_nature()
+    monkeypatch.setattr(push, "DISCORD_CHANNELS", {"papers": "channel-1"})
+    monkeypatch.setattr(push, "send_to_discord", lambda *args: False)
+    logs: list[str] = []
+    monkeypatch.setattr(push, "log", logs.append)
+
+    assert push.main(rp.DATE, categories=["papers"]) == 1
+    assert any("failed" in line for line in logs), logs
+
+
 def test_a_merged_briefing_is_delivered_again():
     """A merge changes the content, so "already delivered" no longer holds.
 

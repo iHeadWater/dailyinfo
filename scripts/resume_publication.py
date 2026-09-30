@@ -24,6 +24,7 @@ import sys
 import run_pipelines as rp
 from paths import CURRENT_ENV, get_channel_id
 from publication import (
+    DELIVERY_SINKS,
     DeliveryStateStore,
     DeliveryStoreError,
     PublicationRunCollector,
@@ -45,22 +46,25 @@ def log(msg: str) -> None:
     print(f"[{ts}] [env:{CURRENT_ENV}] {msg}", flush=True)
 
 
-def _channel_carries_the_day(briefing_id: str) -> bool:
-    """Whether the Discord channel already has this briefing's earlier content.
+def _delivery_state(briefing_id: str, sink: str):
+    try:
+        return DeliveryStateStore().load(briefing_id, sink)
+    except Exception as exc:
+        log(f"cannot read the {sink} delivery state: {exc}")
+        return None
+
+
+def _carries_the_day(briefing_id: str, sink: str) -> bool:
+    """Whether this sink already has the briefing's earlier content.
 
     Only then is a delta the right thing to post.  If the push never ran, or
-    failed, the channel has nothing to append to and the whole briefing has to
-    go out -- and recording a delta as the day's delivery would lose the rest
-    of it for good.
+    failed, the sink has nothing to append to and the whole briefing has to go
+    out -- recording a delta as the day's delivery would lose the rest of it.
 
     Read before the run: the merge voids the record, so afterwards the state is
     always a tombstone and the answer would always be "no".
     """
-    try:
-        state = DeliveryStateStore().load(briefing_id, "discord")
-    except Exception as exc:
-        log(f"cannot read the Discord delivery state: {exc}")
-        return False
+    state = _delivery_state(briefing_id, sink)
     return state is not None and state.status == "success"
 
 
@@ -113,7 +117,7 @@ def main(category: str, source: str) -> int:
     if before_ids is None:
         log(f"No canonical briefing {briefing_id}: run `dailyinfo run` first.")
         return EXIT_FAILED
-    carries_the_day = _channel_carries_the_day(briefing_id)
+    carries_the_day = _carries_the_day(briefing_id, "discord")
 
     # A collector means publication mode, but the flag has to be set too: the
     # legacy path ignores the collector and marks the fetched items seen, which
@@ -146,8 +150,22 @@ def main(category: str, source: str) -> int:
         if part.source_name == source and set(part.item_ids) & added
     )
 
+    # What the channel holds is the pre-run content.  Anything that appeared in
+    # the bundle since -- beyond what this run added -- is content a supplement
+    # cannot speak for: recording success would mark the day delivered with it
+    # missing from the channel.
+    after_ids = _bundle_item_ids(briefing_id) or set()
+    uncovered = after_ids - before_ids - added
+
     exit_code = EXIT_OK
-    if delta:
+    if delta and carries_the_day and uncovered:
+        log(
+            f"{briefing_id} gained {len(uncovered)} item(s) from another run "
+            f"while {source} was being recovered; a supplement cannot speak for "
+            "those. Run `dailyinfo push` so the channel gets the whole briefing."
+        )
+        exit_code = EXIT_FAILED
+    elif delta:
         # The Web sink goes first: the merge marked it undelivered (a pending
         # tombstone), and if this command stopped before rendering it, the
         # merged content would reach no sink at all.
@@ -170,13 +188,16 @@ def main(category: str, source: str) -> int:
                 exit_code = EXIT_FAILED
     else:
         log(f"{source}: nothing new to add to {briefing_id}")
-        if _discord_status(briefing_id) != "success":
-            # Everything is merged, but the channel never received it -- a
-            # failed delta earlier, or a merge by another path.  A push repairs
-            # that, and this run must not look like a success.
+        missing = [
+            sink for sink in DELIVERY_SINKS if not _carries_the_day(briefing_id, sink)
+        ]
+        if missing:
+            # Everything is merged, but a sink never received it -- a failed
+            # delta earlier, or a merge by another path.  The commands below
+            # repair that, and this run must not look like a success.
             log(
-                f"  Discord still has no delivery for {briefing_id}: "
-                "run `dailyinfo push`"
+                f"  {', '.join(missing)} still has no delivery for {briefing_id}: "
+                "run `dailyinfo push` and `dailyinfo publish --sink web`"
             )
             exit_code = EXIT_FAILED
 
@@ -200,15 +221,6 @@ def _publish_web(category: str) -> int:
     import publish_to_web
 
     return publish_to_web.main(rp.DATE, [category], force=True)
-
-
-def _discord_status(briefing_id: str) -> str | None:
-    try:
-        state = DeliveryStateStore().load(briefing_id, "discord")
-    except Exception as exc:
-        log(f"cannot read the Discord delivery state: {exc}")
-        return None
-    return state.status if state is not None else None
 
 
 def _post_and_record(briefing_id: str, channel: str, payload: str) -> bool:

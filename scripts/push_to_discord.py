@@ -661,9 +661,15 @@ def main(date=None, categories=None, force=False):
             if result.status == "success":
                 delivered += 1
                 log(f"  ✓ {category} canonical briefing delivered")
-            else:
+            elif result.status == "skipped":
                 skipped += 1
                 log(f"  ⊘ {category} already delivered (no Discord call)")
+            else:
+                # A transport failure is not a delivery: counting it as
+                # "skipped" reported the day as delivered and exited 0.
+                failed += 1
+                detail = f": {result.error}" if result.error else ""
+                log(f"  ❌ {category} canonical delivery failed{detail}")
             if archive_errors:
                 failed += 1
                 log(

@@ -426,8 +426,8 @@ PROBES: tuple[Probe, ...] = (
         # had already merged.
         label="a partial resume still delivers what merged",
         path="scripts/resume_publication.py",
-        old="    if delta:",
-        new="    if delta and not collector.failures:",
+        old="    elif delta:",
+        new="    elif delta and not collector.failures:",
         test=(
             "tests/test_resume_publication.py"
             "::test_resume_delivers_the_part_that_merged_before_reporting_failure"
@@ -511,11 +511,41 @@ PROBES: tuple[Probe, ...] = (
         # success: the day still has no Discord content.
         label="a resume reports a delivery that is still missing",
         path="scripts/resume_publication.py",
-        old='        if _discord_status(briefing_id) != "success":',
+        old="        if missing:",
         new="        if False:",
         test=(
             "tests/test_resume_publication.py"
             "::test_resume_signals_a_delivery_that_is_still_missing"
+        ),
+    ),
+    Probe(
+        # A delta cannot speak for content another writer merged while the
+        # resume was working; claiming it loses that content.
+        label="a resume does not claim a day another writer extended",
+        path="scripts/resume_publication.py",
+        old="    if delta and carries_the_day and uncovered:",
+        new="    if False:",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_does_not_claim_a_day_another_writer_extended"
+        ),
+    ),
+    Probe(
+        # Counting a transport failure as "skipped" reported the day as
+        # delivered and exited 0.
+        label="a failed send is counted as failed",
+        path="scripts/push_to_discord.py",
+        old=(
+            "                failed += 1\n"
+            '                detail = f": {result.error}" if result.error else ""'
+        ),
+        new=(
+            "                pass\n"
+            '                detail = f": {result.error}" if result.error else ""'
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_push_reports_a_failed_send_as_failed"
         ),
     ),
     Probe(

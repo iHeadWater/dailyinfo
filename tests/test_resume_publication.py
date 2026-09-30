@@ -55,22 +55,25 @@ def _publish(category, source_name, url, external_id, chunk):
     rp._finalize_category_publication(category, collector)
 
 
-def _mark_delivered(briefing_id: str, *, sink: str = "discord", status: str = "success"):
-    from publication import DELIVERY_SCHEMA_VERSION, DeliveryState, DeliveryStateStore
+def _mark_delivered(briefing_id: str, *, status: str = "success"):
+    """Record the state a completed day leaves: both sinks delivered."""
+    from publication import DELIVERY_SCHEMA_VERSION, DELIVERY_SINKS, DeliveryState
+    from publication import DeliveryStateStore
 
     now = datetime(2026, 8, 27, 1, tzinfo=UTC)
-    DeliveryStateStore().save(
-        DeliveryState(
-            schema_version=DELIVERY_SCHEMA_VERSION,
-            briefing_id=briefing_id,
-            sink=sink,
-            status=status,
-            attempt_count=1 if status != "pending" else 0,
-            first_attempted_at=now if status != "pending" else None,
-            last_attempted_at=now if status != "pending" else None,
-            delivered_at=now if status == "success" else None,
+    for sink in DELIVERY_SINKS:
+        DeliveryStateStore().save(
+            DeliveryState(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                briefing_id=briefing_id,
+                sink=sink,
+                status=status,
+                attempt_count=1 if status != "pending" else 0,
+                first_attempted_at=now if status != "pending" else None,
+                last_attempted_at=now if status != "pending" else None,
+                delivered_at=now if status == "success" else None,
+            )
         )
-    )
 
 
 @pytest.fixture
@@ -489,7 +492,7 @@ def test_a_merge_during_the_resume_send_wins(resume_env, monkeypatch):
 
 def test_resume_signals_a_delivery_that_is_still_missing(resume_env, monkeypatch):
     """Retrying a resume whose delta failed must not look like success."""
-    from publication import DELIVERY_SCHEMA_VERSION, DeliveryState, DeliveryStateStore
+    from publication import DeliveryStateStore
 
     resume, _sent, _web = resume_env
     import run_pipelines as rp
@@ -502,9 +505,49 @@ def test_resume_signals_a_delivery_that_is_still_missing(resume_env, monkeypatch
         return 0
 
     monkeypatch.setattr(rp, "_run_category_pipeline", run_nothing_new)
+    logs: list[str] = []
+    monkeypatch.setattr(resume, "log", logs.append)
 
     assert resume.main("papers", "science") == 1
-    del DELIVERY_SCHEMA_VERSION, DeliveryState
+    assert any("dailyinfo push" in line for line in logs), logs
+
+
+def test_resume_does_not_claim_a_day_another_writer_extended(
+    resume_env, monkeypatch
+):
+    """The channel holds the pre-run content; a delta cannot speak for a co-writer's.
+
+    A cron run (or another resume) that merges while this one is working puts
+    content in the bundle the delta does not carry -- recording success would
+    mark the day delivered with that content missing from the channel.
+    """
+    resume, sent, web = resume_env
+    import run_pipelines as rp
+
+    def run_with_a_co_writer(
+        category,
+        *,
+        create_marker=False,
+        deep_content=False,
+        collector=None,
+        only_source=None,
+    ):
+        other = PublicationRunCollector("papers")
+        other.add(_results_for("cell", "https://www.cell.com/x", "10.1000/cell"))
+        other.add_body("# cell\n\ncell chunk", source_name="cell")
+        rp._finalize_category_publication("papers", other)
+
+        collector.add(
+            _results_for("science", "https://www.science.org/doi/y", "10.1000/y")
+        )
+        collector.add_body("# science\n\nscience chunk", source_name="science")
+        rp._finalize_category_publication(category, collector)
+        return 1
+
+    monkeypatch.setattr(rp, "_run_category_pipeline", run_with_a_co_writer)
+
+    assert resume.main("papers", "science") == 1
+    assert sent == []
 
 
 def test_resume_records_the_delta_it_posted(resume_env):
