@@ -13,7 +13,9 @@ Usage:
 """
 
 import argparse
+from contextlib import contextmanager
 import datetime
+import fcntl
 import json
 import os
 import re
@@ -652,7 +654,13 @@ def _already_pushed_within(name: str, category: str, lookback_hours: int) -> boo
 
     Used to skip redundant AI calls on low-frequency (weekly/biweekly) sources
     where lookback_hours > 24 and we don't want to regenerate the same window.
+    ``--force`` overrides it, the same way it overrides
+    ``_has_real_briefing_today``: without that, resuming a low-frequency source
+    fetched nothing, because its own recent archive still sat inside the
+    window, and the command reported success.
     """
+    if _is_forced(name):
+        return False
     pushed_dir = PUSHED_DIR / category
     if not pushed_dir.is_dir():
         return False
@@ -886,6 +894,59 @@ def _render_resource_publication(
     return "\n\n".join(blocks)
 
 
+def _save_placeholder(directory: str, filename: str, text: str) -> None:
+    """Save a placeholder, without overwriting a real briefing on disk.
+
+    A second run of the same day -- a resume, a manual re-run -- would
+    otherwise replace delivered Markdown with a zero-item notice, which also
+    flips ``_has_real_briefing_today`` and the status counts.
+    """
+    path = BRIEFINGS_DIR / directory / filename
+    try:
+        existing = path.read_text(encoding="utf-8")
+    except OSError:
+        existing = ""
+    if existing and "📭 过去" not in existing and "⚠️" not in existing:
+        log(f"    keeping the existing {filename}: a placeholder would replace it")
+        return
+    save(directory, filename, text)
+
+
+@contextmanager
+def _store_lock():
+    """Serialise load-merge-save on the canonical store across processes.
+
+    ``dailyinfo resume`` runs outside the scheduled slot and can overlap a cron
+    run.  Both would load the same bundle and the later save would win, so the
+    other's merged source is silently gone -- with both sinks already reporting
+    the day as delivered.
+    """
+    root = PublicationStore().root
+    root.mkdir(parents=True, exist_ok=True)
+    handle = (root / ".lock").open("a+", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def _published_item_ids(category: str) -> set[str]:
+    """The identities today's briefing for ``category`` already carries.
+
+    A run seeds its collector with these, so an item that is somehow fetched
+    again (seen state lost, operator hand-merge) is not re-rendered: a chunk
+    that mixes an already-published item with a new one would otherwise bring
+    the old item's prose with it and duplicate it in the body.
+    """
+    try:
+        bundle = PublicationStore().load_bundle(f"{category}-{DATE}")
+    except Exception:
+        return set()
+    return {item.id for item in bundle.items}
+
+
 def _finalize_category_publication(
     category: str, collector: PublicationRunCollector
 ) -> None:
@@ -923,14 +984,15 @@ def _finalize_category_publication(
         )
     published_at = now_utc()
     try:
-        store = PublicationStore()
-        try:
-            existing = store.load_bundle(publication_id)
-        except FileNotFoundError:
-            existing = None
-        bundle = _finalize_run(category, collector, existing, published_at)
-        result = store.save(bundle)
-        collector.commit_deferred_seen()
+        with _store_lock():
+            store = PublicationStore()
+            try:
+                existing = store.load_bundle(publication_id)
+            except FileNotFoundError:
+                existing = None
+            bundle = _finalize_run(category, collector, existing, published_at)
+            result = store.save(bundle)
+            collector.commit_deferred_seen()
     except Exception as exc:
         log(
             f"  publication_id={publication_id} category={category} "
@@ -967,10 +1029,12 @@ def _finalize_run(
     from both delivery sinks.  So a run that does not re-cover every source the
     bundle already has is merged instead:
 
-    - nothing in common -- the resumed source missed that day: append its body,
-      so its prose joins the bundle it was absent from;
-    - otherwise: merge the items and keep the existing body, because appending
-      a re-rendered source would duplicate prose the bundle already carries.
+    - a chunk is appended when any of the identities it was rendered from is
+      new to the bundle, which is what lets a resumed source contribute prose
+      without stacking a re-render on top of itself;
+    - items are always unioned, never replaced: ``fetch`` is seen-filtered, so
+      a re-run sees only new items and taking that subset as the bundle would
+      drop everything published earlier.
 
     A run that re-covers every source of the bundle is a rebuild, and its body
     replaces the old one rather than stacking on it.
@@ -1065,7 +1129,7 @@ def _process_regular_source_publication(
     except Exception as exc:
         log(f"    FETCH ERR: {exc}")
         collector.add_failure(f"{name}: fetch failed: {exc}")
-        save(
+        _save_placeholder(
             category,
             f"{name}_briefing_{DATE}.md",
             f"# {ds.display_name} - {DATE}\n\n⚠️ 获取失败\n",
@@ -1075,7 +1139,7 @@ def _process_regular_source_publication(
     if not items:
         log(f"  {name}: 0 new articles - placeholder")
         collector.defer_seen(ds, items)
-        save(
+        _save_placeholder(
             category,
             f"{name}_briefing_{DATE}.md",
             f"# {ds.display_name} - {DATE}\n\n"
@@ -1158,6 +1222,7 @@ def _process_regular_source_publication(
 
     # Filter before rendering: the body and the item list have to describe the
     # same set, or the Markdown would keep a paragraph the bundle dropped.
+    published: list = []
     structured_results = collector.take_new(structured_results)
     if structured_results:
         try:
@@ -1165,13 +1230,14 @@ def _process_regular_source_publication(
             save(category, f"{name}_briefing_{DATE}.md", content)
         except Exception as exc:
             # One source's write failure must not take the category down, and
-            # the items stay out of the bundle (and unseen), so the next run
+            # the items stay out of the bundle and out of seen, so the next run
             # retries them.
             log(f"    WRITE ERR: {exc}")
             collector.add_failure(f"{name}: briefing write failed: {exc}")
         else:
             collector.add(structured_results)
             collector.add_body(content, source_name=name)
+            published = structured_results
             log(f"    -> saved {name}_briefing_{DATE}.md")
     if failed_items:
         # Preserve the existing retry/placeholder behavior for legacy sinks;
@@ -1182,9 +1248,9 @@ def _process_regular_source_publication(
             _make_placeholder_briefing(ds, failed_items),
         )
     # Only what was published is marked seen.  Seen state never expires, so
-    # committing a failed item here would lose it for good instead of leaving
-    # it for the next run to retry.
-    collector.defer_seen(ds, [result.raw_item for result in structured_results])
+    # committing an item whose write or AI call failed would lose it for good
+    # instead of leaving it for the next run to retry.
+    collector.defer_seen(ds, [result.raw_item for result in published])
     return 1 if structured_results or failed_items else 0
 
 
@@ -1268,8 +1334,14 @@ def _process_deep_content_source_publication(
             except Exception as retry_exc:
                 collector.add_failure(f"{name} item {index}: {retry_exc}")
                 filename = f"{name}_briefing_{DATE}_failed{index}.md"
-                save(category, filename, _make_placeholder_briefing(ds, [item]))
-                saved += 1
+                try:
+                    save(category, filename, _make_placeholder_briefing(ds, [item]))
+                except Exception as save_exc:
+                    # Still full disk: record it instead of aborting the whole
+                    # category, which is what this used to do.
+                    log(f"    WRITE ERR: {save_exc}")
+                else:
+                    saved += 1
                 # Deliberately not committed to seen: seen state never expires,
                 # so a failed item committed here could never be retried.
 
@@ -1344,7 +1416,9 @@ def _process_regular_source(
     # path: the collector stayed empty and the legacy path marked the items
     # seen, so the content it fetched was lost rather than published.
     if PUBLICATION_INTEGRATION or collector is not None:
-        own_collector = collector or PublicationRunCollector(ds.category)
+        own_collector = collector or PublicationRunCollector(
+            ds.category, known_item_ids=_published_item_ids(ds.category)
+        )
         saved = _process_regular_source_publication(
             ds, feed_cfg, model_default, templates, default_tmpl_key, own_collector
         )
@@ -1448,7 +1522,9 @@ def _process_deep_content_source(
     Returns number of files saved.
     """
     if PUBLICATION_INTEGRATION:
-        collector = PublicationRunCollector(ds.category)
+        collector = PublicationRunCollector(
+            ds.category, known_item_ids=_published_item_ids(ds.category)
+        )
         saved = _process_deep_content_source_publication(
             ds, feed_cfg, model_default, templates, collector
         )
@@ -1536,7 +1612,9 @@ def _run_category_pipeline(
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
     publication_collector = collector
     if publication_collector is None and PUBLICATION_INTEGRATION:
-        publication_collector = PublicationRunCollector(category)
+        publication_collector = PublicationRunCollector(
+            category, known_item_ids=_published_item_ids(category)
+        )
 
     # --- RSS sources ---
     try:
@@ -1546,6 +1624,12 @@ def _run_category_pipeline(
         log(f"Pipeline {category} FAILED: cannot open FreshRSS DB ({e})")
         log(f"  DB path: {FRESHRSS_DB}")
         log(f"  Fix: set FRESHRSS_USER={user} in .env, or correct the username.")
+        if publication_collector is not None:
+            # A resume asked for one source and got nothing; without this it
+            # would report "nothing new" for a database it could not read.
+            publication_collector.add_failure(
+                f"{category}: cannot open the FreshRSS DB ({e})"
+            )
         return 0
     db.row_factory = sqlite3.Row
     for name in _ensure_rss_subscriptions(cfg, db, category):
@@ -1659,7 +1743,9 @@ def _run_pipeline_code_publication() -> int:
     cfg, defaults, templates = _load_sources()
     model_default = defaults.get("model", "deepseek-v4-flash")
     code_tmpl = templates.get("code_trending", "")
-    collector = PublicationRunCollector("code")
+    collector = PublicationRunCollector(
+        "code", known_item_ids=_published_item_ids("code")
+    )
     saved = 0
 
     for source_cfg in cfg["sources"]:
@@ -1850,7 +1936,9 @@ def _run_pipeline_resource_publication() -> int:
     log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
     model_default = defaults.get("model", "deepseek-v4-flash")
-    collector = PublicationRunCollector("resource")
+    collector = PublicationRunCollector(
+        "resource", known_item_ids=_published_item_ids("resource")
+    )
     saved = 0
 
     news_sources = [

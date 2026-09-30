@@ -532,6 +532,93 @@ def test_a_new_source_brings_its_prose_even_when_another_source_also_ran():
     assert "nature new chunk" in bundle.briefing.body
 
 
+def test_the_store_lock_serialises_writers():
+    """A resume can overlap a cron run; two merges from one base lose one."""
+    import threading
+
+    import run_pipelines as rp
+
+    order: list[str] = []
+    started = threading.Event()
+
+    def second_writer():
+        started.set()
+        with rp._store_lock():
+            order.append("second")
+
+    with rp._store_lock():
+        thread = threading.Thread(target=second_writer)
+        thread.start()
+        started.wait(timeout=5)
+        order.append("first")
+    thread.join(timeout=5)
+
+    assert order == ["first", "second"]
+
+
+def test_force_bypasses_the_low_frequency_skip(tmp_path, monkeypatch):
+    """A resumed low-frequency source used to be skipped by its own archive.
+
+    Four configured sources have a lookback above 24h, and yesterday's archive
+    sits inside that window -- so `resume` reported success while fetching
+    nothing.
+    """
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "PUSHED_DIR", tmp_path / "pushed")
+    archive = rp.PUSHED_DIR / "papers"
+    archive.mkdir(parents=True)
+    (archive / f"skxjz_briefing_{rp.DATE}.md").write_text("archived", encoding="utf-8")
+
+    rp.FORCE_ALL = False
+    rp.FORCE_SOURCES = set()
+    assert rp._already_pushed_within("skxjz", "papers", 48) is True
+
+    rp.FORCE_SOURCES = {"skxjz"}
+    assert rp._already_pushed_within("skxjz", "papers", 48) is False
+
+
+def test_a_write_failure_leaves_that_source_fetchable(monkeypatch):
+    """A failed write must not mark the item seen: seen state never expires."""
+    import run_pipelines as rp
+
+    bad = PipelineItem(
+        "Bad write", "2026-08-27", "https://example.org/bad", extra={"item_id": "bad"}
+    )
+    good = PipelineItem(
+        "Good write",
+        "2026-08-27",
+        "https://example.org/good",
+        extra={"item_id": "good"},
+    )
+    ds_bad, seen_bad = _source("nature", "papers", items=[bad])
+    ds_good, seen_good = _source("science", "papers", items=[good])
+    monkeypatch.setattr(rp, "call_ai", lambda prompt, **_kwargs: _response("item-0001"))
+
+    real_save = rp.save
+
+    def flaky_save(category, filename, content):
+        if "nature" in filename:
+            raise OSError("disk full")
+        return real_save(category, filename, content)
+
+    monkeypatch.setattr(rp, "save", flaky_save)
+
+    collector = PublicationRunCollector("papers")
+    templates = {"one_line_summary": "Summarize {article_list}"}
+    rp._process_regular_source_publication(
+        ds_bad, {}, "stub/model", templates, "one_line_summary", collector
+    )
+    rp._process_regular_source_publication(
+        ds_good, {}, "stub/model", templates, "one_line_summary", collector
+    )
+    rp._finalize_category_publication("papers", collector)
+
+    assert seen_bad == []
+    assert [item.url for item in seen_good] == ["https://example.org/good"]
+    assert any("nature" in failure for failure in collector.failures)
+
+
 def test_a_retry_after_a_failed_write_is_not_a_duplicate(monkeypatch):
     """The retry re-runs the same item; it must not be deduped against itself."""
     import run_pipelines as rp

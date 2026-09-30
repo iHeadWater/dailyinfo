@@ -188,7 +188,7 @@ PROBES: tuple[Probe, ...] = (
         # instead of leaving it for the next run to retry.
         label="a failed item is not marked seen",
         path="scripts/run_pipelines.py",
-        old="    collector.defer_seen(ds, [result.raw_item for result in structured_results])",
+        old="    collector.defer_seen(ds, [result.raw_item for result in published])",
         new="    collector.defer_seen(ds, items)",
         test=(
             "tests/test_publication_unified.py"
@@ -202,10 +202,10 @@ PROBES: tuple[Probe, ...] = (
         path="scripts/run_pipelines.py",
         old=(
             '        collector.add_failure(f"{name}: fetch failed: {exc}")\n'
-            "        save(\n"
+            "        _save_placeholder(\n"
             "            category,"
         ),
-        new=("        save(\n" "            category,"),
+        new=("        _save_placeholder(\n" "            category,"),
         test=(
             "tests/test_publication_unified.py"
             "::test_a_fetch_failure_is_recorded_as_a_gap"
@@ -310,13 +310,76 @@ PROBES: tuple[Probe, ...] = (
         label="the resume delta carries only the resumed source",
         path="scripts/resume_publication.py",
         old=(
-            "        part.text for part in collector.body_parts "
-            "if part.source_name == source"
+            "        if part.source_name == source and set(part.item_ids) & added"
         ),
-        new="        part.text for part in collector.body_parts",
+        new="        if set(part.item_ids) & added",
         test=(
             "tests/test_resume_publication.py"
             "::test_resume_posts_only_the_requested_source_chunk"
+        ),
+    ),
+    Probe(
+        # A failed write that still marks the item seen loses it for good.
+        label="a failed write does not mark the item seen",
+        path="scripts/run_pipelines.py",
+        old="    collector.defer_seen(ds, [result.raw_item for result in published])",
+        new="    collector.defer_seen(ds, [result.raw_item for result in structured_results])",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_write_failure_leaves_that_source_fetchable"
+        ),
+    ),
+    Probe(
+        # Resuming must not re-run (and re-bill) the sources it was not asked
+        # about.
+        label="a resume dispatches only the source it was given",
+        path="scripts/run_pipelines.py",
+        old=(
+            '    for source_cfg in _filter_sources(cfg, category, "scrape", "api"):\n'
+            "        ds = DataSource.create(source_cfg, defaults)\n"
+            "        if only_source is not None and ds.name != only_source:\n"
+            "            continue"
+        ),
+        new=(
+            '    for source_cfg in _filter_sources(cfg, category, "scrape", "api"):\n'
+            "        ds = DataSource.create(source_cfg, defaults)\n"
+            "        if False:\n"
+            "            continue"
+        ),
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_dispatches_only_the_requested_source"
+        ),
+    ),
+    Probe(
+        # The delta is what the merge kept, not what the run rendered.
+        label="the resume delta is what the merge kept",
+        path="scripts/resume_publication.py",
+        old="        if part.source_name == source and set(part.item_ids) & added",
+        new="        if part.source_name == source",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_does_not_post_a_chunk_the_merge_dropped"
+        ),
+    ),
+    Probe(
+        # Without the force override, a low-frequency source is skipped by its
+        # own recent archive and a resume silently does nothing.
+        label="force bypasses the low-frequency skip",
+        path="scripts/run_pipelines.py",
+        old=(
+            "    if _is_forced(name):\n"
+            "        return False\n"
+            "    pushed_dir = PUSHED_DIR / category"
+        ),
+        new=(
+            "    if False:\n"
+            "        return False\n"
+            "    pushed_dir = PUSHED_DIR / category"
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_force_bypasses_the_low_frequency_skip"
         ),
     ),
     Probe(

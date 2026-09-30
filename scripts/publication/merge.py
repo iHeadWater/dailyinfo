@@ -52,9 +52,9 @@ def merge_bundle(
     returns items that are new to it, and taking that subset as the bundle
     would drop everything the earlier run published.
 
-    ``new_body_chunks`` are the Markdown chunks the run rendered for sources
-    the bundle does not already carry; the caller decides which those are (it
-    has the per-source attribution).  A chunk the body already contains is
+    ``new_body_chunks`` are the Markdown chunks the run rendered from items the
+    bundle does not yet carry; the caller decides which those are (each chunk
+    records the identities it was rendered from).  A chunk the body already contains is
     skipped, so re-rendering a source cannot stack its prose on top of itself.
     Identities dropped as duplicates are appended to ``dropped`` when given, so
     the caller can report them the same way an in-run duplicate is reported.

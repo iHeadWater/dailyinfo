@@ -227,12 +227,18 @@ class BodyChunk:
 class PublicationRunCollector:
     """Collect one category's structured results before one canonical finalize."""
 
-    def __init__(self, category: str) -> None:
+    def __init__(
+        self, category: str, *, known_item_ids: Iterable[str] = ()
+    ) -> None:
+        """``known_item_ids`` seeds the dedup filter with what is already
+        published for this category and date, so a run that somehow re-fetches
+        an item does not render it again."""
+
         self.category = category
         self.results: list[StructuredItemResult] = []
         self.failures: list[str] = []
         self.dropped_duplicates: list[str] = []
-        self._item_ids: set[str] = set()
+        self._item_ids: set[str] = set(known_item_ids)
         self._body_parts: list[BodyChunk] = []
         self._pending_ids: dict[str, list[str]] = {}
         self._pending_seen: list[tuple[Any, list[Any]]] = []

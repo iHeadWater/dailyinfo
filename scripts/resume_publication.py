@@ -39,6 +39,15 @@ def log(msg: str) -> None:
     print(f"[{ts}] [env:{CURRENT_ENV}] {msg}", flush=True)
 
 
+def _bundle_item_ids(briefing_id: str) -> set[str] | None:
+    """The identities today's briefing carries, or None when it has no briefing."""
+    try:
+        bundle = PublicationStore().load_bundle(briefing_id)
+    except FileNotFoundError:
+        return None
+    return {item.id for item in bundle.items}
+
+
 def _known_sources(category: str) -> list[str]:
     cfg, _defaults, _templates = rp._load_sources()
     return [
@@ -46,6 +55,9 @@ def _known_sources(category: str) -> list[str]:
         for source in cfg.get("sources", [])
         if source.get("category") == category
         and source.get("enabled", True) is not False
+        # Only these are dispatched per source; a source without a type is
+        # "known" but never runs, which would look like a successful no-op.
+        and source.get("type") in ("rss", "scrape", "api")
     ]
 
 
@@ -69,12 +81,12 @@ def main(category: str, source: str) -> int:
 
     briefing_id = f"{category}-{rp.DATE}"
     try:
-        PublicationStore().load_bundle(briefing_id)
-    except FileNotFoundError:
-        log(f"No canonical briefing {briefing_id}: run `dailyinfo run` first.")
-        return EXIT_FAILED
+        before_ids = _bundle_item_ids(briefing_id)
     except Exception as exc:
         log(f"Cannot read {briefing_id}: {exc}")
+        return EXIT_FAILED
+    if before_ids is None:
+        log(f"No canonical briefing {briefing_id}: run `dailyinfo run` first.")
         return EXIT_FAILED
 
     # A collector means publication mode, but the flag has to be set too: the
@@ -83,7 +95,7 @@ def main(category: str, source: str) -> int:
     rp.PUBLICATION_INTEGRATION = True
     rp.FORCE_ALL = False
     rp.FORCE_SOURCES = {source}
-    collector = PublicationRunCollector(category)
+    collector = PublicationRunCollector(category, known_item_ids=before_ids)
     try:
         rp._run_category_pipeline(
             category,
@@ -96,33 +108,41 @@ def main(category: str, source: str) -> int:
         log(f"Re-running {source} failed: {exc}")
         return EXIT_FAILED
 
-    if collector.failures:
-        log(
-            f"{source} failed again: " + "; ".join(collector.failures)
-        )
-        return EXIT_FAILED
-
+    # What the merge actually kept, not what the run rendered: a chunk whose
+    # items the bundle already had was dropped, so posting it would repeat
+    # content the channel already shows.
+    added = _bundle_item_ids(briefing_id) - before_ids
     delta = "\n\n".join(
-        part.text for part in collector.body_parts if part.source_name == source
+        part.text
+        for part in collector.body_parts
+        if part.source_name == source and set(part.item_ids) & added
     )
-    if not delta:
+
+    exit_code = EXIT_OK
+    if delta:
+        # The Web sink goes first: its delivery state for the day is already
+        # `success`, so if this command stopped before rendering it, the merged
+        # content would reach no sink at all.
+        exit_code = _publish_web(category)
+        channel = get_channel_id(category)
+        if not channel:
+            log(f"{category}: no Discord channel configured; skipped the delta.")
+        else:
+            header = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n"
+            if not send_to_discord(channel, header + delta):
+                log(f"Discord delivery failed for {source}; the briefing was updated.")
+                exit_code = EXIT_FAILED
+    else:
         log(f"{source}: nothing new to add to {briefing_id}")
-        return EXIT_OK
 
-    # The Web sink goes first: its delivery state for the day is already
-    # `success`, so if this command stopped here the merged content would reach
-    # no sink at all.
-    exit_code = _publish_web(category)
-
-    channel = get_channel_id(category)
-    if not channel:
-        log(f"{category}: no Discord channel configured; skipped the delta.")
-        return exit_code
-
-    header = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n"
-    if not send_to_discord(channel, header + delta):
-        log(f"Discord delivery failed for {source}; the briefing itself was updated.")
-        return EXIT_FAILED
+    if collector.failures:
+        # The part that succeeded is merged and delivered; say what is still
+        # missing, and do not report success.
+        log(
+            f"{source} is still incomplete ({len(added)} item(s) merged): "
+            + "; ".join(collector.failures)
+        )
+        exit_code = EXIT_FAILED
     return exit_code
 
 

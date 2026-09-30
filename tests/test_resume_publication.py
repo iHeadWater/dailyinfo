@@ -75,8 +75,8 @@ def resume_env(monkeypatch):
         lambda: (
             {
                 "sources": [
-                    {"name": "nature", "category": "papers"},
-                    {"name": "science", "category": "papers"},
+                    {"name": "nature", "category": "papers", "type": "rss"},
+                    {"name": "science", "category": "papers", "type": "rss"},
                 ]
             },
             {},
@@ -216,6 +216,132 @@ def test_resume_sends_only_the_chunk_it_recovered(resume_env):
     assert web == ["papers"]
 
 
+def test_resume_dispatches_only_the_requested_source(monkeypatch):
+    """The command promises one source's AI spend; the others must not run."""
+    from types import SimpleNamespace
+
+    import resume_publication as resume
+    import run_pipelines as rp
+
+    _publish(
+        "papers",
+        "nature",
+        "https://www.nature.com/articles/x",
+        "10.1000/x",
+        "# nature\n\nnature chunk",
+    )
+
+    sources = [
+        {
+            "name": "nature",
+            "category": "papers",
+            "type": "scrape",
+            "url": "https://www.nature.com",
+        },
+        {
+            "name": "science",
+            "category": "papers",
+            "type": "scrape",
+            "url": "https://www.science.org",
+        },
+    ]
+    monkeypatch.setattr(
+        rp,
+        "_load_sources",
+        lambda: (
+            {"sources": sources},
+            {},
+            {"one_line_summary": "Summarize {article_list}"},
+        ),
+    )
+    fetched: list[str] = []
+
+    def make_ds(source_cfg, *_args, **_kwargs):
+        name = source_cfg["name"]
+
+        def fetch():
+            fetched.append(name)
+            return [
+                PipelineItem(
+                    f"{name} item",
+                    "2026-08-27",
+                    f"https://example.org/{name}",
+                    extra={"doi": f"10.1000/{name}"},
+                )
+            ]
+
+        return SimpleNamespace(
+            name=name,
+            category="papers",
+            display_name=name,
+            lookback_hours=24,
+            fetch=fetch,
+            get_batches=lambda values: [values],
+            format_items=lambda values: "stub",
+            commit_seen=lambda values: None,
+        )
+
+    monkeypatch.setattr(
+        rp, "DataSource", SimpleNamespace(create=staticmethod(make_ds))
+    )
+    monkeypatch.setattr(
+        rp,
+        "sqlite3",
+        SimpleNamespace(
+            connect=lambda *a, **kw: SimpleNamespace(
+                row_factory=None, execute=lambda *a, **kw: None, close=lambda: None
+            ),
+            Row=object,
+        ),
+    )
+    monkeypatch.setattr(rp, "build_feed_url_map", lambda db: ({}, {}))
+    monkeypatch.setattr(rp, "_ensure_rss_subscriptions", lambda cfg, db, category: [])
+    monkeypatch.setattr(rp, "call_ai", lambda prompt, **_kwargs: _response())
+    monkeypatch.setattr(resume, "send_to_discord", lambda *args: True)
+    monkeypatch.setattr(resume, "get_channel_id", lambda category: "channel-1")
+    monkeypatch.setattr(resume, "_publish_web", lambda category: 0)
+
+    assert resume.main("papers", "science") == 0
+    assert fetched == ["science"]
+
+
+def test_resume_does_not_post_a_chunk_the_merge_dropped(resume_env, monkeypatch):
+    """The delta is what the merge kept, not what the run rendered."""
+    resume, sent, web = resume_env
+    import run_pipelines as rp
+
+    # The bundle already carries the item this run will render again.
+    _publish(
+        "papers",
+        "science",
+        "https://www.science.org/doi/y",
+        "10.1000/y",
+        "# science\n\nscience chunk",
+    )
+
+    def run_known_item(
+        category,
+        *,
+        create_marker=False,
+        deep_content=False,
+        collector=None,
+        only_source=None,
+    ):
+        collector.add(
+            _results_for("science", "https://www.science.org/doi/y", "10.1000/y")
+        )
+        collector.add_body("# science\n\nscience chunk again", source_name="science")
+        rp._finalize_category_publication(category, collector)
+        return 1
+
+    monkeypatch.setattr(rp, "_run_category_pipeline", run_known_item)
+
+    assert resume.main("papers", "science") == 0
+
+    assert sent == []
+    assert web == []
+
+
 def test_resume_posts_only_the_requested_source_chunk(resume_env, monkeypatch):
     """The delta is what was recovered, not whatever else the run rendered."""
     resume, sent, web = resume_env
@@ -237,6 +363,9 @@ def test_resume_posts_only_the_requested_source_chunk(resume_env, monkeypatch):
             _results_for("nature", "https://www.nature.com/articles/z", "10.1000/z")
         )
         collector.add_body("# nature\n\nnature chunk", source_name="nature")
+        # Production finalizes inside the category pipeline; the delta is what
+        # the merge kept, so a stub that skips it would post nothing.
+        rp._finalize_category_publication(category, collector)
         return 1
 
     monkeypatch.setattr(rp, "_run_category_pipeline", run_two_sources)
@@ -304,7 +433,11 @@ def test_resume_rejects_an_unknown_source(monkeypatch):
     monkeypatch.setattr(
         rp,
         "_load_sources",
-        lambda: ({"sources": [{"name": "nature", "category": "papers"}]}, {}, {}),
+        lambda: (
+            {"sources": [{"name": "nature", "category": "papers", "type": "rss"}]},
+            {},
+            {},
+        ),
     )
 
     assert resume.main("papers", "sciense") == 1
@@ -319,7 +452,11 @@ def test_resume_refuses_a_day_without_a_briefing(monkeypatch):
     monkeypatch.setattr(
         rp,
         "_load_sources",
-        lambda: ({"sources": [{"name": "science", "category": "papers"}]}, {}, {}),
+        lambda: (
+            {"sources": [{"name": "science", "category": "papers", "type": "rss"}]},
+            {},
+            {},
+        ),
     )
 
     assert resume.main("papers", "science") == 1
