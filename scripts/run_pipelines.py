@@ -837,14 +837,20 @@ def _render_structured_list(
     header: str | None = None,
     separator: str = "\n",
 ) -> str:
-    lines = [header] if header else []
+    """Render items as a numbered list; ``separator`` goes between them.
+
+    An item's own lines are joined tightly, the way the pre-canonical
+    briefings were: a blank line between a title and its quote reads as a
+    break in Discord rather than as one entry.
+    """
+    blocks = [header] if header else []
     for index, result in enumerate(results, 1):
-        title = _structured_title(result)
-        lines.append(f"{index}. **{title}**")
+        lines = [f"{index}. **{_structured_title(result)}**"]
         lines.append(f"   > {result.summary}")
         if result.why_it_matters:
             lines.append(f"   > **Why it matters:** {result.why_it_matters}")
-    return separator.join(lines)
+        blocks.append("\n".join(lines))
+    return separator.join(blocks)
 
 
 def _render_regular_publication(ds: DataSource, results: list) -> str:

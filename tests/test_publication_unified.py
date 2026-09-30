@@ -812,6 +812,26 @@ def test_force_bypasses_the_low_frequency_skip(tmp_path, monkeypatch):
     assert rp._already_pushed_within("skxjz", "papers", 48) is False
 
 
+def test_rendered_items_keep_the_title_and_its_quote_together():
+    """Discord renders a blank line between a title and its quote as two blocks.
+
+    The pre-canonical briefings were tight; the structured renderer inserted a
+    blank line between every line, which the reader sees as a break.
+    """
+    import run_pipelines as rp
+    from types import SimpleNamespace
+
+    ds = SimpleNamespace(display_name="Nature", name="nature", category="papers")
+    results = _results_for(
+        "nature", "https://www.nature.com/articles/x", "10.1000/x"
+    ) + _results_for("nature", "https://www.nature.com/articles/y", "10.1000/y")
+
+    body = rp._render_regular_publication(ds, results)
+
+    assert "1. **nature title**\n   > " in body
+    assert "\n\n2. **nature title**" in body
+
+
 def test_a_write_failure_leaves_that_source_fetchable(monkeypatch):
     """A failed write must not mark the item seen: seen state never expires."""
     import run_pipelines as rp

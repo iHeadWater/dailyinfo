@@ -578,6 +578,18 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # Joining an item's lines with the item separator puts a blank line
+        # between a title and its quote, which Discord renders as two blocks.
+        label="an item's title and quote stay together",
+        path="scripts/run_pipelines.py",
+        old='        blocks.append("\n".join(lines))',
+        new='        blocks.append("\n\n".join(lines))',
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_rendered_items_keep_the_title_and_its_quote_together"
+        ),
+    ),
+    Probe(
         # A gap that does not reach the exit code is a gap cron cannot see.
         label="a canonical gap keeps the run non-zero",
         path="scripts/run_pipelines.py",
