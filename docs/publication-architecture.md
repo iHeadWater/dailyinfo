@@ -88,6 +88,23 @@ All internal datetimes are timezone-aware UTC and serialize as ISO-8601 with a
 timezone (`Asia/Shanghai` by default) and then normalized to UTC. A briefing
 date is a calendar date and is not inferred from a host-local `datetime.now()`.
 
+### What the structured contract costs the body (2026-09)
+
+The JSON contract overrides the Markdown layout the prompt templates still
+describe, so the rendered briefing body differs from the pre-canonical one:
+
+- Papers and arXiv briefings no longer carry a `🔭 Today's Highlight` section.
+  The contract returns per-item `summary` (plus optional `why_it_matters` and
+  `tags`) and has no slot for a batch-level paragraph, so the section cannot be
+  rendered from it.  The instruction was removed from the template instead of
+  being left as a request the contract forbids -- this is a deliberate
+  decision, not an omission.
+- `code` and `resource` keep their per-project lines and section headings:
+  those are rendered from structured fields (`title`, `section`), not from
+  model-written Markdown.
+- Every item may now carry a `> **Why it matters:**` line, which the old
+  Markdown contract had no field for.
+
 ## Publication Field Semantics
 
 `schema_version` is contract metadata and is fixed at `1`. The remaining Item
