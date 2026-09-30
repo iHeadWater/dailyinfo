@@ -18,12 +18,18 @@ resumed.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import sys
 
 import run_pipelines as rp
 from paths import CURRENT_ENV, get_channel_id
-from publication import PublicationRunCollector, PublicationStore
+from publication import (
+    DELIVERY_SCHEMA_VERSION,
+    DeliveryState,
+    DeliveryStateStore,
+    PublicationRunCollector,
+    PublicationStore,
+)
 from push_to_discord import send_to_discord
 
 RERUNNABLE_CATEGORIES = ("papers", "ai_news", "arxiv")
@@ -131,7 +137,9 @@ def main(category: str, source: str) -> int:
             log(f"{category}: no Discord channel configured; skipped the delta.")
         else:
             header = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n"
-            if not send_to_discord(channel, header + delta):
+            if send_to_discord(channel, header + delta):
+                _record_discord_delta(briefing_id)
+            else:
                 log(f"Discord delivery failed for {source}; the briefing was updated.")
                 exit_code = EXIT_FAILED
     else:
@@ -157,6 +165,32 @@ def _publish_web(category: str) -> int:
     import publish_to_web
 
     return publish_to_web.main(rp.DATE, [category], force=True)
+
+
+def _record_discord_delta(briefing_id: str) -> None:
+    """Record that the channel now carries the whole briefing.
+
+    What the channel had plus the delta *is* the current content, so the day
+    counts as delivered; the merge that produced the delta left the sink
+    marked undelivered, and without this the next plain push reposts the
+    entire briefing.
+    """
+    now = datetime.now(timezone.utc)
+    try:
+        DeliveryStateStore().save(
+            DeliveryState(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                briefing_id=briefing_id,
+                sink="discord",
+                status="success",
+                attempt_count=1,
+                first_attempted_at=now,
+                last_attempted_at=now,
+                delivered_at=now,
+            )
+        )
+    except Exception as exc:
+        log(f"could not record the delta delivery: {exc}")
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -23,6 +23,10 @@ from .models import CANONICAL_CATEGORIES
 
 
 DELIVERY_SCHEMA_VERSION = 1
+
+# The sinks a void has to cover.  A third sink would otherwise keep a
+# stale "success" forever and never receive corrected content.
+DELIVERY_SINKS = ("discord", "web")
 DELIVERY_STATUSES = ("pending", "success", "failed")
 _SINK_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _SAFE_ERROR_URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
@@ -326,17 +330,29 @@ class DeliveryStateStore:
         return state
 
     def void(self, briefing_id_value: str, sink: str) -> None:
-        """Forget a delivery record, so the briefing is delivered again.
+        """Mark a delivered briefing as undelivered, so it is sent again.
 
         Delivery state is keyed on identity, not content: a briefing whose
         content changed after delivery (a merged source) would otherwise be
         skipped forever by both sinks, each reporting the day as delivered.
+
+        The record is replaced by a zero-attempt ``pending`` one rather than
+        deleted: *missing* state is what the legacy ``pushed/`` bootstrap keys
+        on, and that path reports the briefing delivered without sending
+        anything -- which is the bug this exists to fix.
         """
-        path = self._path(briefing_id_value, sink)
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
+        self.save(
+            DeliveryState(
+                schema_version=DELIVERY_SCHEMA_VERSION,
+                briefing_id=briefing_id_value,
+                sink=sink,
+                status="pending",
+                attempt_count=0,
+                first_attempted_at=None,
+                last_attempted_at=None,
+                delivered_at=None,
+            )
+        )
 
     def begin_attempt(
         self,
@@ -355,8 +371,14 @@ class DeliveryStateStore:
             sink=sink,
             status="pending",
             attempt_count=attempt_count,
+            # ``or`` rather than a truthiness test on ``existing``: a voided
+            # record is a zero-attempt state with no timestamps, and carrying
+            # that None forward would fail the "attempted state must have
+            # attempt timestamps" check.
             first_attempted_at=(
-                existing.first_attempted_at if existing else attempted_at
+                (existing.first_attempted_at or attempted_at)
+                if existing
+                else attempted_at
             ),
             last_attempted_at=attempted_at,
             delivered_at=None,

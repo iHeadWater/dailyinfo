@@ -30,6 +30,7 @@ from datasource import DataSource, RSSDataSource, build_feed_url_map
 from logsafe import http_error_detail, one_line
 from paths import BRIEFINGS_DIR, ENV_FILE, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
 from publication import (
+    DELIVERY_SINKS,
     DeliveryStateStore,
     PublicationBriefingInput,
     PublicationBundle,
@@ -996,7 +997,7 @@ def _void_delivery_state(briefing_id: str) -> None:
     report the day as delivered.
     """
     store = DeliveryStateStore()
-    for sink in ("discord", "web"):
+    for sink in DELIVERY_SINKS:
         try:
             store.void(briefing_id, sink)
         except Exception as exc:  # a missing record is the normal case
@@ -1068,11 +1069,14 @@ def _finalize_category_publication(
                 existing = None
             before_ids = {item.id for item in existing.items} if existing else set()
             bundle = _finalize_run(category, collector, existing, published_at)
+            if existing is not None and _content_changed(existing, bundle):
+                # Before the save: a crash in between then leaves content that
+                # differs from a success record, which costs a duplicate
+                # delivery rather than a silent one.
+                _void_delivery_state(publication_id)
             result = store.save(bundle)
             collector.added_item_ids = {item.id for item in bundle.items} - before_ids
             collector.commit_deferred_seen()
-            if existing is not None and _content_changed(existing, bundle):
-                _void_delivery_state(publication_id)
     except Exception as exc:
         log(
             f"  publication_id={publication_id} category={category} "
@@ -1089,10 +1093,13 @@ def _finalize_category_publication(
         # Reported after finalization, which is also where a merge can add to
         # this list: an identity the bundle already carries is only detectable
         # once the bundle is loaded.
+        shown = collector.dropped_duplicates[:5]
+        rest = len(collector.dropped_duplicates) - len(shown)
         log(
             f"  publication_id={publication_id} category={category} "
             f"action=dedup duplicates={len(collector.dropped_duplicates)} "
-            + "; ".join(collector.dropped_duplicates)
+            + "; ".join(shown)
+            + (f"; +{rest} more" if rest else "")
         )
 
 
@@ -1868,7 +1875,7 @@ def _run_pipeline_code_publication() -> int:
             log(f"    -> saved {ds.name}_briefing_{DATE}.md")
         except Exception as exc:
             collector.add_failure(f"{ds.name}: invalid structured AI output: {exc}")
-            save(
+            _save_placeholder(
                 "code",
                 f"{ds.name}_briefing_{DATE}_failed.md",
                 f"# {ds.display_name} - {DATE}\n\n⚠️ AI 生成失败\n",
@@ -2072,7 +2079,7 @@ def _run_pipeline_resource_publication() -> int:
                 collector.add_failure(
                     f"{_DLUT_NEWS_GROUP}: invalid structured AI output: {exc}"
                 )
-                save(
+                _save_placeholder(
                     "resource",
                     f"{_DLUT_NEWS_GROUP}_briefing_{DATE}_failed.md",
                     f"# 大连理工大学校园动态 - {DATE}\n\n⚠️ AI 生成失败\n",
@@ -2100,7 +2107,7 @@ def _run_pipeline_resource_publication() -> int:
             log(f"    FETCH ERR: {exc}")
             continue
         if not items:
-            save(
+            _save_placeholder(
                 "resource",
                 f"{ds.name}_briefing_{DATE}.md",
                 f"# {ds.display_name} - {DATE}\n\n"

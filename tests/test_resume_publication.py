@@ -342,6 +342,75 @@ def test_resume_does_not_post_a_chunk_the_merge_dropped(resume_env, monkeypatch)
     assert web == []
 
 
+def test_resume_does_not_post_a_chunk_a_concurrent_run_published(
+    resume_env, monkeypatch
+):
+    """The delta is what this merge added, not what the store gained meanwhile.
+
+    A cron run that publishes the same item while the resume is in flight makes
+    the store's item set grow -- reading it again would credit that writer's
+    item to this run and post a chunk the merge had dropped.
+    """
+    resume, sent, web = resume_env
+    import run_pipelines as rp
+
+    def run_with_a_concurrent_writer(
+        category,
+        *,
+        create_marker=False,
+        deep_content=False,
+        collector=None,
+        only_source=None,
+    ):
+        other = PublicationRunCollector("papers")
+        other.add(
+            _results_for("science", "https://www.science.org/doi/y", "10.1000/y")
+        )
+        other.add_body("# science\n\nscience chunk", source_name="science")
+        rp._finalize_category_publication("papers", other)
+
+        collector.add(
+            _results_for("science", "https://www.science.org/doi/y", "10.1000/y")
+        )
+        collector.add_body("# science\n\nscience chunk", source_name="science")
+        rp._finalize_category_publication(category, collector)
+        return 1
+
+    monkeypatch.setattr(rp, "_run_category_pipeline", run_with_a_concurrent_writer)
+
+    assert resume.main("papers", "science") == 0
+    assert sent == []
+
+
+def test_resume_records_the_delta_it_posted(resume_env):
+    """Otherwise the next plain push reposts the whole day."""
+    from publication import DeliveryState, DeliveryStateStore
+
+    resume, sent, web = resume_env
+    import run_pipelines as rp
+
+    briefing_id = f"papers-{rp.DATE}"
+    store = DeliveryStateStore()
+    store.save(
+        DeliveryState(
+            schema_version=1,
+            briefing_id=briefing_id,
+            sink="discord",
+            status="success",
+            attempt_count=1,
+            first_attempted_at=datetime(2026, 8, 27, 1, tzinfo=UTC),
+            last_attempted_at=datetime(2026, 8, 27, 1, tzinfo=UTC),
+            delivered_at=datetime(2026, 8, 27, 1, tzinfo=UTC),
+        )
+    )
+
+    assert resume.main("papers", "science") == 0
+    assert len(sent) == 1
+
+    state = DeliveryStateStore().load(briefing_id, "discord")
+    assert state is not None and state.status == "success"
+
+
 def test_resume_posts_only_the_requested_source_chunk(resume_env, monkeypatch):
     """The delta is what was recovered, not whatever else the run rendered."""
     resume, sent, web = resume_env

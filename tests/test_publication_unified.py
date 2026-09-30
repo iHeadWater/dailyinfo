@@ -635,8 +635,46 @@ def test_a_merged_briefing_is_delivered_again():
     from publication import DeliveryStateStore
 
     store = DeliveryStateStore()
-    assert store.load(briefing_id, "discord") is None
-    assert store.load(briefing_id, "web") is None
+    for sink in ("discord", "web"):
+        state = store.load(briefing_id, sink)
+        assert state is not None
+        # Voided, not deleted: a missing record reads as "never delivered" to
+        # the legacy bootstrap, which then skips the send entirely.
+        assert state.status == "pending"
+
+
+def test_a_merged_briefing_is_actually_delivered(tmp_path, monkeypatch):
+    """The re-delivery must reach Discord, not be read as "nothing yet".
+
+    A *missing* record is what the legacy `pushed/` bootstrap keys on: with the
+    archive a real push leaves behind, it reports the briefing delivered
+    without sending anything -- so the merged content reached nobody.
+    """
+    import push_to_discord as push
+
+    rp = _publish_nature()
+    _mark_delivered(f"papers-{rp.DATE}")
+
+    monkeypatch.setattr(push, "PUSHED_DIR", tmp_path / "pushed")
+    archive = push.PUSHED_DIR / "papers"
+    archive.mkdir(parents=True)
+    (archive / f"nature_briefing_{rp.DATE}.md").write_text("archived", encoding="utf-8")
+    monkeypatch.setattr(push, "DISCORD_CHANNELS", {"papers": "channel-1"})
+    sent: list[tuple] = []
+    monkeypatch.setattr(
+        push, "send_to_discord", lambda *args: sent.append(args) or True
+    )
+
+    resumed = PublicationRunCollector("papers")
+    resumed.add(_results_for("science", "https://www.science.org/doi/y", "10.1000/y"))
+    resumed.add_body("# science\n\nscience chunk", source_name="science")
+    rp._finalize_category_publication("papers", resumed)
+
+    assert push.main(rp.DATE, categories=["papers"]) == 0
+
+    assert any(
+        "science chunk" in content for _channel, content in sent
+    ), "the merged briefing reached Discord"
 
 
 def test_an_unchanged_briefing_stays_delivered():

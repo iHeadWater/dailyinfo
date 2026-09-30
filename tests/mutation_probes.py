@@ -444,7 +444,19 @@ PROBES: tuple[Probe, ...] = (
         new="                pass\n                break",
         test=(
             "tests/test_publication_unified.py"
-            "::test_the_store_lock_serialises_writers"
+            "::test_the_store_lock_excludes_a_second_writer"
+        ),
+    ),
+    Probe(
+        # Without the void, a briefing that gained content after delivery stays
+        # "success" and neither sink ever sends it.
+        label="a merged briefing is delivered again",
+        path="scripts/run_pipelines.py",
+        old="                _void_delivery_state(publication_id)",
+        new="                pass",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_merged_briefing_is_actually_delivered"
         ),
     ),
     Probe(
@@ -464,12 +476,20 @@ PROBES: tuple[Probe, ...] = (
 )
 
 
-def _run_test(node: str) -> int:
-    return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", node],
+def _run_test(node: str) -> tuple[int, str]:
+    """Run one test under a mutation; return its exit code and output.
+
+    The output matters: pytest exits 4 for a test that no longer exists, and
+    treating any non-zero exit as "the mutation turned it red" would report a
+    probe as working when its test was renamed or deleted.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf", node],
         cwd=REPO_ROOT,
         capture_output=True,
-    ).returncode
+        text=True,
+    )
+    return completed.returncode, completed.stdout + completed.stderr
 
 
 def _working_tree_changes() -> str:
@@ -510,14 +530,15 @@ def main() -> int:
 
         try:
             target.write_text(original.replace(probe.old, probe.new), encoding="utf-8")
-            returncode = _run_test(probe.test)
+            returncode, output = _run_test(probe.test)
         finally:
             target.write_text(original, encoding="utf-8")
 
-        if returncode == 0:
+        if returncode == 0 or "failed" not in output:
             failures.append(
-                f"{probe.label}: {probe.test} passed against the broken code, "
-                "so it does not guard this"
+                f"{probe.label}: {probe.test} did not fail under the mutation "
+                f"(exit {returncode}): it either passed, or the test it names is "
+                "gone"
             )
         else:
             print(f"ok    {probe.label}")

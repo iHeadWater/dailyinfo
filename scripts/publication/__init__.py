@@ -56,6 +56,7 @@ from .store import (
 )
 from .delivery import (
     CorruptDeliveryStateError,
+    DELIVERY_SINKS,
     DeliveryState,
     DeliveryStateStore,
     DeliveryStoreError,
@@ -140,6 +141,7 @@ __all__ = [
     "validate_public_source_url",
     "CorruptDeliveryStateError",
     "DELIVERY_SCHEMA_VERSION",
+    "DELIVERY_SINKS",
     "DeliveryCoordinator",
     "DeliveryState",
     "DeliveryStateStore",
