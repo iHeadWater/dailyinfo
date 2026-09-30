@@ -220,9 +220,10 @@ def test_resume_drives_the_real_dispatch(monkeypatch):
     bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
     assert {item.source.name for item in bundle.items} == {"nature", "science"}
     assert len(sent) == 1
-    # No prior delivery here, so the whole briefing goes out; the recovered
-    # source is in it either way.
-    assert "Science" in sent[0]
+    # No prior delivery here, so the whole briefing goes out -- the delta's
+    # header is what distinguishes the two payloads.
+    assert not sent[0].startswith("📎 补充")
+    assert sent[0] == PublicationStore().load_bundle(f"papers-{rp.DATE}").briefing.body
 
 
 def test_resume_sends_only_the_chunk_it_recovered(resume_env):
@@ -359,7 +360,9 @@ def test_resume_does_not_post_a_chunk_the_merge_dropped(resume_env, monkeypatch)
 
     monkeypatch.setattr(rp, "_run_category_pipeline", run_known_item)
 
-    assert resume.main("papers", "science") == 0
+    # The merge kept nothing, and the day's Discord record is not `success`
+    # (publishing science voided it), so this run cannot claim success either.
+    assert resume.main("papers", "science") == 1
 
     assert sent == []
     assert web == []
@@ -401,7 +404,9 @@ def test_resume_does_not_post_a_chunk_a_concurrent_run_published(
 
     monkeypatch.setattr(rp, "_run_category_pipeline", run_with_a_concurrent_writer)
 
-    assert resume.main("papers", "science") == 0
+    # The other writer's publication voided the day's record and this run adds
+    # nothing, so the honest answer is "Discord still needs a push".
+    assert resume.main("papers", "science") == 1
     assert sent == []
 
 
@@ -414,9 +419,10 @@ def test_resume_posts_the_whole_briefing_when_the_push_never_ran(
     from publication import DeliveryStateStore
 
     _resume, sent, _web = resume_env
-    # No delivery record: the channel has none of today's briefing.
+    # The state a never-pushed day leaves: no record at all, not a tombstone.
+    store = DeliveryStateStore()
     for sink in ("discord", "web"):
-        DeliveryStateStore().void(f"papers-{rp.DATE}", sink)
+        store._path(f"papers-{rp.DATE}", sink).unlink(missing_ok=True)
 
     assert resume.main("papers", "science") == 0
 
@@ -452,6 +458,53 @@ def test_resume_posts_the_whole_briefing_when_the_push_failed(resume_env):
     _channel, content = sent[0]
     assert "nature chunk" in content
     assert "science chunk" in content
+
+
+def test_a_merge_during_the_resume_send_wins(resume_env, monkeypatch):
+    """A merge that lands while the delta is in flight must not be erased.
+
+    The delta's own record write is the one sink write that bypassed the
+    coordinator, so a concurrent merge's tombstone was overwritten by a success
+    for content the channel never received.
+    """
+    from publication import DeliveryStateStore
+
+    resume, _sent, _web = resume_env
+    import run_pipelines as rp
+
+    briefing_id = f"papers-{rp.DATE}"
+
+    def send_then_merge(channel, content):
+        # Another writer merges while this send is in flight.
+        DeliveryStateStore().void(briefing_id, "discord")
+        return True
+
+    monkeypatch.setattr(resume, "send_to_discord", send_then_merge)
+
+    assert resume.main("papers", "science") == 1
+
+    state = DeliveryStateStore().load(briefing_id, "discord")
+    assert state is not None and state.status == "pending"
+
+
+def test_resume_signals_a_delivery_that_is_still_missing(resume_env, monkeypatch):
+    """Retrying a resume whose delta failed must not look like success."""
+    from publication import DELIVERY_SCHEMA_VERSION, DeliveryState, DeliveryStateStore
+
+    resume, _sent, _web = resume_env
+    import run_pipelines as rp
+
+    briefing_id = f"papers-{rp.DATE}"
+    store = DeliveryStateStore()
+    store.void(briefing_id, "discord")
+
+    def run_nothing_new(category, *, create_marker=False, deep_content=False, collector=None, only_source=None):
+        return 0
+
+    monkeypatch.setattr(rp, "_run_category_pipeline", run_nothing_new)
+
+    assert resume.main("papers", "science") == 1
+    del DELIVERY_SCHEMA_VERSION, DeliveryState
 
 
 def test_resume_records_the_delta_it_posted(resume_env):

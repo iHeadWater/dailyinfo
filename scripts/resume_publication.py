@@ -24,11 +24,11 @@ import sys
 import run_pipelines as rp
 from paths import CURRENT_ENV, get_channel_id
 from publication import (
-    DELIVERY_SCHEMA_VERSION,
-    DeliveryState,
     DeliveryStateStore,
+    DeliveryStoreError,
     PublicationRunCollector,
     PublicationStore,
+    PublishResult,
 )
 from push_to_discord import send_to_discord
 
@@ -166,13 +166,19 @@ def main(category: str, source: str) -> int:
                     "the whole briefing instead of a supplement"
                 )
                 payload = PublicationStore().load_bundle(briefing_id).briefing.body
-            if send_to_discord(channel, payload):
-                _record_discord_delta(briefing_id)
-            else:
-                log(f"Discord delivery failed for {source}; the briefing was updated.")
+            if not _post_and_record(briefing_id, channel, payload):
                 exit_code = EXIT_FAILED
     else:
         log(f"{source}: nothing new to add to {briefing_id}")
+        if _discord_status(briefing_id) != "success":
+            # Everything is merged, but the channel never received it -- a
+            # failed delta earlier, or a merge by another path.  A push repairs
+            # that, and this run must not look like a success.
+            log(
+                f"  Discord still has no delivery for {briefing_id}: "
+                "run `dailyinfo push`"
+            )
+            exit_code = EXIT_FAILED
 
     if collector.failures:
         # The part that succeeded is merged and delivered; say what is still
@@ -196,30 +202,46 @@ def _publish_web(category: str) -> int:
     return publish_to_web.main(rp.DATE, [category], force=True)
 
 
-def _record_discord_delta(briefing_id: str) -> None:
-    """Record that the channel now carries the whole briefing.
-
-    What the channel had plus the delta *is* the current content, so the day
-    counts as delivered; the merge that produced the delta left the sink
-    marked undelivered, and without this the next plain push reposts the
-    entire briefing.
-    """
-    now = datetime.now(timezone.utc)
+def _discord_status(briefing_id: str) -> str | None:
     try:
-        DeliveryStateStore().save(
-            DeliveryState(
-                schema_version=DELIVERY_SCHEMA_VERSION,
-                briefing_id=briefing_id,
-                sink="discord",
-                status="success",
-                attempt_count=1,
-                first_attempted_at=now,
-                last_attempted_at=now,
-                delivered_at=now,
-            )
-        )
+        state = DeliveryStateStore().load(briefing_id, "discord")
     except Exception as exc:
-        log(f"could not record the delta delivery: {exc}")
+        log(f"cannot read the Discord delivery state: {exc}")
+        return None
+    return state.status if state is not None else None
+
+
+def _post_and_record(briefing_id: str, channel: str, payload: str) -> bool:
+    """Post to Discord and record the outcome as this attempt's own.
+
+    Through the same machinery as every other sink write, because this is the
+    one that used to bypass it.  A merge that lands while the send is in flight
+    replaces the record with its tombstone; recording a bare success here would
+    erase that and leave the day reading delivered with the merged content
+    missing.  ``record_result`` refuses an outcome for a state that changed
+    underneath it, and the tombstone then stands for the next push.
+    """
+    store = DeliveryStateStore()
+    when = datetime.now(timezone.utc)
+    try:
+        pending = store.begin_attempt(briefing_id, "discord", attempted_at=when)
+        delivered = send_to_discord(channel, payload)
+        store.record_result(
+            PublishResult(
+                sink="discord",
+                publication_id=briefing_id,
+                status="success" if delivered else "failed",
+                attempted_at=when,
+                error=None if delivered else "Discord transport returned failure",
+            ),
+            expected=pending,
+        )
+    except DeliveryStoreError as exc:
+        log(f"  Discord was re-published while this send was in flight: {exc}")
+        return False
+    if not delivered:
+        log(f"Discord delivery failed for {briefing_id}; the briefing was updated.")
+    return delivered
 
 
 def _build_parser() -> argparse.ArgumentParser:

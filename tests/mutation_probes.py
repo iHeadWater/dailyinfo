@@ -495,6 +495,30 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # Resume's own record write is the one sink write that could bypass the
+        # attempt check, so a merge landing mid-send was erased by it.
+        label="the resume delta records its own attempt",
+        path="scripts/resume_publication.py",
+        old="            expected=pending,\n        )",
+        new="        )",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_a_merge_during_the_resume_send_wins"
+        ),
+    ),
+    Probe(
+        # A resume that merged everything but delivered nothing must not report
+        # success: the day still has no Discord content.
+        label="a resume reports a delivery that is still missing",
+        path="scripts/resume_publication.py",
+        old='        if _discord_status(briefing_id) != "success":',
+        new="        if False:",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_signals_a_delivery_that_is_still_missing"
+        ),
+    ),
+    Probe(
         # A gap that does not reach the exit code is a gap cron cannot see.
         label="a canonical gap keeps the run non-zero",
         path="scripts/run_pipelines.py",

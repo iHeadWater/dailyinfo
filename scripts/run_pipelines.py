@@ -1005,6 +1005,10 @@ def _void_delivery_state(briefing_id: str) -> list[str]:
     for sink in DELIVERY_SINKS:
         try:
             store.void(briefing_id, sink)
+            log(
+                f"  [delivery] {briefing_id}:{sink} queued for re-delivery "
+                "(content changed)"
+            )
         except Exception as exc:
             log(f"  [delivery] could not void {briefing_id}:{sink}: {exc}")
             failed.append(sink)

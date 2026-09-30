@@ -73,7 +73,7 @@ docker compose ps                                       # backup-cron 是否在�
 注意两点：
 
 - 部分发布在两端**看不出来**——网站上的那天就是少了那个源，没有任何标记。要确认完整性，只能看运行日志里的 `Canonical publication gaps` 行。
-- 失败的条目**不会**被写进 seen 状态，所以下次运行会重新抓取并重试；但简报本身不会自动补跑。要补就 `dailyinfo resume -c <类别> -s <源名>`：只重跑这一个源、合并进当日简报、**只把新增片段补发到 Discord**，并让网站重新渲染。注意它只支持 `papers` / `ai_news` / `arxiv`（这三个类别的源是逐个跑的）；`code` / `resource` 是整类函数，用 `dailyinfo run --force all`。
+- 失败的条目**不会**被写进 seen 状态，所以下次运行会重新抓取并重试；但简报本身不会自动补跑。要补就 `dailyinfo resume -c <类别> -s <源名>`：只重跑这一个源、合并进当日简报、**只把新增片段补发到 Discord**，并让网站重新渲染。注意它只支持 `papers` / `ai_news` / `arxiv`（这三个类别的源是逐个跑的）；`code` / `resource` 是整类函数，用 `dailyinfo run --force all`，**并且当天要再跑一次 `dailyinfo push`**（以及 `dailyinfo publish --sink web`）——补进来的内容会被标记为待重发，但没有任何定时任务会替你发当天的。
 
 ---
 
