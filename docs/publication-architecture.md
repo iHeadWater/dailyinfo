@@ -330,6 +330,25 @@ explicitly outside Publication Contract v1. They are not implicitly mapped to
 `papers` or `ai_news`, and bypass this layer until a future contract revision
 adds them.
 
+## Re-publication and the delivery tombstone
+
+Delivery state is keyed on `{briefing_id}:{sink}`, so content can change while
+the record still says `success`.  When a run merges a source into a briefing
+whose items or body changed, the record for each sink is replaced by a
+zero-attempt `pending` one -- a tombstone -- so the next push/publish sends the
+corrected briefing.
+
+The tombstone replaces the record rather than deleting it because *missing*
+state is what the legacy `pushed/` bootstrap keys on, and that path reports a
+briefing as delivered without sending anything.  A re-publication that changes
+nothing leaves the `success` record alone, so identical content is never sent
+twice.
+
+`dailyinfo resume` posts only the chunk its merge added, and only when the
+channel already carries the day (its Discord record was `success`); otherwise
+it posts the whole briefing, since a supplement would be all the channel ever
+saw.  A successful delta records a `success` for that sink.
+
 ## Publication State vs Delivery State (Phase 2C)
 
 Phase 2C/2D adds a delivery boundary without changing the canonical models:

@@ -690,7 +690,65 @@ def test_an_unchanged_briefing_stays_delivered():
 
     from publication import DeliveryStateStore
 
-    assert DeliveryStateStore().load(briefing_id, "discord") is not None
+    state = DeliveryStateStore().load(briefing_id, "discord")
+    assert state is not None and state.status == "success"
+
+
+def test_an_inflight_send_cannot_overwrite_a_merge():
+    """A merge that lands mid-send must leave its tombstone standing."""
+    from publication import (
+        DeliveryCoordinator,
+        DeliveryStateStore,
+        DeliveryStoreError,
+        PublishResult,
+    )
+
+    store = DeliveryStateStore()
+    bundle = _bundle_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
+
+    class VoidingPublisher:
+        sink = "discord"
+
+        def publish(self, publication):
+            # The merge arrives while this send is in flight.
+            store.void(publication.briefing.id, "discord")
+            return PublishResult(
+                sink="discord",
+                publication_id=publication.briefing.id,
+                status="success",
+                attempted_at=datetime(2026, 8, 27, 3, tzinfo=UTC),
+            )
+
+    coordinator = DeliveryCoordinator(
+        store, clock=lambda: datetime(2026, 8, 27, 3, tzinfo=UTC)
+    )
+    with pytest.raises(DeliveryStoreError):
+        coordinator.publish(bundle, VoidingPublisher())
+
+    state = store.load(bundle.briefing.id, "discord")
+    assert state is not None and state.status == "pending"
+
+
+def test_a_void_failure_is_recorded_as_a_gap(monkeypatch):
+    """If the record cannot be voided, say so: nothing will re-send."""
+    import run_pipelines as rp
+    from publication import DeliveryStateStore
+
+    rp = _publish_nature()
+    _mark_delivered(f"papers-{rp.DATE}")
+    monkeypatch.setattr(rp, "log", lambda *_args: None)
+    monkeypatch.setattr(
+        DeliveryStateStore,
+        "void",
+        lambda self, briefing_id, sink: (_ for _ in ()).throw(OSError("read-only")),
+    )
+
+    resumed = PublicationRunCollector("papers")
+    resumed.add(_results_for("science", "https://www.science.org/doi/y", "10.1000/y"))
+    resumed.add_body("# science\n\nscience chunk", source_name="science")
+    rp._finalize_category_publication("papers", resumed)
+
+    assert any("void" in gap for gap in rp.PUBLICATION_GAPS)
 
 
 def test_the_store_lock_excludes_a_second_writer():

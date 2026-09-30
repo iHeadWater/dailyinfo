@@ -13,6 +13,7 @@ Run with a clean working tree: it edits files and restores them.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -452,11 +453,45 @@ PROBES: tuple[Probe, ...] = (
         # "success" and neither sink ever sends it.
         label="a merged briefing is delivered again",
         path="scripts/run_pipelines.py",
-        old="                _void_delivery_state(publication_id)",
-        new="                pass",
+        old="                for sink in _void_delivery_state(publication_id):",
+        new="                for sink in []:",
         test=(
             "tests/test_publication_unified.py"
             "::test_a_merged_briefing_is_actually_delivered"
+        ),
+    ),
+    Probe(
+        # Voiding an unchanged briefing queues a full repost for nothing.
+        label="an unchanged re-publication is not voided",
+        path="scripts/run_pipelines.py",
+        old="            if existing is not None and _content_changed(existing, bundle):",
+        new="            if existing is not None:",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_an_unchanged_briefing_stays_delivered"
+        ),
+    ),
+    Probe(
+        # Without the attempt check, a send that started before a merge records
+        # its pre-merge outcome and the tombstone is gone.
+        label="an in-flight send cannot overwrite a merge",
+        path="scripts/publication/publishers.py",
+        old="        self.store.record_result(result, expected=pending)",
+        new="        self.store.record_result(result)",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_an_inflight_send_cannot_overwrite_a_merge"
+        ),
+    ),
+    Probe(
+        # A void that failed silently leaves the day marked delivered forever.
+        label="a failed void is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old="            log(f\"  [delivery] could not void {briefing_id}:{sink}: {exc}\")\n            failed.append(sink)",
+        new="            log(f\"  [delivery] could not void {briefing_id}:{sink}: {exc}\")",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_void_failure_is_recorded_as_a_gap"
         ),
     ),
     Probe(
@@ -534,7 +569,7 @@ def main() -> int:
         finally:
             target.write_text(original, encoding="utf-8")
 
-        if returncode == 0 or "failed" not in output:
+        if returncode == 0 or not re.search(r"\b\d+ (failed|error)", output):
             failures.append(
                 f"{probe.label}: {probe.test} did not fail under the mutation "
                 f"(exit {returncode}): it either passed, or the test it names is "

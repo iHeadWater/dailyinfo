@@ -55,9 +55,27 @@ def _publish(category, source_name, url, external_id, chunk):
     rp._finalize_category_publication(category, collector)
 
 
+def _mark_delivered(briefing_id: str, *, sink: str = "discord", status: str = "success"):
+    from publication import DELIVERY_SCHEMA_VERSION, DeliveryState, DeliveryStateStore
+
+    now = datetime(2026, 8, 27, 1, tzinfo=UTC)
+    DeliveryStateStore().save(
+        DeliveryState(
+            schema_version=DELIVERY_SCHEMA_VERSION,
+            briefing_id=briefing_id,
+            sink=sink,
+            status=status,
+            attempt_count=1 if status != "pending" else 0,
+            first_attempted_at=now if status != "pending" else None,
+            last_attempted_at=now if status != "pending" else None,
+            delivered_at=now if status == "success" else None,
+        )
+    )
+
+
 @pytest.fixture
 def resume_env(monkeypatch):
-    """A published day, a stubbed one-source run, and captured delivery."""
+    """A published, already-pushed day, a stubbed run, and captured delivery."""
     import resume_publication as resume
     import run_pipelines as rp
 
@@ -68,6 +86,9 @@ def resume_env(monkeypatch):
         "10.1000/x",
         "# nature\n\nnature chunk",
     )
+    # A delta is only the right thing to post when the channel already carries
+    # the day; that is the state a push leaves behind.
+    _mark_delivered(f"papers-{rp.DATE}")
 
     monkeypatch.setattr(
         rp,
@@ -199,7 +220,9 @@ def test_resume_drives_the_real_dispatch(monkeypatch):
     bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
     assert {item.source.name for item in bundle.items} == {"nature", "science"}
     assert len(sent) == 1
-    assert "science" in sent[0]
+    # No prior delivery here, so the whole briefing goes out; the recovered
+    # source is in it either way.
+    assert "Science" in sent[0]
 
 
 def test_resume_sends_only_the_chunk_it_recovered(resume_env):
@@ -380,6 +403,55 @@ def test_resume_does_not_post_a_chunk_a_concurrent_run_published(
 
     assert resume.main("papers", "science") == 0
     assert sent == []
+
+
+def test_resume_posts_the_whole_briefing_when_the_push_never_ran(
+    resume_env, monkeypatch
+):
+    """A delta needs something to append to: with no push, the day must go out whole."""
+    import resume_publication as resume
+    import run_pipelines as rp
+    from publication import DeliveryStateStore
+
+    _resume, sent, _web = resume_env
+    # No delivery record: the channel has none of today's briefing.
+    for sink in ("discord", "web"):
+        DeliveryStateStore().void(f"papers-{rp.DATE}", sink)
+
+    assert resume.main("papers", "science") == 0
+
+    _channel, content = sent[0]
+    assert "nature chunk" in content
+    assert "science chunk" in content
+
+
+def test_resume_posts_the_whole_briefing_when_the_push_failed(resume_env):
+    import resume_publication as resume
+    import run_pipelines as rp
+    from publication import DELIVERY_SCHEMA_VERSION, DeliveryState, DeliveryStateStore
+
+    _resume, sent, _web = resume_env
+    now = datetime(2026, 8, 27, 2, tzinfo=UTC)
+    store = DeliveryStateStore()
+    store.save(
+        DeliveryState(
+            schema_version=DELIVERY_SCHEMA_VERSION,
+            briefing_id=f"papers-{rp.DATE}",
+            sink="discord",
+            status="failed",
+            attempt_count=1,
+            first_attempted_at=now,
+            last_attempted_at=now,
+            delivered_at=None,
+            last_error="HTTP failure",
+        )
+    )
+
+    assert resume.main("papers", "science") == 0
+
+    _channel, content = sent[0]
+    assert "nature chunk" in content
+    assert "science chunk" in content
 
 
 def test_resume_records_the_delta_it_posted(resume_env):

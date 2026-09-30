@@ -387,7 +387,16 @@ class DeliveryStateStore:
         )
         return self.save(state)
 
-    def record_result(self, result: Any) -> DeliveryState:
+    def record_result(
+        self, result: Any, *, expected: Optional["DeliveryState"] = None
+    ) -> DeliveryState:
+        """Record the outcome of the attempt ``expected`` opened.
+
+        ``expected`` guards the window between opening an attempt and recording
+        its outcome: a merge that voids the record in between (its tombstone is
+        also a ``pending`` state) would otherwise be overwritten by the outcome
+        of a send that carried the pre-merge content.
+        """
         from .publishers import PublishResult
 
         if not isinstance(result, PublishResult):
@@ -397,6 +406,14 @@ class DeliveryStateStore:
         existing = self.load(result.publication_id, result.sink)
         if existing is None or existing.status != "pending":
             raise DeliveryStoreError("delivery result has no matching pending attempt")
+        if expected is not None and (
+            existing.attempt_count != expected.attempt_count
+            or existing.last_attempted_at != expected.last_attempted_at
+        ):
+            raise DeliveryStoreError(
+                "delivery state changed while this attempt was in flight: the "
+                "briefing was re-published, so this outcome is not the day's"
+            )
         if result.attempted_at is None:
             raise DeliveryStoreError("delivery result must have attempted_at")
         attempted_at = _ensure_aware(result.attempted_at, "attempted_at")

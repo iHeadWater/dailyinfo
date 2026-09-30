@@ -229,7 +229,7 @@ def test_external_success_with_local_state_failure_is_reported(tmp_path):
     bundle = _bundle()
 
     class FailingResultStore(DeliveryStateStore):
-        def record_result(self, result):
+        def record_result(self, result, *, expected=None):
             raise DeliveryStoreError("state disk unavailable")
 
     delivery_store = FailingResultStore(tmp_path / "deliveries")

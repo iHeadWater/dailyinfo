@@ -181,7 +181,7 @@ class DeliveryCoordinator:
         # A write failure here is intentionally propagated.  The external send
         # may already have happened, so silently retrying or claiming success
         # would make the ambiguity invisible to the operator.
-        self.store.record_result(result)
+        self.store.record_result(result, expected=pending)
         logger.info(
             "publication_id=%s category=%s sink=%s action=%s item_count=%d",
             publication_id,

@@ -307,7 +307,7 @@ def test_delivery_state_failure_after_web_success_is_retryable_without_new_commi
     bundle = store.save(_bundle()).bundle
 
     class FailingResultStore(DeliveryStateStore):
-        def record_result(self, result):
+        def record_result(self, result, *, expected=None):
             raise DeliveryStoreError("state disk unavailable")
 
     delivery_root = tmp_path / "deliveries"

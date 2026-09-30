@@ -988,8 +988,12 @@ def _content_changed(before: PublicationBundle, after: PublicationBundle) -> boo
     )
 
 
-def _void_delivery_state(briefing_id: str) -> None:
-    """Forget that this briefing was delivered, because its content changed.
+def _void_delivery_state(briefing_id: str) -> list[str]:
+    """Mark this briefing undelivered, because its content changed.
+
+    Returns the sinks whose record could not be voided: a failure here means
+    the corrected content will never be sent to that sink while it keeps
+    reporting the day as delivered, so the caller has to surface it.
 
     Delivery state is keyed on identity alone, so a briefing that gained a
     source after delivery stays ``success`` for both sinks and the next push or
@@ -997,11 +1001,14 @@ def _void_delivery_state(briefing_id: str) -> None:
     report the day as delivered.
     """
     store = DeliveryStateStore()
+    failed: list[str] = []
     for sink in DELIVERY_SINKS:
         try:
             store.void(briefing_id, sink)
-        except Exception as exc:  # a missing record is the normal case
+        except Exception as exc:
             log(f"  [delivery] could not void {briefing_id}:{sink}: {exc}")
+            failed.append(sink)
+    return failed
 
 
 def _published_item_ids(category: str) -> set[str]:
@@ -1073,7 +1080,11 @@ def _finalize_category_publication(
                 # Before the save: a crash in between then leaves content that
                 # differs from a success record, which costs a duplicate
                 # delivery rather than a silent one.
-                _void_delivery_state(publication_id)
+                for sink in _void_delivery_state(publication_id):
+                    PUBLICATION_GAPS.append(
+                        f"{category}: could not void the {sink} delivery record; "
+                        "the merged content will not be re-sent to it"
+                    )
             result = store.save(bundle)
             collector.added_item_ids = {item.id for item in bundle.items} - before_ids
             collector.commit_deferred_seen()

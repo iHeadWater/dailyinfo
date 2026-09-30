@@ -45,6 +45,25 @@ def log(msg: str) -> None:
     print(f"[{ts}] [env:{CURRENT_ENV}] {msg}", flush=True)
 
 
+def _channel_carries_the_day(briefing_id: str) -> bool:
+    """Whether the Discord channel already has this briefing's earlier content.
+
+    Only then is a delta the right thing to post.  If the push never ran, or
+    failed, the channel has nothing to append to and the whole briefing has to
+    go out -- and recording a delta as the day's delivery would lose the rest
+    of it for good.
+
+    Read before the run: the merge voids the record, so afterwards the state is
+    always a tombstone and the answer would always be "no".
+    """
+    try:
+        state = DeliveryStateStore().load(briefing_id, "discord")
+    except Exception as exc:
+        log(f"cannot read the Discord delivery state: {exc}")
+        return False
+    return state is not None and state.status == "success"
+
+
 def _bundle_item_ids(briefing_id: str) -> set[str] | None:
     """The identities today's briefing carries, or None when it has no briefing."""
     try:
@@ -94,6 +113,7 @@ def main(category: str, source: str) -> int:
     if before_ids is None:
         log(f"No canonical briefing {briefing_id}: run `dailyinfo run` first.")
         return EXIT_FAILED
+    carries_the_day = _channel_carries_the_day(briefing_id)
 
     # A collector means publication mode, but the flag has to be set too: the
     # legacy path ignores the collector and marks the fetched items seen, which
@@ -128,16 +148,25 @@ def main(category: str, source: str) -> int:
 
     exit_code = EXIT_OK
     if delta:
-        # The Web sink goes first: its delivery state for the day is already
-        # `success`, so if this command stopped before rendering it, the merged
-        # content would reach no sink at all.
+        # The Web sink goes first: the merge marked it undelivered (a pending
+        # tombstone), and if this command stopped before rendering it, the
+        # merged content would reach no sink at all.
         exit_code = _publish_web(category)
         channel = get_channel_id(category)
         if not channel:
             log(f"{category}: no Discord channel configured; skipped the delta.")
         else:
-            header = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n"
-            if send_to_discord(channel, header + delta):
+            if carries_the_day:
+                payload = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n{delta}"
+            else:
+                # The channel has none of today's briefing, so a supplement
+                # would be the only thing it ever sees.
+                log(
+                    "  Discord has no delivery for this briefing yet; posting "
+                    "the whole briefing instead of a supplement"
+                )
+                payload = PublicationStore().load_bundle(briefing_id).briefing.body
+            if send_to_discord(channel, payload):
                 _record_discord_delta(briefing_id)
             else:
                 log(f"Discord delivery failed for {source}; the briefing was updated.")
