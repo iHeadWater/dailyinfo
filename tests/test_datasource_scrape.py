@@ -83,9 +83,12 @@ def test_github_trending_format_items_renders_expected_line():
 
 def test_dlut_news_parsing_filters_old_entries(fake_requests):
     from conftest import FakeResponse
+    import datasource
     from datasource import DataSource
 
-    now = datetime.now()
+    # The datasource judges recency in its own timezone; a host-local clock
+    # disagrees with it for the eight hours their dates differ.
+    now = datasource.NOW
     old = now - timedelta(days=60)
     html = (
         read_fixture("dlut_news_snippet.html")
@@ -126,9 +129,10 @@ def test_dlut_news_parsing_filters_old_entries(fake_requests):
 def test_dlut_news_respects_max_items(fake_requests):
     """``max_items`` caps the total parsed items."""
     from conftest import FakeResponse
+    import datasource
     from datasource import DataSource
 
-    now = datetime.now()
+    now = datasource.NOW
     day = now.strftime("%d")
     ym = now.strftime("%Y-%m")
 

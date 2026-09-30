@@ -214,7 +214,7 @@ def test_has_real_briefing_today_detects_existing_content():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = BRIEFINGS_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text(
@@ -230,7 +230,7 @@ def test_has_real_briefing_today_false_for_placeholder_only():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = BRIEFINGS_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text(
@@ -256,7 +256,7 @@ def test_has_real_briefing_today_detects_archived_file_in_pushed():
     import run_pipelines as rp
     from paths import PUSHED_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = PUSHED_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text(
@@ -273,7 +273,7 @@ def test_has_real_briefing_today_false_when_neither_dir_has_file():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR, PUSHED_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     for base in (BRIEFINGS_DIR, PUSHED_DIR):
         cat_dir = base / "papers"
         cat_dir.mkdir(parents=True, exist_ok=True)
@@ -289,7 +289,7 @@ def test_has_real_briefing_today_force_all_bypasses_skip():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = BRIEFINGS_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text("real", encoding="utf-8")
@@ -306,7 +306,7 @@ def test_has_real_briefing_today_force_named_source_bypasses_skip():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = BRIEFINGS_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text("real", encoding="utf-8")
@@ -1002,7 +1002,7 @@ def test_pipeline_resource_unified_news_saves_single_file(
 
     rp.run_pipeline_resource()
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     unified = BRIEFINGS_DIR / "resource" / f"dlut_news_briefing_{today}.md"
     assert unified.exists(), "expected unified briefing file"
     body = unified.read_text(encoding="utf-8")
@@ -1027,7 +1027,7 @@ def test_pipeline_resource_unified_news_idempotent(
     rp.FORCE_ALL = False
     rp.FORCE_SOURCES = set()
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     resource_dir = BRIEFINGS_DIR / "resource"
     resource_dir.mkdir(parents=True, exist_ok=True)
     existing = resource_dir / f"dlut_news_briefing_{today}.md"
@@ -1159,7 +1159,7 @@ def test_pipeline_code_smoke(monkeypatch, fake_requests, fake_call_ai):
     saved = rp.run_pipeline_code()
 
     assert saved == 1
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     out_file = BRIEFINGS_DIR / "code" / f"github_trending_briefing_{today}.md"
     assert out_file.exists()
     body = out_file.read_text(encoding="utf-8")
@@ -1176,7 +1176,7 @@ def test_pipeline_code_skips_when_briefing_already_exists(
 
     monkeypatch.setattr(rp, "SOURCES_JSON", str(FIXTURES_DIR / "sources_min.json"))
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     code_dir = BRIEFINGS_DIR / "code"
     code_dir.mkdir(parents=True, exist_ok=True)
     existing = code_dir / f"github_trending_briefing_{today}.md"
@@ -1215,7 +1215,7 @@ def test_pipeline_code_skips_when_fetch_fails(monkeypatch, fake_requests, fake_c
 
     saved = rp.run_pipeline_code()
     assert saved == 1
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     placeholder = BRIEFINGS_DIR / "code" / f"github_trending_briefing_{today}.md"
     assert placeholder.exists()
     assert "⚠️ 获取失败" in placeholder.read_text(encoding="utf-8")

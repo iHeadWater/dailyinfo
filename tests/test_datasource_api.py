@@ -266,9 +266,11 @@ def test_dlut_api_list_key_shape():
 
 
 def test_crossref_parse_uses_online_date_for_new_items():
+    import datasource
     from datasource import APIDataSource
 
-    now = datetime.now()
+    # The crossref parser judges recency in the datasource's timezone.
+    now = datasource.NOW
     old = now - timedelta(days=60)
     api_data = {
         "message": {
