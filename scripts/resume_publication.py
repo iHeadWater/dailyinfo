@@ -23,8 +23,11 @@ import sys
 
 import run_pipelines as rp
 from paths import CURRENT_ENV, get_channel_id
+from typing import Optional
+
 from publication import (
     DELIVERY_SINKS,
+    DeliveryState,
     DeliveryStateStore,
     DeliveryStoreError,
     PublicationRunCollector,
@@ -46,7 +49,7 @@ def log(msg: str) -> None:
     print(f"[{ts}] [env:{CURRENT_ENV}] {msg}", flush=True)
 
 
-def _delivery_state(briefing_id: str, sink: str):
+def _delivery_state(briefing_id: str, sink: str) -> Optional[DeliveryState]:
     try:
         return DeliveryStateStore().load(briefing_id, sink)
     except Exception as exc:
@@ -164,6 +167,9 @@ def main(category: str, source: str) -> int:
             f"while {source} was being recovered; a supplement cannot speak for "
             "those. Run `dailyinfo push` so the channel gets the whole briefing."
         )
+        # The site renders the whole bundle, so refreshing it here is safe and
+        # useful even though Discord cannot be claimed.
+        _publish_web(category)
         exit_code = EXIT_FAILED
     elif delta:
         # The Web sink goes first: the merge marked it undelivered (a pending
@@ -184,7 +190,14 @@ def main(category: str, source: str) -> int:
                     "the whole briefing instead of a supplement"
                 )
                 payload = PublicationStore().load_bundle(briefing_id).briefing.body
-            if not _post_and_record(briefing_id, channel, payload):
+            covered = (
+                before_ids | added
+                if carries_the_day
+                else (_bundle_item_ids(briefing_id) or set())
+            )
+            if not _post_and_record(
+                briefing_id, channel, payload, covered_ids=covered
+            ):
                 exit_code = EXIT_FAILED
     else:
         log(f"{source}: nothing new to add to {briefing_id}")
@@ -223,7 +236,9 @@ def _publish_web(category: str) -> int:
     return publish_to_web.main(rp.DATE, [category], force=True)
 
 
-def _post_and_record(briefing_id: str, channel: str, payload: str) -> bool:
+def _post_and_record(
+    briefing_id: str, channel: str, payload: str, *, covered_ids: set[str]
+) -> bool:
     """Post to Discord and record the outcome as this attempt's own.
 
     Through the same machinery as every other sink write, because this is the
@@ -232,7 +247,19 @@ def _post_and_record(briefing_id: str, channel: str, payload: str) -> bool:
     erase that and leave the day reading delivered with the merged content
     missing.  ``record_result`` refuses an outcome for a state that changed
     underneath it, and the tombstone then stands for the next push.
+
+    ``covered_ids`` is what this payload speaks for, re-checked here rather than
+    only before the Web render: that render runs the site's git gates and
+    takes seconds, and a co-writer merging inside it would otherwise be adopted
+    as this attempt's own state.
     """
+    current = _bundle_item_ids(briefing_id) or set()
+    if current - covered_ids:
+        log(
+            f"  {briefing_id} changed while this send was being prepared: "
+            "run `dailyinfo push` and `dailyinfo publish --sink web`"
+        )
+        return False
     store = DeliveryStateStore()
     when = datetime.now(timezone.utc)
     try:

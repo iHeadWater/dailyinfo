@@ -545,6 +545,39 @@ def test_resume_does_not_claim_a_day_another_writer_extended(
         return 1
 
     monkeypatch.setattr(rp, "_run_category_pipeline", run_with_a_co_writer)
+    logs: list[str] = []
+    monkeypatch.setattr(resume, "log", logs.append)
+
+    assert resume.main("papers", "science") == 1
+    assert sent == []
+    # The pre-Web-render check is the one that recognises this from the run's
+    # own bookkeeping; the later re-check would report it too, with a different
+    # message, so pin the message that belongs to this branch.
+    assert any("a supplement cannot speak for" in line for line in logs), logs
+    # The site renders the whole bundle, so the refusal path refreshes it --
+    # the one sink that can be repaired without another command.
+    assert web == ["papers"]
+
+
+def test_resume_rechecks_coverage_right_before_posting(resume_env, monkeypatch):
+    """The Web render takes seconds; a merge landing in it must still count.
+
+    The coverage comparison ran before `_publish_web`, so a co-writer that
+    merged during the render had its tombstone adopted by `begin_attempt` as
+    this attempt's own state and was overwritten by a success for a payload
+    that did not carry it.
+    """
+    resume, sent, web = resume_env
+    import run_pipelines as rp
+
+    def web_that_merges(category):
+        other = PublicationRunCollector("papers")
+        other.add(_results_for("cell", "https://www.cell.com/x", "10.1000/cell"))
+        other.add_body("# cell\n\ncell chunk", source_name="cell")
+        rp._finalize_category_publication("papers", other)
+        return 0
+
+    monkeypatch.setattr(resume, "_publish_web", web_that_merges)
 
     assert resume.main("papers", "science") == 1
     assert sent == []

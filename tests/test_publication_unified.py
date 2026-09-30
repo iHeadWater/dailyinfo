@@ -627,7 +627,8 @@ def test_push_reports_a_failed_send_as_failed(monkeypatch):
     monkeypatch.setattr(push, "log", logs.append)
 
     assert push.main(rp.DATE, categories=["papers"]) == 1
-    assert any("failed" in line for line in logs), logs
+    # Not just "failed": the summary line contains that word too.
+    assert any("canonical delivery failed" in line for line in logs), logs
 
 
 def test_a_merged_briefing_is_delivered_again():

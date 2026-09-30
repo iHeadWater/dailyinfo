@@ -549,6 +549,35 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # The coverage check ran before the Web render; a co-writer merging in
+        # that window was adopted by begin_attempt and claimed as delivered.
+        label="coverage is re-checked right before the send",
+        path="scripts/resume_publication.py",
+        old="    if current - covered_ids:",
+        new="    if False:",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_rechecks_coverage_right_before_posting"
+        ),
+    ),
+    Probe(
+        # The refusal path refreshes the one sink that can be repaired without
+        # another command; dropping it leaves the site stale and silent.
+        label="a refused resume still refreshes the Web sink",
+        path="scripts/resume_publication.py",
+        old=(
+            "        # The site renders the whole bundle, so refreshing it here "
+            "is safe and\n"
+            "        # useful even though Discord cannot be claimed.\n"
+            "        _publish_web(category)"
+        ),
+        new="        pass",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_does_not_claim_a_day_another_writer_extended"
+        ),
+    ),
+    Probe(
         # A gap that does not reach the exit code is a gap cron cannot see.
         label="a canonical gap keeps the run non-zero",
         path="scripts/run_pipelines.py",
