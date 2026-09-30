@@ -238,6 +238,11 @@ class PublicationRunCollector:
         self.results: list[StructuredItemResult] = []
         self.failures: list[str] = []
         self.dropped_duplicates: list[str] = []
+        # Identities the finalized publication added beyond what was already
+        # stored.  Recorded by the finalizer, because only it knows what the
+        # merge kept -- reading the store again afterwards can include another
+        # writer's contribution and misreport this run's.
+        self.added_item_ids: set[str] = set()
         self._item_ids: set[str] = set(known_item_ids)
         self._body_parts: list[BodyChunk] = []
         self._pending_ids: dict[str, list[str]] = {}

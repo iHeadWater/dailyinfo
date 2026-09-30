@@ -110,8 +110,10 @@ def main(category: str, source: str) -> int:
 
     # What the merge actually kept, not what the run rendered: a chunk whose
     # items the bundle already had was dropped, so posting it would repeat
-    # content the channel already shows.
-    added = _bundle_item_ids(briefing_id) - before_ids
+    # content the channel already shows.  The collector records this during
+    # finalization, inside the store lock -- re-reading the store here would
+    # also count a concurrent run's contribution.
+    added = collector.added_item_ids
     delta = "\n\n".join(
         part.text
         for part in collector.body_parts

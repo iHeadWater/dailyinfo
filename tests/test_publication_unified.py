@@ -532,28 +532,151 @@ def test_a_new_source_brings_its_prose_even_when_another_source_also_ran():
     assert "nature new chunk" in bundle.briefing.body
 
 
-def test_the_store_lock_serialises_writers():
+def _mark_delivered(briefing_id: str) -> None:
+    from publication import DeliveryState, DeliveryStateStore
+
+    store = DeliveryStateStore()
+    for sink in ("discord", "web"):
+        store.save(
+            DeliveryState(
+                schema_version=1,
+                briefing_id=briefing_id,
+                sink=sink,
+                status="success",
+                attempt_count=1,
+                first_attempted_at=datetime(2026, 8, 27, 1, tzinfo=UTC),
+                last_attempted_at=datetime(2026, 8, 27, 1, tzinfo=UTC),
+                delivered_at=datetime(2026, 8, 27, 1, tzinfo=UTC),
+            )
+        )
+
+
+def test_a_refetched_published_item_is_not_rendered_again():
+    """Seeding drops items the day already carries before they are rendered.
+
+    Without it a chunk that mixes an already-published item with a new one
+    brings the old item's prose along, and the merge appends the whole chunk.
+    """
+    rp = _publish_nature()
+    published = rp._published_item_ids("papers")
+    assert published
+
+    collector = PublicationRunCollector("papers", known_item_ids=published)
+    kept = collector.take_new(
+        _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
+        + _results_for("nature", "https://www.nature.com/articles/x2", "10.1000/x2")
+    )
+
+    assert [result.raw_item.url for result in kept] == [
+        "https://www.nature.com/articles/x2"
+    ]
+
+
+def test_a_notice_does_not_overwrite_a_real_briefing(tmp_path, monkeypatch):
+    """A briefing may legitimately mention ⚠️; that must not mark it a notice."""
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "BRIEFINGS_DIR", tmp_path / "briefings")
+    target = rp.BRIEFINGS_DIR / "papers" / f"nature_briefing_{rp.DATE}.md"
+    target.parent.mkdir(parents=True)
+    real = "# Nature\n\n一条提到 ⚠️ 撤稿提醒的正常简报。\n" + "内容" * 60
+    target.write_text(real, encoding="utf-8")
+
+    rp._save_placeholder(
+        "papers", target.name, f"# Nature - {rp.DATE}\n\n⚠️ 获取失败\n"
+    )
+
+    assert target.read_text(encoding="utf-8") == real
+
+
+def test_a_notice_replaces_an_older_notice(tmp_path, monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "BRIEFINGS_DIR", tmp_path / "briefings")
+    target = rp.BRIEFINGS_DIR / "papers" / f"nature_briefing_{rp.DATE}.md"
+    target.parent.mkdir(parents=True)
+    target.write_text(f"# Nature - {rp.DATE}\n\n⚠️ 获取失败\n", encoding="utf-8")
+
+    assert rp._save_placeholder(
+        "papers", target.name, f"# Nature - {rp.DATE}\n\n📭 过去 24 小时无新内容\n"
+    )
+    assert "📭 过去" in target.read_text(encoding="utf-8")
+
+
+def test_an_unopenable_freshrss_db_is_recorded_as_a_gap(monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "log", lambda *_args: None)
+    monkeypatch.setattr(rp, "_load_sources", lambda: ({"sources": []}, {}, {}))
+    monkeypatch.setattr(rp.sqlite3, "connect", _raise("database is locked"))
+    collector = PublicationRunCollector("papers")
+
+    rp._run_category_pipeline("papers", collector=collector)
+
+    assert any("FreshRSS" in failure for failure in collector.failures)
+
+
+def test_a_merged_briefing_is_delivered_again():
+    """A merge changes the content, so "already delivered" no longer holds.
+
+    Both sinks key that on identity alone and would skip -- so a source
+    recovered with `run -f <source>` or `run --force all` reached neither of
+    them, while both reported the day as delivered.
+    """
+    rp = _publish_nature()
+    briefing_id = f"papers-{rp.DATE}"
+    _mark_delivered(briefing_id)
+
+    resumed = PublicationRunCollector("papers")
+    resumed.add(_results_for("science", "https://www.science.org/doi/y", "10.1000/y"))
+    resumed.add_body("# science\n\nscience chunk", source_name="science")
+    rp._finalize_category_publication("papers", resumed)
+
+    from publication import DeliveryStateStore
+
+    store = DeliveryStateStore()
+    assert store.load(briefing_id, "discord") is None
+    assert store.load(briefing_id, "web") is None
+
+
+def test_an_unchanged_briefing_stays_delivered():
+    """Re-publishing identical content must not cause a second delivery."""
+    rp = _publish_nature()
+    briefing_id = f"papers-{rp.DATE}"
+    _mark_delivered(briefing_id)
+
+    same = PublicationRunCollector("papers")
+    same.add(_results_for("nature", "https://www.nature.com/articles/x", "10.1000/x"))
+    same.add_body("# nature\n\nnature chunk", source_name="nature")
+    rp._finalize_category_publication("papers", same)
+
+    from publication import DeliveryStateStore
+
+    assert DeliveryStateStore().load(briefing_id, "discord") is not None
+
+
+def test_the_store_lock_excludes_a_second_writer():
     """A resume can overlap a cron run; two merges from one base lose one."""
     import threading
 
     import run_pipelines as rp
 
-    order: list[str] = []
-    started = threading.Event()
+    entered = threading.Event()
+    acquired = threading.Event()
 
     def second_writer():
-        started.set()
+        entered.set()
         with rp._store_lock():
-            order.append("second")
+            acquired.set()
 
     with rp._store_lock():
         thread = threading.Thread(target=second_writer)
         thread.start()
-        started.wait(timeout=5)
-        order.append("first")
+        assert entered.wait(timeout=5)
+        # Exclusion means it cannot get in while the first writer holds it.
+        assert not acquired.wait(timeout=0.5)
     thread.join(timeout=5)
-
-    assert order == ["first", "second"]
+    assert acquired.is_set()
 
 
 def test_force_bypasses_the_low_frequency_skip(tmp_path, monkeypatch):

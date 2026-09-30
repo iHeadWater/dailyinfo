@@ -261,27 +261,6 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
-        # Rebuilding from a run that only saw new items drops everything the
-        # earlier run published.
-        label="a partly-covering run merges instead of rebuilding",
-        path="scripts/run_pipelines.py",
-        old=(
-            "    existing_ids = {item.id for item in existing.items}\n"
-            "    if not existing_ids:\n"
-            "        return False"
-        ),
-        new=(
-            "    return True\n"
-            "    existing_ids = {item.id for item in existing.items}\n"
-            "    if not existing_ids:\n"
-            "        return False"
-        ),
-        test=(
-            "tests/test_publication_unified.py"
-            "::test_a_rerun_that_brings_new_items_keeps_the_older_ones"
-        ),
-    ),
-    Probe(
         # The resume command only knows what it recovered through its own
         # collector; without the wiring it reports success and posts nothing.
         label="resume collects the run's own output",
@@ -380,6 +359,92 @@ PROBES: tuple[Probe, ...] = (
         test=(
             "tests/test_publication_unified.py"
             "::test_force_bypasses_the_low_frequency_skip"
+        ),
+    ),
+    Probe(
+        # Without the seed, a chunk mixing an already-published item with a new
+        # one is appended whole and duplicates the old item's prose.
+        label="the run is seeded with what the day already carries",
+        path="scripts/run_pipelines.py",
+        old=(
+            '        log(f"  [publication] cannot read {category}-{DATE} for seeding: {exc}")\n'
+            "        return set()\n"
+            "    return {item.id for item in bundle.items}"
+        ),
+        new=(
+            '        log(f"  [publication] cannot read {category}-{DATE} for seeding: {exc}")\n'
+            "        return set()\n"
+            "    return set()"
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_refetched_published_item_is_not_rendered_again"
+        ),
+    ),
+    Probe(
+        # Conservatively matching any "⚠️" lets a notice replace a real
+        # briefing that happens to mention one.
+        label="a notice does not overwrite a real briefing",
+        path="scripts/run_pipelines.py",
+        old="    if existing and not _is_placeholder_text(existing):",
+        new="    if False:",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_notice_does_not_overwrite_a_real_briefing"
+        ),
+    ),
+    Probe(
+        # An unopenable database used to look exactly like an empty fetch.
+        label="an unopenable FreshRSS DB is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old=(
+            "            publication_collector.add_failure(\n"
+            '                f"{category}: cannot open the FreshRSS DB ({e})"\n'
+            "            )"
+        ),
+        new="            pass",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_an_unopenable_freshrss_db_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        # A source with no type is "known" but never dispatched, so a resume
+        # would report a successful no-op.
+        label="resume rejects a source it cannot dispatch",
+        path="scripts/resume_publication.py",
+        old='        and source.get("type") in ("rss", "scrape", "api")',
+        new="        and True",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_rejects_a_source_it_cannot_dispatch"
+        ),
+    ),
+    Probe(
+        # Returning on the first failure skipped the delivery of the part that
+        # had already merged.
+        label="a partial resume still delivers what merged",
+        path="scripts/resume_publication.py",
+        old="    if delta:",
+        new="    if delta and not collector.failures:",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_delivers_the_part_that_merged_before_reporting_failure"
+        ),
+    ),
+    Probe(
+        # Without the lock two writers load the same base and one contribution
+        # is lost.
+        label="the store lock excludes a second writer",
+        path="scripts/run_pipelines.py",
+        old=(
+            "                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "                break"
+        ),
+        new="                pass\n                break",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_the_store_lock_serialises_writers"
         ),
     ),
     Probe(

@@ -325,6 +325,19 @@ class DeliveryStateStore:
         )
         return state
 
+    def void(self, briefing_id_value: str, sink: str) -> None:
+        """Forget a delivery record, so the briefing is delivered again.
+
+        Delivery state is keyed on identity, not content: a briefing whose
+        content changed after delivery (a merged source) would otherwise be
+        skipped forever by both sinks, each reporting the day as delivered.
+        """
+        path = self._path(briefing_id_value, sink)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
     def begin_attempt(
         self,
         briefing_id_value: str,

@@ -30,13 +30,12 @@ from datasource import DataSource, RSSDataSource, build_feed_url_map
 from logsafe import http_error_detail, one_line
 from paths import BRIEFINGS_DIR, ENV_FILE, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
 from publication import (
+    DeliveryStateStore,
     PublicationBriefingInput,
     PublicationBundle,
     PublicationFinalizer,
     PublicationStore,
-    PublicationValidationError,
     merge_bundle,
-    resolve_item_input_identity,
 )
 from publication.pipeline import (
     PublicationRunCollector,
@@ -894,22 +893,48 @@ def _render_resource_publication(
     return "\n\n".join(blocks)
 
 
-def _save_placeholder(directory: str, filename: str, text: str) -> None:
-    """Save a placeholder, without overwriting a real briefing on disk.
+# The exact notices this pipeline writes when it has no content.  Matching the
+# marker rather than "any ⚠️" matters: a real briefing may legitimately warn
+# about something, and treating that as a placeholder would let a notice
+# replace it.
+_PLACEHOLDER_MARKERS = (
+    "📭 过去",
+    "⚠️ 获取失败",
+    "⚠️ AI 生成失败",
+    "⚠️ 以下文章 AI 摘要生成失败",
+)
+
+
+def _is_placeholder_text(text: str) -> bool:
+    return any(marker in text for marker in _PLACEHOLDER_MARKERS)
+
+
+def _save_placeholder(directory: str, filename: str, text: str) -> bool:
+    """Save a notice without overwriting a real briefing, and never raise.
 
     A second run of the same day -- a resume, a manual re-run -- would
-    otherwise replace delivered Markdown with a zero-item notice, which also
-    flips ``_has_real_briefing_today`` and the status counts.
+    otherwise replace delivered Markdown with a zero-item notice.  Write errors
+    are reported rather than raised: these calls sit in error handlers, and a
+    disk error there used to replace the original failure and take the whole
+    category down with it.
     """
     path = BRIEFINGS_DIR / directory / filename
     try:
         existing = path.read_text(encoding="utf-8")
     except OSError:
         existing = ""
-    if existing and "📭 过去" not in existing and "⚠️" not in existing:
-        log(f"    keeping the existing {filename}: a placeholder would replace it")
-        return
-    save(directory, filename, text)
+    if existing and not _is_placeholder_text(existing):
+        log(f"    keeping the existing {filename}: a notice would replace it")
+        return False
+    try:
+        save(directory, filename, text)
+    except Exception as exc:
+        log(f"    WRITE ERR: {exc}")
+        return False
+    return True
+
+
+_STORE_LOCK_TIMEOUT_SECONDS = 30
 
 
 @contextmanager
@@ -920,16 +945,62 @@ def _store_lock():
     run.  Both would load the same bundle and the later save would win, so the
     other's merged source is silently gone -- with both sinks already reporting
     the day as delivered.
+
+    Waiting is right, but not forever: the lock only ever spans a load and a
+    save, so a holder that outlives the timeout is stuck, and failing loudly
+    beats hanging a cron-shaped process.
     """
     root = PublicationStore().root
     root.mkdir(parents=True, exist_ok=True)
     handle = (root / ".lock").open("a+", encoding="utf-8")
     try:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        deadline = time.monotonic() + _STORE_LOCK_TIMEOUT_SECONDS
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "another run has held the publication store lock for "
+                        f"{_STORE_LOCK_TIMEOUT_SECONDS}s"
+                    )
+                time.sleep(0.1)
         yield
     finally:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        handle.close()
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
+def _content_changed(before: PublicationBundle, after: PublicationBundle) -> bool:
+    """Whether re-publishing changed what the bundle says.
+
+    Only content counts: ``updated_at`` moves on every re-publication, so
+    comparing whole bundles would call an identical re-publication a change and
+    cause a second delivery.
+    """
+    return (
+        {item.id for item in before.items} != {item.id for item in after.items}
+        or before.briefing.body != after.briefing.body
+    )
+
+
+def _void_delivery_state(briefing_id: str) -> None:
+    """Forget that this briefing was delivered, because its content changed.
+
+    Delivery state is keyed on identity alone, so a briefing that gained a
+    source after delivery stays ``success`` for both sinks and the next push or
+    publish skips it -- the recovered content reaches nobody while both sinks
+    report the day as delivered.
+    """
+    store = DeliveryStateStore()
+    for sink in ("discord", "web"):
+        try:
+            store.void(briefing_id, sink)
+        except Exception as exc:  # a missing record is the normal case
+            log(f"  [delivery] could not void {briefing_id}:{sink}: {exc}")
 
 
 def _published_item_ids(category: str) -> set[str]:
@@ -942,7 +1013,12 @@ def _published_item_ids(category: str) -> set[str]:
     """
     try:
         bundle = PublicationStore().load_bundle(f"{category}-{DATE}")
-    except Exception:
+    except FileNotFoundError:
+        return set()
+    except Exception as exc:
+        # Degrading to "nothing is published" would re-render items the day
+        # already carries, which is what the seeding exists to prevent.
+        log(f"  [publication] cannot read {category}-{DATE} for seeding: {exc}")
         return set()
     return {item.id for item in bundle.items}
 
@@ -990,9 +1066,13 @@ def _finalize_category_publication(
                 existing = store.load_bundle(publication_id)
             except FileNotFoundError:
                 existing = None
+            before_ids = {item.id for item in existing.items} if existing else set()
             bundle = _finalize_run(category, collector, existing, published_at)
             result = store.save(bundle)
+            collector.added_item_ids = {item.id for item in bundle.items} - before_ids
             collector.commit_deferred_seen()
+            if existing is not None and _content_changed(existing, bundle):
+                _void_delivery_state(publication_id)
     except Exception as exc:
         log(
             f"  publication_id={publication_id} category={category} "
@@ -1022,22 +1102,23 @@ def _finalize_run(
     existing: PublicationBundle | None,
     published_at: datetime.datetime,
 ) -> PublicationBundle:
-    """Finalize one run, folding it into a bundle the run only partly covers.
+    """Finalize one run, folding it into the bundle the day already has.
 
     A forced single-source re-run (``dailyinfo run -f <source>``) collects that
     one source, and saving it as the day's bundle would drop every other source
-    from both delivery sinks.  So a run that does not re-cover every source the
-    bundle already has is merged instead:
+    from both delivery sinks.  So an existing bundle is always merged into:
 
+    - items are unioned by identity, never replaced: ``fetch`` is seen-filtered,
+      so a re-run sees only new items, and taking that subset as the bundle
+      would drop everything published earlier;
     - a chunk is appended when any of the identities it was rendered from is
-      new to the bundle, which is what lets a resumed source contribute prose
-      without stacking a re-render on top of itself;
-    - items are always unioned, never replaced: ``fetch`` is seen-filtered, so
-      a re-run sees only new items and taking that subset as the bundle would
-      drop everything published earlier.
+      new to the bundle, which lets a resumed source contribute prose without
+      stacking a re-render on top of itself.
 
-    A run that re-covers every source of the bundle is a rebuild, and its body
-    replaces the old one rather than stacking on it.
+    There is deliberately no "the run covered everything, replace the body"
+    branch: the collector is seeded with the day's identities, so such a run
+    cannot occur, and one that did would drop the prose of every item it did
+    not re-render.
     """
     finalizer = PublicationFinalizer(business_timezone=str(CONTENT_TIMEZONE))
     briefing = PublicationBriefingInput(
@@ -1053,10 +1134,6 @@ def _finalize_run(
     )
     item_inputs = collector.item_inputs(published_at=published_at)
     if existing is None:
-        return finalizer.finalize(briefing, item_inputs)
-    if _run_recovers_every_item(existing, item_inputs):
-        # The run re-covered everything the bundle holds, so this is a rebuild:
-        # its body replaces the old one instead of stacking on top of it.
         return finalizer.finalize(briefing, item_inputs)
 
     bundle_ids = {item.id for item in existing.items}
@@ -1074,26 +1151,6 @@ def _finalize_run(
         updated_at=published_at,
         dropped=collector.dropped_duplicates,
     )
-
-
-def _run_recovers_every_item(existing, item_inputs) -> bool:
-    """True when this run's items cover every item the bundle already holds.
-
-    "Covered" has to mean items, not sources: ``fetch`` is seen-filtered, so a
-    re-run of a source normally returns only what is new to it, and treating
-    that subset as a rebuild would drop everything published earlier.
-    """
-    existing_ids = {item.id for item in existing.items}
-    if not existing_ids:
-        return False
-    run_ids: set[str] = set()
-    for item_input in item_inputs:
-        try:
-            run_ids.add(resolve_item_input_identity(item_input).item_id)
-        except PublicationValidationError:
-            # A malformed item fails finalization; it does not decide coverage.
-            continue
-    return existing_ids.issubset(run_ids)
 
 
 # =====================================================================
@@ -1242,7 +1299,7 @@ def _process_regular_source_publication(
     if failed_items:
         # Preserve the existing retry/placeholder behavior for legacy sinks;
         # the failed items are never added to the canonical collector.
-        save(
+        _save_placeholder(
             category,
             f"{name}_briefing_{DATE}_failed.md",
             _make_placeholder_briefing(ds, failed_items),
@@ -1334,13 +1391,9 @@ def _process_deep_content_source_publication(
             except Exception as retry_exc:
                 collector.add_failure(f"{name} item {index}: {retry_exc}")
                 filename = f"{name}_briefing_{DATE}_failed{index}.md"
-                try:
-                    save(category, filename, _make_placeholder_briefing(ds, [item]))
-                except Exception as save_exc:
-                    # Still full disk: record it instead of aborting the whole
-                    # category, which is what this used to do.
-                    log(f"    WRITE ERR: {save_exc}")
-                else:
+                if _save_placeholder(
+                    category, filename, _make_placeholder_briefing(ds, [item])
+                ):
                     saved += 1
                 # Deliberately not committed to seen: seen state never expires,
                 # so a failed item committed here could never be retried.
@@ -1769,7 +1822,7 @@ def _run_pipeline_code_publication() -> int:
                     time.sleep(_BACKOFF_SECONDS[attempt])
         if items is None:
             collector.add_failure(f"{ds.name}: fetch failed")
-            save(
+            _save_placeholder(
                 "code",
                 f"{ds.name}_briefing_{DATE}.md",
                 f"# {ds.display_name} - {DATE}\n\n⚠️ 获取失败\n",

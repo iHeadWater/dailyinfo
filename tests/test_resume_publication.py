@@ -424,6 +424,57 @@ def test_resume_renders_the_web_even_when_discord_fails(resume_env, monkeypatch)
     assert web == ["papers"]
 
 
+def test_resume_rejects_a_source_it_cannot_dispatch(monkeypatch):
+    """A source with no dispatchable type is "known" but never runs."""
+    import resume_publication as resume
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(resume, "log", logs.append)
+    monkeypatch.setattr(
+        rp,
+        "_load_sources",
+        lambda: (
+            {"sources": [{"name": "ghost", "category": "papers"}]},
+            {},
+            {},
+        ),
+    )
+
+    assert resume.main("papers", "ghost") == 1
+    assert any("ghost" in line for line in logs)
+
+
+def test_resume_delivers_the_part_that_merged_before_reporting_failure(
+    resume_env, monkeypatch
+):
+    """A partial recovery still publishes what it recovered."""
+    resume, sent, web = resume_env
+    import run_pipelines as rp
+
+    def run_partial(
+        category,
+        *,
+        create_marker=False,
+        deep_content=False,
+        collector=None,
+        only_source=None,
+    ):
+        collector.add(
+            _results_for("science", "https://www.science.org/doi/y", "10.1000/y")
+        )
+        collector.add_body("# science\n\nscience chunk", source_name="science")
+        rp._finalize_category_publication(category, collector)
+        collector.add_failure("science: 2 item(s) lacked valid structured AI output")
+        return 1
+
+    monkeypatch.setattr(rp, "_run_category_pipeline", run_partial)
+
+    assert resume.main("papers", "science") == 1
+    assert len(sent) == 1
+    assert web == ["papers"]
+
+
 def test_resume_rejects_an_unknown_source(monkeypatch):
     import resume_publication as resume
     import run_pipelines as rp
