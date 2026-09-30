@@ -154,6 +154,37 @@ PROBES: tuple[Probe, ...] = (
         new="",
         test="tests/test_freshrss_admin.py::test_ensure_subscription_inserts_missing_feed",
     ),
+    Probe(
+        # The original silent-loss bug: one failed source raised out of
+        # finalization, so the whole category went missing from both sinks.
+        label="a failed source does not take its category down",
+        path="scripts/run_pipelines.py",
+        old='        action = "partial" if collector.results else "failed"',
+        new=(
+            "        raise PublicationIntegrationError(\n"
+            '            f"{category} publication not finalized: "\n'
+            '            + "; ".join(collector.failures)\n'
+            "        )"
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_source_failure_publishes_the_successful_part"
+        ),
+    ),
+    Probe(
+        # A gap that does not reach the exit code is a gap cron cannot see.
+        label="a canonical gap keeps the run non-zero",
+        path="scripts/run_pipelines.py",
+        old=(
+            "        if total_saved > 0 and failed_pipelines == 0 "
+            "and not PUBLICATION_GAPS"
+        ),
+        new="        if total_saved > 0 and failed_pipelines == 0",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_canonical_gap_makes_run_exit_nonzero"
+        ),
+    ),
 )
 
 

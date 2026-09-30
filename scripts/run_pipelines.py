@@ -664,6 +664,13 @@ def _already_pushed_within(name: str, category: str, lookback_hours: int) -> boo
 FORCE_ALL: bool = False
 FORCE_SOURCES: set[str] = set()
 
+# Canonical gaps recorded during a run: sources that failed to produce
+# structured output, and therefore are absent from that category's publication.
+# The run still publishes what did succeed, but reports these so the gap is
+# visible (both delivery sinks read the canonical bundle, so a gap here is a
+# gap everywhere) and the exit code stays non-zero.
+PUBLICATION_GAPS: list[str] = []
+
 # The direct helper functions retain their historical Markdown-only behavior
 # for callers/tests that use them as library helpers.  ``main`` enables the
 # production boundary so the user-facing ``dailyinfo run`` is fully
@@ -879,13 +886,18 @@ def _finalize_category_publication(
 
     publication_id = f"{category}-{DATE}"
     if collector.failures:
+        # The sources that did produce structured results are already in the
+        # collector, so a source-level failure costs that source and not the
+        # category: both sinks read this one bundle, and publishing the part
+        # that exists beats publishing nothing.  Item-level integrity still
+        # fails closed in the finalizer/validation below.
+        action = "partial" if collector.results else "failed"
         log(
             f"  publication_id={publication_id} category={category} "
-            f"action=fail item_count={len(collector.results)}"
+            f"action={action} item_count={len(collector.results)} "
+            f"failed_sources={len(collector.failures)}"
         )
-        raise PublicationIntegrationError(
-            f"{category} publication not finalized: " + "; ".join(collector.failures)
-        )
+        PUBLICATION_GAPS.append(f"{category}: " + "; ".join(collector.failures))
     if not collector.results:
         log(
             f"  publication_id={publication_id} category={category} "
@@ -2033,13 +2045,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    global FORCE_ALL, FORCE_SOURCES, PUBLICATION_INTEGRATION
+    global FORCE_ALL, FORCE_SOURCES, PUBLICATION_INTEGRATION, PUBLICATION_GAPS
     if not _get_glm_key():
         log("[WARN] 兜底已禁用：未配置 GLM_API_KEY")
     _warn_if_fallback_looks_like_openrouter(_resolve_fallback_model(None))
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
     PUBLICATION_INTEGRATION = True
+    PUBLICATION_GAPS = []
     if FORCE_ALL or FORCE_SOURCES:
         log(
             "Force mode: "
@@ -2080,7 +2093,18 @@ def main() -> int:
             log(f'  {d}/: {len(files)} today - {", ".join(files)}')
 
     log(f"Total: {total_saved} files saved")
-    return 0 if total_saved > 0 and failed_pipelines == 0 else 1
+    if PUBLICATION_GAPS:
+        log(
+            "Canonical publication gaps: "
+            + f"{len(PUBLICATION_GAPS)} - the parts that succeeded were "
+            "published; these sources are missing from today's bundles: "
+            + "; ".join(PUBLICATION_GAPS)
+        )
+    return (
+        0
+        if total_saved > 0 and failed_pipelines == 0 and not PUBLICATION_GAPS
+        else 1
+    )
 
 
 if __name__ == "__main__":
