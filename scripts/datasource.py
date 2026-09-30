@@ -47,7 +47,7 @@ class Item:
     title: str
     date: str  # YYYY-MM-DD
     url: str = ""
-    content: str = ""  # populated by deep-content sources (e.g. SmolAI)
+    content: str = ""  # populated by deep-content sources (e.g. AINews digests)
     extra: dict = field(
         default_factory=dict
     )  # source-specific fields (stars, likes, …)
@@ -298,19 +298,29 @@ class DataSource(ABC):
 
     @staticmethod
     def create(config: dict, defaults: dict, **ctx) -> "DataSource":
-        """Factory: instantiate the correct subclass for config['type']."""
-        t = config.get("type") or config.get("source_type", "scrape")
+        """Factory: instantiate the correct subclass for config['type'].
+
+        The per-source config is layered over ``defaults`` before dispatch.
+        Subclasses read settings straight out of the dict they are handed --
+        ``max_articles_per_batch`` among them, from two different places -- so
+        a documented default that never reaches them is not a default. Every
+        source in config/sources.json relies on that default and none sets it,
+        which is how each one came to send its whole article list in a single
+        AI call and truncate.
+        """
+        merged = {**defaults, **config}
+        t = merged.get("type") or merged.get("source_type", "scrape")
         if t == "rss":
             return RSSDataSource(
-                config,
+                merged,
                 defaults,
                 db=ctx.get("db"),
                 full_map=ctx.get("full_map", {}),
                 base_map=ctx.get("base_map", {}),
             )
         if t == "api":
-            return APIDataSource(config, defaults)
-        return ScrapeDataSource(config, defaults)
+            return APIDataSource(merged, defaults)
+        return ScrapeDataSource(merged, defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -328,6 +338,21 @@ class RSSDataSource(DataSource):
             "max_articles_per_batch"
         )
         self.max_batches: int = config.get("max_batches", 1000)
+        raw_cap = config.get("max_content_chars", 12000)
+        try:
+            raw_cap = int(raw_cap)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                f"{self.name}: max_content_chars must be an integer, got {raw_cap!r}"
+            ) from None
+        if raw_cap < 200:
+            # Safety margin above the silent-drop boundary (~142): below it
+            # the cap // 2 cut plus marker falls under the 100-char filter
+            # and every item would be dropped without a log line.
+            raise ValueError(
+                f"{self.name}: max_content_chars must be >= 200, got {raw_cap}"
+            )
+        self.max_content_chars: int = raw_cap
 
     def fetch(self) -> list[Item]:
         if not self._db:
@@ -359,11 +384,16 @@ class RSSDataSource(DataSource):
             items = []
             for row in rows:
                 plain = strip_html(row["content"] or "")
-                if len(plain) > 12000:
-                    trunc = plain.rfind(" ", 0, 12000)
-                    plain = (
-                        plain[: max(trunc, 10000)] + "\n\n[... content truncated ...]"
+                if len(plain) > self.max_content_chars:
+                    # Cut on the last word boundary inside the cap, floored so a
+                    # small cap still keeps a useful body: at most 2000 below
+                    # the cap and never less than half of it.
+                    cut = max(
+                        plain.rfind(" ", 0, self.max_content_chars),
+                        self.max_content_chars - 2000,
+                        self.max_content_chars // 2,
                     )
+                    plain = plain[:cut] + "\n\n[... content truncated ...]"
                 if len(plain) < 100:
                     continue
                 extra = self._rss_extra(row["feed_guid"])

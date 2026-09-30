@@ -27,7 +27,7 @@ FreshRSS / 网页抓取 / API 数据源
 | | |
 |---|---|
 | **五条流水线** | 期刊论文(30+ 期刊,含中文水利期刊)· AI 资讯 · arXiv CS.AI(每日最多 500 篇)· GitHub Trending + HuggingFace 模型 · 院所动态 |
-| **中文优先简报** | AI 生成中文摘要;主模型 API 故障时自动降级到 OpenRouter 备用模型 |
+| **中文优先简报** | AI 生成中文摘要;主模型 API 故障时自动降级到智谱 GLM 备用模型 |
 | **配置驱动** | 在 `config/sources.json` 中添加 RSS、网页或 API 数据源,无需改代码 |
 | **幂等,可安全重跑** | 已有今日简报的数据源自动跳过;已推送文件不会重复发送 |
 | **高容错** | 指数退避重试、AI 响应不完整时自动拆分批次、数据源级隔离 |
@@ -132,9 +132,9 @@ dailyinfo push
 | `FRESHRSS_USER` | FreshRSS 用户名 |
 | `FRESHRSS_PASSWORD` | FreshRSS 初始密码 |
 | `DAILYINFO_DATA_ROOT` | 覆盖默认数据根目录 |
-| `OPENROUTER_API_KEY` | OpenRouter API key(可选,用于备用模型) |
+| `GLM_API_KEY` | 智谱 GLM API key(可选,用于备用模型) |
 | `DAILYINFO_ENV` | 环境：`prod` / `dev` / `staging`(默认 `prod`) |
-| `DAILYINFO_FALLBACK_MODEL` | 主模型空响应时的备用模型(默认 `moonshotai/kimi-k2.5`) |
+| `DAILYINFO_FALLBACK_MODEL` | 主模型空响应时的备用模型(默认 `glm-5.3-flash`,智谱模型名) |
 
 ## 调度和 Agent 分工
 

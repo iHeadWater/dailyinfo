@@ -22,7 +22,13 @@ import os
 import pathlib
 
 PROJECT_ROOT = pathlib.Path(__file__).parent.parent.resolve()
-ENV_FILE = PROJECT_ROOT / ".env"
+# Overridable so a test run can point every .env lookup at a file that does not
+# exist. A value sitting in the developer's real .env otherwise changes test
+# outcomes -- and the operator who sets one is exactly the one who would see
+# the suite go red.
+ENV_FILE = pathlib.Path(
+    os.environ.get("DAILYINFO_ENV_FILE") or (PROJECT_ROOT / ".env")
+)
 
 # Valid environment names
 VALID_ENVS = ("dev", "staging", "prod")

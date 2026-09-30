@@ -287,7 +287,7 @@ def test_ai_news_deep_content_uses_structured_summary(monkeypatch):
 def test_run_returns_nonzero_when_publication_finalization_fails(monkeypatch):
     import run_pipelines as rp
 
-    monkeypatch.setattr(rp, "load_api_key", lambda: "")
+    monkeypatch.setattr(rp, "_get_deepseek_key", lambda: "sk-test")
     monkeypatch.setattr(rp, "log", lambda *_args: None)
 
     def fail_pipeline():

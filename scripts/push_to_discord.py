@@ -8,6 +8,7 @@ from datetime import datetime
 import time
 import shutil
 
+from logsafe import BODY_EXCERPT_CHARS, one_line
 from paths import BRIEFINGS_DIR, CURRENT_ENV, PUSHED_DIR, STATE_DIR, get_channel_id
 from publication import (
     CorruptDeliveryStateError,
@@ -88,8 +89,8 @@ def _load_env_value(key):
 
 
 DISCORD_BOT_TOKEN = _load_env_value("DISCORD_BOT_TOKEN")
-if not DISCORD_BOT_TOKEN:
-    log("❌ 错误：DISCORD_BOT_TOKEN 未设置")
+if not DISCORD_BOT_TOKEN or "your_" in DISCORD_BOT_TOKEN:
+    log("❌ 错误：DISCORD_BOT_TOKEN 未设置或仍是占位符")
     exit(1)
 
 # Channel IDs are resolved per-category using the env-aware config module.
@@ -205,10 +206,16 @@ def _post_single_message(channel_id, headers, data, chunk_index):
                 time.sleep(wait)
                 last_err = "429 rate limit"
                 continue
-            log(f"  ❌ 第 {chunk_index} 部分发送失败: {resp.status_code} - {resp.text}")
+            log(
+                f"  ❌ 第 {chunk_index} 部分发送失败: {resp.status_code} - "
+                f"{one_line(resp.text, DISCORD_BOT_TOKEN)[:BODY_EXCERPT_CHARS]}"
+            )
             return False
         except Exception as e:
-            last_err = str(e)
+            # Sanitised once here: requests' InvalidHeader embeds the whole
+            # header value, so a token with a stray CR/LF would be logged at
+            # all three sites below.
+            last_err = one_line(str(e), DISCORD_BOT_TOKEN)
             if delay is None:
                 log(f"  ❌ 发送错误（已重试 {len(_DISCORD_RETRY_DELAYS)} 次）: {last_err}")
                 return False
@@ -232,7 +239,12 @@ def send_to_discord(channel_id, content):
     for i, msg in enumerate(messages):
         if len(messages) > 1:
             msg = f"{_chunk_prefix(i + 1, len(messages))}{msg}"
-        data = {"content": msg}
+        data = {
+            "content": msg,
+            # Briefing text originates from external feeds; never let it
+            # resolve into real pings.
+            "allowed_mentions": {"parse": []},
+        }
 
         if not _post_single_message(channel_id, headers, data, i + 1):
             return False

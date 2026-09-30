@@ -2,7 +2,7 @@
 """DailyInfo Pipeline Runner — generates daily briefing files.
 
 Reads RSS feeds from FreshRSS, scrapes GitHub/HuggingFace trending,
-scrapes DUT university news, then calls DeepSeek AI for summaries (OpenRouter fallback).
+scrapes DUT university news, then calls DeepSeek AI for summaries (Zhipu GLM fallback).
 Output files are saved to ~/.myagentdata/dailyinfo/briefings/{category}/.
 
 Usage:
@@ -25,7 +25,8 @@ from zoneinfo import ZoneInfo
 import requests
 
 from datasource import DataSource, RSSDataSource, build_feed_url_map
-from paths import BRIEFINGS_DIR, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
+from logsafe import http_error_detail, one_line
+from paths import BRIEFINGS_DIR, ENV_FILE, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
 from publication import (
     PublicationBriefingInput,
     PublicationFinalizer,
@@ -47,11 +48,13 @@ SOURCES_JSON = os.path.join(CONFIG_DIR, "sources.json")
 CONTENT_TIMEZONE = ZoneInfo("Asia/Shanghai")
 DATE = datetime.datetime.now(CONTENT_TIMEZONE).strftime("%Y-%m-%d")
 
-API_KEY = ""
-
 
 def _get_freshrss_user() -> str:
-    env_path = os.path.join(PROJECT_ROOT, ".env")
+    # Via paths.ENV_FILE, not PROJECT_ROOT: this runs at import time (see
+    # FRESHRESS_DB below), it is the one remaining route by which a test run
+    # opened the developer's real .env, and paths.ENV_FILE is the seam that
+    # DAILYINFO_ENV_FILE redirects.
+    env_path = str(ENV_FILE)
     if os.path.exists(env_path):
         with open(env_path, encoding="utf-8") as f:
             for line in f:
@@ -111,23 +114,33 @@ def _remove_arxiv_marker() -> None:
     log("  [arxiv] marker removed - push may proceed")
 
 
-def load_api_key() -> str:
+def load_glm_key() -> str:
+    """Load the Zhipu GLM fallback key, or ``""`` when it is not configured.
+
+    Mirrors :func:`load_deepseek_key` but must not exit: the fallback is
+    optional, so a missing key only disables it.
+    """
     env_path = os.path.join(PROJECT_ROOT, ".env")
     if os.path.exists(env_path):
         try:
             from dotenv import dotenv_values
 
-            key = dotenv_values(env_path).get("OPENROUTER_API_KEY", "")
-            if key and not key.startswith("your_"):
+            key = dotenv_values(env_path).get("GLM_API_KEY", "")
+            if key and "your_" not in key:
                 return key
         except ImportError:
             with open(env_path) as f:
                 for line in f:
                     line = line.strip()
-                    if line.startswith("OPENROUTER_API_KEY=") and "your_" not in line:
-                        return line.split("=", 1)[1].strip()
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    if key:
+                    if not line.startswith("GLM_API_KEY="):
+                        continue
+                    # Test the value, not the line: a real key may be trailed
+                    # by a comment that happens to mention "your_".
+                    value = line.split("=", 1)[1].split("#", 1)[0].strip()
+                    if value and "your_" not in value:
+                        return value
+    key = os.environ.get("GLM_API_KEY", "")
+    if key and "your_" not in key:
         return key
     return ""
 
@@ -139,65 +152,132 @@ def load_deepseek_key() -> str:
         try:
             from dotenv import dotenv_values
 
-            values = dotenv_values(env_path)
-            key = values.get("DEEPSEEK_API_KEY", "")
-            if key and not key.startswith("your_"):
+            key = dotenv_values(env_path).get("DEEPSEEK_API_KEY", "")
+            if key and "your_" not in key:
                 return key
         except ImportError:
             with open(env_path) as f:
                 values = {}
                 for line in f:
                     line = line.strip()
-                    if "=" in line and not line.startswith("#"):
-                        name, value = line.split("=", 1)
-                        values[name.strip()] = value.strip().strip('"').strip("'")
-                key = values.get("DEEPSEEK_API_KEY", "")
-                if key and not key.startswith("your_"):
-                    return key
+                    if not line.startswith("DEEPSEEK_API_KEY="):
+                        continue
+                    # Test the value, not the line: a real key may be trailed
+                    # by a comment that happens to mention "your_".
+                    value = line.split("=", 1)[1].split("#", 1)[0].strip()
+                    if value and "your_" not in value:
+                        return value
     key = os.environ.get("DEEPSEEK_API_KEY", "")
-    if key:
+    if key and "your_" not in key:
         return key
     log("ERROR: No DEEPSEEK_API_KEY found in .env or environment")
     sys.exit(1)
 
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+GLM_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 
-DEFAULT_FALLBACK_MODEL = "moonshotai/kimi-k2.5"
+DEFAULT_FALLBACK_MODEL = "glm-5.3-flash"
+
+# GLM-5.3-flash always thinks, and thinking tokens are billed against
+# ``max_tokens`` — at the default effort it can spend the whole budget before
+# emitting any content. "low" is the cheapest level it accepts (low/high/max).
+GLM_REASONING_LOW = {"reasoning_effort": "low"}
+
+# Deep-content sources feed whole articles to a reasoning model whose
+# reasoning is billed against max_tokens -- a full AINews post measured
+# ~8.5k tokens before its first output token. Live-verified with a
+# production-size prompt against both the primary and the GLM fallback.
+_DEEP_CONTENT_MAX_TOKENS = 64000
 
 _BACKOFF_SECONDS = (2, 5, 10)
 
-# The required structured/Markdown response can exceed the old 1200-token
-# ceiling. ``max_tokens`` is the completion budget (not
-# the input prompt length) for this OpenAI-compatible API.
-DEFAULT_AI_OUTPUT_TOKENS = 50000
+# The required structured response can exceed the old 1200-token ceiling.
+# ``max_tokens`` is the completion budget (not the input prompt length) for
+# this OpenAI-compatible API: the canonical publication paths use this value,
+# while the older pipeline paths keep their own tuned per-pipeline budgets.
+DEFAULT_AI_OUTPUT_TOKENS = 4000
 
 
 class BriefingGenerationError(ValueError):
     """Raised when an AI response is empty, truncated, or structurally incomplete."""
 
 
+def _read_dotenv_value(name: str) -> str:
+    """Read one plain setting from ``.env``, or ``""`` when it is absent.
+
+    `.env.example` documents ``DAILYINFO_FALLBACK_MODEL`` as a .env entry, but
+    nothing injects .env into the environment -- reading ``os.environ`` alone
+    silently ignores what an operator configured there.
+    """
+    env_path = os.path.join(PROJECT_ROOT, ".env")
+    if not os.path.exists(env_path):
+        return ""
+    try:
+        from dotenv import dotenv_values
+
+        return dotenv_values(env_path).get(name, "") or ""
+    except ImportError:
+        prefix = f"{name}="
+        with open(env_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith(prefix):
+                    continue
+                value = line[len(prefix) :].split("#", 1)[0].strip()
+                return value.strip('"').strip("'")
+    return ""
+
+
 def _resolve_fallback_model(explicit: str | None) -> str:
-    """Pick the fallback model: explicit arg > env override > built-in default."""
+    """Pick the fallback model: explicit arg > env > .env > built-in default."""
     return (
-        explicit or os.environ.get("DAILYINFO_FALLBACK_MODEL") or DEFAULT_FALLBACK_MODEL
+        explicit
+        or os.environ.get("DAILYINFO_FALLBACK_MODEL")
+        or _read_dotenv_value("DAILYINFO_FALLBACK_MODEL")
+        or DEFAULT_FALLBACK_MODEL
     )
 
 
-def _post_ai(url: str, api_key: str, model: str, prompt: str, max_tokens: int):
+def _warn_if_fallback_looks_like_openrouter(model: str) -> None:
+    """Warn when the fallback model id looks like a leftover OpenRouter id.
+
+    The value now has to be a Zhipu model name. An old ``moonshotai/...``
+    left in ``.env`` would 400 on every attempt and leave only
+    "empty response after retries" behind, naming the primary model --
+    which is the wrong place to go looking.
+    """
+    if "/" in model:
+        log(
+            f"[WARN] DAILYINFO_FALLBACK_MODEL 形似 OpenRouter id（{model}）；"
+            "智谱官方端点会拒绝，请改用智谱模型名"
+        )
+
+
+def _post_ai(
+    url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    *,
+    extra_body: dict | None = None,
+):
     """Issue a single AI chat completion call and return the parsed JSON."""
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+    }
+    if extra_body:
+        payload.update(extra_body)
     resp = requests.post(
         url,
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": max_tokens,
-        },
+        json=payload,
         timeout=120,
     )
     resp.raise_for_status()
@@ -215,28 +295,43 @@ def _get_deepseek_key() -> str:
 _DEEPSEEK_KEY_CACHE: str | None = None
 
 
+def _get_glm_key() -> str:
+    """Load and cache the Zhipu fallback key (empty string when unset)."""
+    global _GLM_KEY_CACHE
+    if _GLM_KEY_CACHE is None:
+        _GLM_KEY_CACHE = load_glm_key()
+    return _GLM_KEY_CACHE
+
+
+_GLM_KEY_CACHE: str | None = None
+
+
 def call_ai(
     prompt: str,
-    model: str = "deepseek-v4-flash",
-    max_tokens: int = DEFAULT_AI_OUTPUT_TOKENS,
+    model: str = "deepseek-flash",
+    max_tokens: int = 1200,
     *,
     fallback_model: str | None = None,
 ) -> str:
-    """Call DeepSeek API with retries, falling back to OpenRouter.
+    """Call DeepSeek API with retries, falling back to Zhipu GLM.
 
     Strategy: 3 attempts on the primary model via DeepSeek API with
     exponential backoff (2s / 5s / 10s), then up to 2 attempts on
-    ``fallback_model`` via OpenRouter.
+    ``fallback_model`` via the Zhipu official API.
     """
     fallback = _resolve_fallback_model(fallback_model)
     ds_key = _get_deepseek_key()
+    glm_key = _get_glm_key()
 
     # ── Primary: DeepSeek API ──────────────────────────────────────
     for i in range(3):
         try:
             data = _post_ai(DEEPSEEK_API_URL, ds_key, model, prompt, max_tokens)
         except requests.RequestException as exc:
-            log(f"  [call_ai] {model} attempt {i + 1}/3 http_error={exc}")
+            log(
+                f"  [call_ai] {model} attempt {i + 1}/3 "
+                f"http_error={http_error_detail(exc, ds_key)}"
+            )
             time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
             continue
 
@@ -247,21 +342,43 @@ def call_ai(
         if content and finish_reason != "length":
             return content
 
-        reason = finish_reason or (data.get("error") or {}).get("message") or "empty"
+        # Read finish_reason raw: the coerced value above is already truthy, so
+        # using it here would make the provider's own error message
+        # unreachable. Both sides are coerced because a provider can return an
+        # int or a non-dict error, and this string ends up in a log line.
+        error = data.get("error")
+        error_message = error.get("message") if isinstance(error, dict) else error
+        reason = str(choice.get("finish_reason") or error_message or "unknown")
         log(
             f"  [call_ai] {model} attempt {i + 1}/3 incomplete "
-            f"(finish_reason={reason}, chars={len(content)})"
+            f"(finish_reason={one_line(reason, ds_key)}, chars={len(content)})"
         )
         time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
 
+    if not glm_key:
+        raise BriefingGenerationError(
+            f"call_ai: primary {model} exhausted and fallback disabled "
+            "(GLM_API_KEY not configured)"
+        )
+
     log(f"  [call_ai] primary {model} exhausted, switching to fallback {fallback}")
 
-    # ── Fallback: OpenRouter ────────────────────────────────────────
+    # ── Fallback: Zhipu GLM ─────────────────────────────────────────
     for i in range(2):
         try:
-            data = _post_ai(OPENROUTER_API_URL, API_KEY, fallback, prompt, max_tokens)
+            data = _post_ai(
+                GLM_API_URL,
+                glm_key,
+                fallback,
+                prompt,
+                max_tokens,
+                extra_body=GLM_REASONING_LOW,
+            )
         except requests.RequestException as exc:
-            log(f"  [call_ai] {fallback} attempt {i + 1}/2 http_error={exc}")
+            log(
+                f"  [call_ai] {fallback} attempt {i + 1}/2 "
+                f"http_error={http_error_detail(exc, glm_key)}"
+            )
             time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
             continue
 
@@ -272,10 +389,16 @@ def call_ai(
         if content and finish_reason != "length":
             return content
 
-        reason = finish_reason or (data.get("error") or {}).get("message") or "empty"
+        # Read finish_reason raw: the coerced value above is already truthy, so
+        # using it here would make the provider's own error message
+        # unreachable. Both sides are coerced because a provider can return an
+        # int or a non-dict error, and this string ends up in a log line.
+        error = data.get("error")
+        error_message = error.get("message") if isinstance(error, dict) else error
+        reason = str(choice.get("finish_reason") or error_message or "unknown")
         log(
             f"  [call_ai] {fallback} attempt {i + 1}/2 incomplete "
-            f"(finish_reason={reason}, chars={len(content)})"
+            f"(finish_reason={one_line(reason, glm_key)}, chars={len(content)})"
         )
         time.sleep(_BACKOFF_SECONDS[min(i, len(_BACKOFF_SECONDS) - 1)])
 
@@ -357,7 +480,7 @@ def _generate_regular_briefings(
     prompt_template: str,
     model: str,
     *,
-    max_tokens: int = DEFAULT_AI_OUTPUT_TOKENS,
+    max_tokens: int = 4000,
 ) -> list[tuple[str, list]]:
     """Generate one or more complete briefings, splitting oversized batches.
 
@@ -425,7 +548,7 @@ def _retry_failed_items(
         return []
     log(
         f"    Phase 2: retrying {len(failed_items)} failed articles "
-        f"with conservative settings (batch=3, max_tokens={DEFAULT_AI_OUTPUT_TOKENS})"
+        f"with conservative settings (batch=3, max_tokens=4000)"
     )
     results: list[tuple[str, list]] = []
     batch_size = 3
@@ -438,7 +561,7 @@ def _retry_failed_items(
                     batch,
                     prompt_template,
                     model,
-                    max_tokens=DEFAULT_AI_OUTPUT_TOKENS,
+                    max_tokens=4000,
                 )
             )
         except Exception as e:
@@ -984,7 +1107,7 @@ def _process_deep_content_source_publication(
         entries = f"[source_ref={ref}]\nTitle: {item.title}\nContent:\n{item.content}"
         prompt = structured_prompt(base, entries, [ref])
         try:
-            raw = call_ai(prompt, model=model, max_tokens=DEFAULT_AI_OUTPUT_TOKENS)
+            raw = call_ai(prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS)
             result = results_from_response(
                 raw, [item], source_name=name, retrieved_at=retrieved_at
             )[0]
@@ -999,7 +1122,7 @@ def _process_deep_content_source_publication(
         except Exception as exc:
             log(f"    structured ERR for {name} item {index}: {exc}")
             try:
-                raw = call_ai(prompt, model=model, max_tokens=DEFAULT_AI_OUTPUT_TOKENS)
+                raw = call_ai(prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS)
                 result = results_from_response(
                     raw, [item], source_name=name, retrieved_at=retrieved_at
                 )[0]
@@ -1020,6 +1143,55 @@ def _process_deep_content_source_publication(
 
     collector.defer_seen(ds, committed_items)
     return saved
+
+
+def _ensure_rss_subscriptions(cfg: dict, db, category: str) -> list[str]:
+    """Subscribe this category's enabled RSS sources; returns the new names.
+
+    Adding a source to config/sources.json is the whole of the setup: the
+    next pipeline run for its category creates the FreshRSS subscription.
+    A locked or read-only database degrades to a warning -- the rest of the
+    category run still works, and the next run retries the subscription.
+    """
+    from datasource import build_feed_url_map, resolve_feed_id
+    from freshrss_admin import ensure_subscription, resolve_category
+
+    added: list[str] = []
+    try:
+        full_map, base_map = build_feed_url_map(db)
+        for source in _filter_sources(cfg, category, "rss"):
+            # Canonicalise exactly as ensure_subscription will, or a padded
+            # config URL slips past both checks below and inserts a twin.
+            url = (source.get("url") or "").strip()
+            category_name = source.get("freshrss_category")
+            if category_name and resolve_category(db, category_name) is None:
+                log(
+                    f"  [WARN] {source['name']}: FreshRSS category"
+                    f" {category_name!r} not found -> Uncategorized"
+                )
+            similar = resolve_feed_id(url, full_map, base_map) if url else None
+            exact = db.execute("SELECT 1 FROM feed WHERE url = ?", [url]).fetchone()
+            if similar and not exact:
+                # The stored feed's name, not its URL: subscription URLs can
+                # carry private tokens, and this log line is for a human.
+                stored = db.execute(
+                    "SELECT name FROM feed WHERE id = ?", [similar]
+                ).fetchone()
+                log(
+                    f"  [WARN] {source['name']}: a similar feed is already"
+                    f" subscribed ({stored[0]}) -- subscribing the exact"
+                    " config URL anyway"
+                )
+            if ensure_subscription(
+                db,
+                url=url,
+                name=source.get("display_name") or source.get("name", ""),
+                category=category_name,
+            ):
+                added.append(source["name"])
+    except sqlite3.OperationalError as e:
+        log(f"  [WARN] subscription sync skipped: {e}")
+    return added
 
 
 def _process_regular_source(
@@ -1148,28 +1320,25 @@ def _process_deep_content_source(
 
     name, category = ds.name, ds.category
     model = feed_cfg.get("model") or model_default
-    tmpl_key = feed_cfg.get("prompt_template", "smolai_categorized")
-    tmpl = templates.get(tmpl_key, "")
+    tmpl_key = feed_cfg.get("prompt_template")
+    tmpl = templates.get(tmpl_key, "") if tmpl_key else ""
+    if not tmpl:
+        log(f"  SKIP {name}: no prompt template")
+        return 0
     saved = 0
 
     committed_items: list = []
     failed_items: list = []
     for idx, item in enumerate(items := ds.fetch()):
-        prompt = (
-            tmpl.replace("{content}", item.content).replace("{date}", DATE)
-            if tmpl
-            else (
-                "Summarize the following AI news in Chinese by category:\n\n"
-                f"{item.content}"
-            )
-        )
+        prompt = tmpl.replace("{content}", item.content).replace("{date}", DATE)
         suffix = f"_part{idx + 1}" if len(items) > 1 else ""
         filename = f"{name}_briefing_{DATE}{suffix}.md"
         try:
             content_text = call_ai(
-                prompt, model=model, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+                prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS
             )
-            save(category, filename, f"# AI Daily Digest - {DATE}\n\n{content_text}")
+            save(category, filename,
+                 f"# AI Daily Digest - {DATE}\n\n{content_text}")
             saved += 1
             committed_items.append(item)
             log(f"    -> saved {filename}")
@@ -1181,17 +1350,10 @@ def _process_deep_content_source(
     if failed_items:
         log(f"    Phase 2: retrying {len(failed_items)} failed deep-content articles")
         for retry_idx, item in enumerate(failed_items, start=1):
-            prompt = (
-                tmpl.replace("{content}", item.content).replace("{date}", DATE)
-                if tmpl
-                else (
-                    "Summarize the following AI news in Chinese by category:\n\n"
-                    f"{item.content}"
-                )
-            )
+            prompt = tmpl.replace("{content}", item.content).replace("{date}", DATE)
             try:
                 content_text = call_ai(
-                    prompt, model=model, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+                    prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS
                 )
                 filename = f"{name}_briefing_{DATE}_retry{retry_idx}.md"
                 save(
@@ -1219,11 +1381,11 @@ def _run_category_pipeline(
 
     Handles both RSS and non-RSS sources. If *create_marker* is True,
     the arXiv generation marker is created before processing and removed
-    in a finally block. If *deep_content* is True, the smolai use_content
+    in a finally block. If *deep_content* is True, the use_content
     path is used instead of the regular batched path.
     """
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-flash")
     default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
     publication_collector = (
         PublicationRunCollector(category) if PUBLICATION_INTEGRATION else None
@@ -1231,7 +1393,7 @@ def _run_category_pipeline(
 
     # --- RSS sources ---
     try:
-        db = sqlite3.connect(FRESHRSS_DB)
+        db = sqlite3.connect(FRESHRSS_DB, timeout=30)
     except Exception as e:
         user = _get_freshrss_user()
         log(f"Pipeline {category} FAILED: cannot open FreshRSS DB ({e})")
@@ -1239,6 +1401,8 @@ def _run_category_pipeline(
         log(f"  Fix: set FRESHRSS_USER={user} in .env, or correct the username.")
         return 0
     db.row_factory = sqlite3.Row
+    for name in _ensure_rss_subscriptions(cfg, db, category):
+        log(f"  subscribed {name} -> FreshRSS")
     full_map, base_map = build_feed_url_map(db)
 
     if create_marker:
@@ -1427,7 +1591,7 @@ def run_pipeline_code() -> int:
 
     log("=== Pipeline 4: Code Trending ===")
     cfg, defaults, templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-flash")
     code_tmpl = templates.get("code_trending", "")
     saved = 0
 
@@ -1491,7 +1655,7 @@ def run_pipeline_code() -> int:
             content_text = call_ai(
                 prompt,
                 model=source_cfg.get("model", model_default),
-                max_tokens=DEFAULT_AI_OUTPUT_TOKENS,
+                max_tokens=2500,
             )
             save(
                 "code",
@@ -1738,7 +1902,7 @@ def _generate_unified_news(
 
     try:
         content_text = call_ai(
-            prompt, model=model_default, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
+            prompt, model=model_default, max_tokens=3000
         )
         full_content = (
             f"# 大连理工大学校园动态 - {DATE}\n\n"
@@ -1759,7 +1923,7 @@ def run_pipeline_resource() -> int:
 
     log("=== Pipeline 5: University News & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
-    model_default = defaults.get("model", "deepseek-v4-flash")
+    model_default = defaults.get("model", "deepseek-flash")
     saved = 0
 
     # --- Part A: unified news briefing (8 news sources -> 1 file) ---
@@ -1826,9 +1990,7 @@ def run_pipeline_resource() -> int:
         prompt = prompt_tmpl.replace("{items}", f"{ds.display_name}\n{items_text}")
 
         try:
-            content_text = call_ai(
-                prompt, model=model_default, max_tokens=DEFAULT_AI_OUTPUT_TOKENS
-            )
+            content_text = call_ai(prompt, model=model_default, max_tokens=4000)
             display_url = source_cfg.get("list_url", source_cfg.get("url", ""))
             full_content = (
                 f"# {ds.display_name} - {DATE}\n\n"
@@ -1871,8 +2033,10 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    global API_KEY, FORCE_ALL, FORCE_SOURCES, PUBLICATION_INTEGRATION
-    API_KEY = load_api_key()
+    global FORCE_ALL, FORCE_SOURCES, PUBLICATION_INTEGRATION
+    if not _get_glm_key():
+        log("[WARN] 兜底已禁用：未配置 GLM_API_KEY")
+    _warn_if_fallback_looks_like_openrouter(_resolve_fallback_model(None))
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
     PUBLICATION_INTEGRATION = True

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import datetime
+import time
+
+import pytest
 
 DEFAULTS = {"lookback_hours": 24}
 
@@ -127,6 +130,113 @@ def test_fetch_use_content_filters_and_truncates(rss_db):
     assert long_item.content.endswith("[... content truncated ...]")
 
 
+def test_use_content_per_source_cap_overrides_default(rss_db):
+    """A source's ``max_content_chars`` replaces the 12000 default."""
+    ds = _make_rss(
+        {
+            "name": "deep",
+            "type": "rss",
+            "category": "ai_news",
+            "url": "https://deep.example.com/rss",
+            "use_content": True,
+            "max_content_chars": 500,
+        },
+        rss_db,
+    )
+
+    items = ds.fetch()
+    marker = "\n\n[... content truncated ...]"
+    for title in ("Deep Long", "Deep Normal"):
+        item = next(it for it in items if it.title == title)
+        assert item.content.endswith(marker)
+        assert len(item.content.removesuffix(marker)) <= 500
+
+    # The prose entry must be cut just before a space -- the word-boundary
+    # branch -- not at the cap // 2 floor.
+    from datasource import strip_html
+
+    normal = next(it for it in items if it.title == "Deep Normal")
+    body = normal.content.removesuffix(marker)
+    raw = rss_db.execute(
+        "SELECT content FROM entry WHERE title = ?", ("Deep Normal",)
+    ).fetchone()["content"]
+    assert strip_html(raw)[len(body)] == " "
+
+
+def test_use_content_larger_cap_keeps_content_untouched(rss_db):
+    """Raising the cap lets longer content through without truncation."""
+    ds = _make_rss(
+        {
+            "name": "deep",
+            "type": "rss",
+            "category": "ai_news",
+            "url": "https://deep.example.com/rss",
+            "use_content": True,
+            "max_content_chars": 30000,
+        },
+        rss_db,
+    )
+
+    items = ds.fetch()
+    long_item = next(it for it in items if it.title == "Deep Long")
+    assert long_item.content == "A" * 20000
+
+
+def test_use_content_rejects_unparsable_cap(rss_db):
+    """A bad max_content_chars must fail at construction, not mid-fetch."""
+    with pytest.raises(ValueError, match="max_content_chars"):
+        _make_rss(
+            {
+                "name": "deep",
+                "type": "rss",
+                "category": "ai_news",
+                "url": "https://deep.example.com/rss",
+                "use_content": True,
+                "max_content_chars": "huge",
+            },
+            rss_db,
+        )
+
+
+def test_use_content_rejects_cap_under_the_content_filter(rss_db):
+    """Caps near the silent-drop boundary (~142) are rejected with a margin:
+    below it the cap // 2 cut plus marker falls under the 100-char filter."""
+    with pytest.raises(ValueError, match="max_content_chars"):
+        _make_rss(
+            {
+                "name": "deep",
+                "type": "rss",
+                "category": "ai_news",
+                "url": "https://deep.example.com/rss",
+                "use_content": True,
+                "max_content_chars": 100,
+            },
+            rss_db,
+        )
+
+
+def test_use_content_default_cap_is_unchanged(rss_db):
+    """Without the new key the historical cap still applies.
+
+    "Deep Long" contains no spaces, so the word-boundary search misses and
+    the 10000 floor (cap - 2000) sets the cut — the pre-existing behaviour.
+    """
+    ds = _make_rss(
+        {
+            "name": "deep",
+            "type": "rss",
+            "category": "ai_news",
+            "url": "https://deep.example.com/rss",
+            "use_content": True,
+        },
+        rss_db,
+    )
+
+    items = ds.fetch()
+    long_item = next(it for it in items if it.title == "Deep Long")
+    assert long_item.content == "A" * 10000 + "\n\n[... content truncated ...]"
+
+
 def test_get_batches_splits_and_caps(rss_db):
     from datasource import Item
 
@@ -146,6 +256,57 @@ def test_get_batches_splits_and_caps(rss_db):
     batches = ds.get_batches(items)
     assert len(batches) == 3  # capped
     assert [len(b) for b in batches] == [2, 2, 2]
+
+
+def test_get_batches_honours_the_default_batch_size(rss_db):
+    """The documented default must reach a source that does not set its own.
+
+    Every source in config/sources.json relies on it -- none sets
+    max_articles_per_batch -- and the value never reached them, so each source
+    sent its entire article list in a single AI call.
+    """
+    from datasource import DataSource, Item, build_feed_url_map
+
+    full_map, base_map = build_feed_url_map(rss_db)
+    ds = DataSource.create(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+        },
+        {"lookback_hours": 24, "max_articles_per_batch": 4},
+        db=rss_db,
+        full_map=full_map,
+        base_map=base_map,
+    )
+
+    items = [Item(title=f"t{i}", date="2024-01-01") for i in range(10)]
+
+    assert [len(b) for b in ds.get_batches(items)] == [4, 4, 2]
+
+
+def test_a_source_still_overrides_the_default_batch_size(rss_db):
+    from datasource import DataSource, Item, build_feed_url_map
+
+    full_map, base_map = build_feed_url_map(rss_db)
+    ds = DataSource.create(
+        {
+            "name": "test_feed1",
+            "type": "rss",
+            "category": "papers",
+            "url": "https://example.com/feed.xml",
+            "max_articles_per_batch": 3,
+        },
+        {"lookback_hours": 24, "max_articles_per_batch": 4},
+        db=rss_db,
+        full_map=full_map,
+        base_map=base_map,
+    )
+
+    items = [Item(title=f"t{i}", date="2024-01-01") for i in range(10)]
+
+    assert [len(b) for b in ds.get_batches(items)] == [3, 3, 3, 1]
 
 
 def test_get_batches_without_limit_returns_single_batch(rss_db):
@@ -217,6 +378,53 @@ def test_seen_dedup_filters_already_processed(rss_db):
     # Second fetch should filter all of them out
     items2 = ds.fetch()
     assert items2 == []
+
+
+def test_use_content_window_follows_last_seen_not_date(rss_db):
+    """The use_content cutoff applies to lastSeen, not to the publication date.
+
+    FreshRSS refreshes an entry's lastSeen on every poll for as long as the
+    entry stays in the feed, so an entry published weeks ago still counts as
+    recent. That is what makes a skipped run harmless: the entry stays visible
+    until it drops out of the feed, and _filter_seen -- not the cutoff -- is
+    what stops it being pushed twice.
+
+    Filtering on `date` instead would look reasonable and would silently drop
+    anything the pipeline missed on publication day.
+    """
+    now = int(time.time())
+    rss_db.execute(
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen)"
+        " VALUES (?,?,?,?,?,?)",
+        (
+            2,
+            "Published Long Ago Still In Feed",
+            "https://news.example.com/a/old",
+            "<p>published a week ago, still in the feed</p>" + ("word " * 30),
+            now - 7 * 24 * 3600,  # publication date: a week ago
+            now - 60,  # lastSeen: refreshed by the latest poll
+        ),
+    )
+    rss_db.commit()
+
+    ds = _make_rss(
+        {
+            "name": "feed2_lastseen",
+            "type": "rss",
+            "category": "ai_news",
+            "url": "https://news.example.com/rss?format=xml",
+            "use_content": True,
+        },
+        rss_db,
+    )
+
+    # Returned despite the week-old date, because lastSeen is fresh.
+    items = ds.fetch()
+    assert [it.title for it in items] == ["Published Long Ago Still In Feed"]
+
+    # Re-push is prevented by seen state, not by the window.
+    ds.commit_seen(items)
+    assert ds.fetch() == []
 
 
 def test_commit_seen_only_records_provided_items(rss_db):
