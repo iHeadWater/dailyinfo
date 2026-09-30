@@ -885,6 +885,14 @@ def _finalize_category_publication(
     """Finalize exactly one category/date briefing after all sources finish."""
 
     publication_id = f"{category}-{DATE}"
+    if collector.dropped_duplicates:
+        # Repeated identities are dropped before rendering; say so, or the item
+        # looks like it simply vanished from the source.
+        log(
+            f"  publication_id={publication_id} category={category} "
+            f"action=dedup duplicates={len(collector.dropped_duplicates)} "
+            + "; ".join(collector.dropped_duplicates)
+        )
     if collector.failures:
         # The sources that did produce structured results are already in the
         # collector, so a source-level failure costs that source and not the
@@ -1066,6 +1074,9 @@ def _process_regular_source_publication(
             f"{name}: {len(failed_items)} item(s) lacked valid structured AI output"
         )
 
+    # Filter before rendering: the body and the item list have to describe the
+    # same set, or the Markdown would keep a paragraph the bundle dropped.
+    structured_results = collector.take_new(structured_results)
     if structured_results:
         content = _render_regular_publication(ds, structured_results)
         save(category, f"{name}_briefing_{DATE}.md", content)
@@ -1123,6 +1134,11 @@ def _process_deep_content_source_publication(
             result = results_from_response(
                 raw, [item], source_name=name, retrieved_at=retrieved_at
             )[0]
+            if not collector.take_new([result]):
+                # Repeats an item already collected for this category, so it is
+                # published once and nothing is written for this copy.
+                committed_items.append(item)
+                continue
             content = _render_deep_publication(ds, result)
             suffix = f"_part{index}" if len(items) > 1 else ""
             save(category, f"{name}_briefing_{DATE}{suffix}.md", content)
@@ -1138,6 +1154,9 @@ def _process_deep_content_source_publication(
                 result = results_from_response(
                     raw, [item], source_name=name, retrieved_at=retrieved_at
                 )[0]
+                if not collector.take_new([result]):
+                    committed_items.append(item)
+                    continue
                 content = _render_deep_publication(ds, result)
                 filename = f"{name}_briefing_{DATE}_retry{index}.md"
                 save(category, filename, content)
@@ -1578,6 +1597,9 @@ def _run_pipeline_code_publication() -> int:
                 retrieved_at=retrieved_at,
                 display_titles=display_titles,
             )
+            results = collector.take_new(results)
+            if not results:
+                continue
             content = _render_code_publication(ds, results)
             save("code", f"{ds.name}_briefing_{DATE}.md", content)
             collector.add(results)
@@ -1767,19 +1789,23 @@ def _run_pipeline_resource_publication() -> int:
                     source_names=source_names,
                     sections=sections,
                 )
-                content = _render_resource_publication(
-                    results,
-                    title="大连理工大学校园动态",
-                    footer=(
-                        f"---\n*共 {len(results)} 条动态，来自 "
-                        f"{len(news_sources)} 个信源汇总*"
-                    ),
-                )
-                save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", content)
-                collector.add(results)
-                collector.add_body(content)
-                saved += 1
-                log(f"    -> saved {_DLUT_NEWS_GROUP}_briefing_{DATE}.md")
+                results = collector.take_new(results)
+                if results:
+                    content = _render_resource_publication(
+                        results,
+                        title="大连理工大学校园动态",
+                        footer=(
+                            f"---\n*共 {len(results)} 条动态，来自 "
+                            f"{len(news_sources)} 个信源汇总*"
+                        ),
+                    )
+                    save(
+                        "resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", content
+                    )
+                    collector.add(results)
+                    collector.add_body(content)
+                    saved += 1
+                    log(f"    -> saved {_DLUT_NEWS_GROUP}_briefing_{DATE}.md")
             except Exception as exc:
                 collector.add_failure(
                     f"{_DLUT_NEWS_GROUP}: invalid structured AI output: {exc}"
@@ -1841,6 +1867,9 @@ def _run_pipeline_resource_publication() -> int:
                 retrieved_at=retrieved_at,
                 sections={ref: ds.display_name for ref in refs},
             )
+            results = collector.take_new(results)
+            if not results:
+                continue
             content = _render_resource_publication(
                 results,
                 title=ds.display_name,

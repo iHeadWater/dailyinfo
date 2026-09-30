@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from .adapters import PublicationBriefingInput, PublicationItemInput
@@ -30,6 +31,64 @@ from .validation import (
     validate_id,
     validate_public_source_url,
 )
+
+
+@dataclass(frozen=True)
+class ResolvedItemIdentity:
+    """The identity fields one item input resolves to, normalized."""
+
+    item_id: str
+    source_name: str
+    source_url: str
+    external_id: Optional[str]
+
+
+def resolve_item_input_identity(
+    item_input: PublicationItemInput,
+) -> ResolvedItemIdentity:
+    """Resolve and validate one item input's canonical identity.
+
+    The finalizer and the pipeline collector both call this: the collector
+    drops an item whose identity is already in the category before it can reach
+    ``validate_bundle``, which rejects a duplicate identity by rejecting the
+    whole bundle.  Sharing the resolver is what keeps that pre-filter and the
+    finalizer's own id in agreement.
+    """
+
+    source_url = canonicalize_source_url(
+        validate_public_source_url(item_input.source_url)
+    )
+    source_name = (
+        item_input.source_name.strip()
+        if isinstance(item_input.source_name, str)
+        else item_input.source_name
+    )
+    if not isinstance(source_name, str) or not source_name:
+        raise PublicationValidationError("Item.source.name must be non-empty")
+    if item_input.external_id is not None and not isinstance(
+        item_input.external_id, str
+    ):
+        raise PublicationValidationError("Item.source.external_id must be text")
+    external_id = normalize_external_id(
+        source_name=source_name,
+        source_url=source_url,
+        external_id=(
+            item_input.external_id.strip() if item_input.external_id else None
+        ),
+    )
+    item_id = resolve_item_id(
+        source_name=source_name,
+        source_url=source_url,
+        external_id=external_id,
+        explicit_id=item_input.explicit_id,
+    )
+    validate_id(item_id, "Item.id")
+    return ResolvedItemIdentity(
+        item_id=item_id,
+        source_name=source_name,
+        source_url=source_url,
+        external_id=external_id,
+    )
 
 
 class PublicationFinalizer:
@@ -76,34 +135,11 @@ class PublicationFinalizer:
 
         items = []
         for item_input in item_inputs:
-            item_source_url = canonicalize_source_url(
-                validate_public_source_url(item_input.source_url)
-            )
-            source_name = (
-                item_input.source_name.strip()
-                if isinstance(item_input.source_name, str)
-                else item_input.source_name
-            )
-            if not isinstance(source_name, str) or not source_name:
-                raise PublicationValidationError("Item.source.name must be non-empty")
-            if item_input.external_id is not None and not isinstance(
-                item_input.external_id, str
-            ):
-                raise PublicationValidationError("Item.source.external_id must be text")
-            external_id = normalize_external_id(
-                source_name=source_name,
-                source_url=item_source_url,
-                external_id=(
-                    item_input.external_id.strip() if item_input.external_id else None
-                ),
-            )
-            item_id = resolve_item_id(
-                source_name=source_name,
-                source_url=item_source_url,
-                external_id=external_id,
-                explicit_id=item_input.explicit_id,
-            )
-            validate_id(item_id, "Item.id")
+            identity = resolve_item_input_identity(item_input)
+            item_source_url = identity.source_url
+            source_name = identity.source_name
+            external_id = identity.external_id
+            item_id = identity.item_id
             item = Item(
                 schema_version=SCHEMA_VERSION,
                 id=item_id,

@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .adapters import PublicationItemInput, StructuredPublicationAdapter
+from .finalizer import resolve_item_input_identity
+from .models import PublicationValidationError
 
 
 class StructuredResultError(ValueError):
@@ -202,6 +204,11 @@ def results_from_response(
     ]
 
 
+# Identity resolution ignores timestamps entirely (see ``resolve_item_id``), so
+# a deterministic placeholder is enough for the pre-render dedup filter.
+_IDENTITY_ONLY_TIMESTAMP = datetime(1970, 1, 1, tzinfo=UTC)
+
+
 class PublicationRunCollector:
     """Collect one category's structured results before one canonical finalize."""
 
@@ -209,17 +216,57 @@ class PublicationRunCollector:
         self.category = category
         self.results: list[StructuredItemResult] = []
         self.failures: list[str] = []
+        self.dropped_duplicates: list[str] = []
+        self._item_ids: set[str] = set()
         self._body_parts: list[str] = []
         self._pending_seen: list[tuple[Any, list[Any]]] = []
 
     def add_failure(self, message: str) -> None:
         self.failures.append(message)
 
-    def add(self, results: Iterable[StructuredItemResult]) -> None:
+    def take_new(
+        self, results: Iterable[StructuredItemResult]
+    ) -> list[StructuredItemResult]:
+        """Keep the results whose canonical identity is new for this category.
+
+        One fetch can carry the same paper twice (a feed repeating an entry, a
+        scrape page listing a DOI under two links).  Both resolve to one
+        canonical id, and ``validate_bundle`` rejects a duplicate identity by
+        rejecting the whole bundle -- which used to cost the category both of
+        its delivery sinks.  Keep the first occurrence and record the rest, so
+        the item is still published once and the drop is not silent.
+
+        The input built here exists only to resolve identity, which never reads
+        timestamps, so it is stamped with a fixed placeholder rather than a
+        clock reading.  If identity ever grows a timestamp dependency, that
+        stamp has to become real -- the dedup would silently stop matching what
+        the finalizer computes.
+        """
+        kept: list[StructuredItemResult] = []
         for result in results:
-            # Do not silently deduplicate here.  Filtering/dedup belongs to
-            # the source pipeline; a duplicate that reaches finalization must
-            # fail closed instead of disappearing from the publication.
+            try:
+                identity = resolve_item_input_identity(
+                    self._input_for(result, published_at=_IDENTITY_ONLY_TIMESTAMP)
+                )
+            except PublicationValidationError:
+                # An item the finalizer will reject anyway.  Keep it: dedup must
+                # not turn one malformed item into an early abort that skips the
+                # rest of the category.  Item-level validation stays at
+                # finalization, where it fails the bundle closed as designed.
+                kept.append(result)
+                continue
+            if identity.item_id in self._item_ids:
+                self.dropped_duplicates.append(
+                    f"{identity.source_name}: {identity.item_id}"
+                )
+                continue
+            self._item_ids.add(identity.item_id)
+            kept.append(result)
+        return kept
+
+    def add(self, results: Iterable[StructuredItemResult]) -> None:
+        """Append results that ``take_new`` already filtered for this category."""
+        for result in results:
             self.results.append(result)
 
     def add_body(self, body: str) -> None:
@@ -241,28 +288,30 @@ class PublicationRunCollector:
     def body(self) -> str:
         return "\n\n".join(self._body_parts)
 
+    def _input_for(
+        self, result: StructuredItemResult, *, published_at: datetime
+    ) -> PublicationItemInput:
+        overrides = {
+            "summary": result.summary,
+            "why_it_matters": result.why_it_matters,
+            "tags": result.tags,
+        }
+        if result.display_title is not None:
+            overrides["title"] = result.display_title
+        return StructuredPublicationAdapter.item_from_pipeline(
+            result.raw_item,
+            source_name=result.source_name,
+            retrieved_at=result.retrieved_at,
+            published_at=published_at,
+            language="zh-CN",
+            **overrides,
+        )
+
     def item_inputs(self, *, published_at: datetime) -> list[PublicationItemInput]:
-        inputs = []
-        for result in self.results:
-            raw = result.raw_item
-            overrides = {
-                "summary": result.summary,
-                "why_it_matters": result.why_it_matters,
-                "tags": result.tags,
-            }
-            if result.display_title is not None:
-                overrides["title"] = result.display_title
-            inputs.append(
-                StructuredPublicationAdapter.item_from_pipeline(
-                    raw,
-                    source_name=result.source_name,
-                    retrieved_at=result.retrieved_at,
-                    published_at=published_at,
-                    language="zh-CN",
-                    **overrides,
-                )
-            )
-        return inputs
+        return [
+            self._input_for(result, published_at=published_at)
+            for result in self.results
+        ]
 
 
 def now_utc() -> datetime:

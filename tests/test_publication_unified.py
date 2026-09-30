@@ -52,6 +52,69 @@ def _collector_with_one_source(category, source_name, url="https://example.org/a
     return collector
 
 
+def _results_for(source_name, url, external_id=None):
+    item = PipelineItem(
+        title=f"{source_name} title",
+        date="2026-08-27",
+        url=url,
+        extra={"doi": external_id} if external_id else {"item_id": url},
+    )
+    return results_from_response(
+        _response("item-0001"),
+        [item],
+        retrieved_at=datetime(2026, 8, 27, 1, tzinfo=UTC),
+        source_name=source_name,
+    )
+
+
+def test_a_repeated_item_is_dropped_before_it_reaches_the_bundle():
+    """One fetch can hand back the same paper twice.
+
+    The contract keys items by identity, so the second copy used to make
+    validate_bundle reject the whole bundle -- and the category then went
+    missing from Discord and the Web together.
+    """
+    collector = PublicationRunCollector("papers")
+    first = _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
+    repeat = _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
+
+    kept = collector.take_new(first)
+    dropped = collector.take_new(repeat)
+
+    assert len(kept) == 1
+    assert dropped == []
+    assert len(collector.dropped_duplicates) == 1
+    assert "nature" in collector.dropped_duplicates[0]
+
+
+def test_a_repeated_item_does_not_lose_the_category(monkeypatch):
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(rp, "log", logs.append)
+
+    collector = PublicationRunCollector("papers")
+    collector.add(
+        collector.take_new(
+            _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
+        )
+    )
+    collector.take_new(
+        _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
+    )
+    collector.add_body("# nature\n\nStructured summary for item-0001.")
+
+    rp._finalize_category_publication("papers", collector)
+
+    bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
+    assert len(bundle.items) == 1
+    assert len(bundle.briefing.item_ids) == 1
+    # The drop is reported, not silent.
+    assert any(
+        "duplicate" in line and "nature" in line for line in logs
+    ), logs
+
+
 def test_source_failure_publishes_the_successful_part():
     """A source-level failure must cost that source, not the whole category."""
     import run_pipelines as rp

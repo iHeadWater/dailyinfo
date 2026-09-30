@@ -172,6 +172,18 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # A repeat the collector keeps makes validate_bundle reject the whole
+        # bundle, which costs the category both sinks at once.
+        label="a repeated item is dropped before the bundle is validated",
+        path="scripts/publication/pipeline.py",
+        old="            if identity.item_id in self._item_ids:",
+        new="            if False:",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_repeated_item_does_not_lose_the_category"
+        ),
+    ),
+    Probe(
         # A gap that does not reach the exit code is a gap cron cannot see.
         label="a canonical gap keeps the run non-zero",
         path="scripts/run_pipelines.py",
