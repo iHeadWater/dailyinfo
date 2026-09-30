@@ -69,6 +69,20 @@ def resume_env(monkeypatch):
         "# nature\n\nnature chunk",
     )
 
+    monkeypatch.setattr(
+        rp,
+        "_load_sources",
+        lambda: (
+            {
+                "sources": [
+                    {"name": "nature", "category": "papers"},
+                    {"name": "science", "category": "papers"},
+                ]
+            },
+            {},
+            {},
+        ),
+    )
     sent: list[tuple[str, str]] = []
     web: list[tuple] = []
     monkeypatch.setattr(
@@ -81,7 +95,14 @@ def resume_env(monkeypatch):
         resume, "_publish_web", lambda category: web.append(category) or 0
     )
 
-    def run_one_source(category, *, deep_content=False, collector=None):
+    def run_one_source(
+        category,
+        *,
+        create_marker=False,
+        deep_content=False,
+        collector=None,
+        only_source=None,
+    ):
         collector.add(
             _results_for("science", "https://www.science.org/doi/y", "10.1000/y")
         )
@@ -93,6 +114,92 @@ def resume_env(monkeypatch):
 
     monkeypatch.setattr(rp, "_run_category_pipeline", run_one_source)
     return resume, sent, web
+
+
+def test_resume_drives_the_real_dispatch(monkeypatch):
+    """Stubbing `_run_category_pipeline` hid that the flag was never set.
+
+    With `PUBLICATION_INTEGRATION` left False, `papers` ran the legacy path:
+    the collector stayed empty, the command reported "nothing new", and the
+    legacy path marked the recovered items seen -- so they were lost for good.
+    """
+    from types import SimpleNamespace
+
+    import resume_publication as resume
+    import run_pipelines as rp
+
+    _publish(
+        "papers",
+        "nature",
+        "https://www.nature.com/articles/x",
+        "10.1000/x",
+        "# nature\n\nnature chunk",
+    )
+
+    source_cfg = {
+        "name": "science",
+        "category": "papers",
+        "type": "scrape",
+        "url": "https://www.science.org/feed",
+        "display_name": "Science",
+    }
+    monkeypatch.setattr(
+        rp,
+        "_load_sources",
+        lambda: (
+            {"sources": [source_cfg]},
+            {},
+            {"one_line_summary": "Summarize {article_list}"},
+        ),
+    )
+    item = PipelineItem(
+        "Science paper",
+        "2026-08-27",
+        "https://www.science.org/doi/y",
+        extra={"doi": "10.1000/y"},
+    )
+    ds = SimpleNamespace(
+        name="science",
+        category="papers",
+        display_name="Science",
+        lookback_hours=24,
+        fetch=lambda: [item],
+        get_batches=lambda values: [values],
+        format_items=lambda values: "stub",
+        commit_seen=lambda values: None,
+    )
+    monkeypatch.setattr(
+        rp, "DataSource", SimpleNamespace(create=staticmethod(lambda *a, **kw: ds))
+    )
+    monkeypatch.setattr(
+        rp,
+        "sqlite3",
+        SimpleNamespace(
+            connect=lambda *a, **kw: SimpleNamespace(
+                row_factory=None, execute=lambda *a, **kw: None, close=lambda: None
+            ),
+            Row=object,
+        ),
+    )
+    monkeypatch.setattr(rp, "build_feed_url_map", lambda db: ({}, {}))
+    monkeypatch.setattr(rp, "_ensure_rss_subscriptions", lambda cfg, db, category: [])
+    monkeypatch.setattr(rp, "call_ai", lambda prompt, **_kwargs: _response())
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        resume,
+        "send_to_discord",
+        lambda channel, content: sent.append(content) or True,
+    )
+    monkeypatch.setattr(resume, "get_channel_id", lambda category: "channel-1")
+    monkeypatch.setattr(resume, "_publish_web", lambda category: 0)
+
+    assert resume.main("papers", "science") == 0
+
+    bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
+    assert {item.source.name for item in bundle.items} == {"nature", "science"}
+    assert len(sent) == 1
+    assert "science" in sent[0]
 
 
 def test_resume_sends_only_the_chunk_it_recovered(resume_env):
@@ -109,32 +216,44 @@ def test_resume_sends_only_the_chunk_it_recovered(resume_env):
     assert web == ["papers"]
 
 
-def test_resume_does_not_repost_a_source_the_bundle_already_has(resume_env, monkeypatch):
+def test_resume_posts_only_the_requested_source_chunk(resume_env, monkeypatch):
+    """The delta is what was recovered, not whatever else the run rendered."""
     resume, sent, web = resume_env
     import run_pipelines as rp
 
-    def run_known_source(category, *, deep_content=False, collector=None):
+    def run_two_sources(
+        category,
+        *,
+        create_marker=False,
+        deep_content=False,
+        collector=None,
+        only_source=None,
+    ):
         collector.add(
-            _results_for("nature", "https://www.nature.com/articles/x", "10.1000/x")
+            _results_for("science", "https://www.science.org/doi/y", "10.1000/y")
+        )
+        collector.add_body("# science\n\nscience chunk", source_name="science")
+        collector.add(
+            _results_for("nature", "https://www.nature.com/articles/z", "10.1000/z")
         )
         collector.add_body("# nature\n\nnature chunk", source_name="nature")
         return 1
 
-    monkeypatch.setattr(rp, "_run_category_pipeline", run_known_source)
+    monkeypatch.setattr(rp, "_run_category_pipeline", run_two_sources)
 
-    assert resume.main("papers", "nature") == 0
+    assert resume.main("papers", "science") == 0
 
-    assert sent == []
-    assert web == ["papers"]
+    assert len(sent) == 1
+    _channel, content = sent[0]
+    assert "science chunk" in content
+    assert "nature chunk" not in content
 
 
 def test_resume_reports_when_the_source_has_nothing_new(resume_env, monkeypatch):
     resume, sent, web = resume_env
     import run_pipelines as rp
 
-    monkeypatch.setattr(
-        rp, "_run_category_pipeline", lambda *a, **kw: 0
-    )
+    monkeypatch.setattr(rp, "_run_category_pipeline", lambda *a, **kw: 0)
 
     assert resume.main("papers", "science") == 0
 
@@ -142,10 +261,66 @@ def test_resume_reports_when_the_source_has_nothing_new(resume_env, monkeypatch)
     assert web == []
 
 
+def test_resume_fails_when_the_source_fails_again(resume_env, monkeypatch):
+    """A second failure is not a successful recovery."""
+    resume, sent, web = resume_env
+    import run_pipelines as rp
+
+    def run_failing_source(
+        category,
+        *,
+        create_marker=False,
+        deep_content=False,
+        collector=None,
+        only_source=None,
+    ):
+        collector.add_failure("science: fetch failed: feed down")
+        return 1
+
+    monkeypatch.setattr(rp, "_run_category_pipeline", run_failing_source)
+
+    assert resume.main("papers", "science") == 1
+
+    assert sent == []
+    assert web == []
+
+
+def test_resume_renders_the_web_even_when_discord_fails(resume_env, monkeypatch):
+    """The Web render must not depend on the Discord send succeeding."""
+    resume, _sent, web = resume_env
+    monkeypatch.setattr(resume, "send_to_discord", lambda *args: False)
+
+    assert resume.main("papers", "science") == 1
+
+    assert web == ["papers"]
+
+
+def test_resume_rejects_an_unknown_source(monkeypatch):
+    import resume_publication as resume
+    import run_pipelines as rp
+
+    logs: list[str] = []
+    monkeypatch.setattr(resume, "log", logs.append)
+    monkeypatch.setattr(
+        rp,
+        "_load_sources",
+        lambda: ({"sources": [{"name": "nature", "category": "papers"}]}, {}, {}),
+    )
+
+    assert resume.main("papers", "sciense") == 1
+    assert any("sciense" in line for line in logs)
+
+
 def test_resume_refuses_a_day_without_a_briefing(monkeypatch):
     import resume_publication as resume
+    import run_pipelines as rp
 
     monkeypatch.setattr(resume, "log", lambda *_args: None)
+    monkeypatch.setattr(
+        rp,
+        "_load_sources",
+        lambda: ({"sources": [{"name": "science", "category": "papers"}]}, {}, {}),
+    )
 
     assert resume.main("papers", "science") == 1
 

@@ -209,6 +209,21 @@ def results_from_response(
 _IDENTITY_ONLY_TIMESTAMP = datetime(1970, 1, 1, tzinfo=UTC)
 
 
+@dataclass(frozen=True)
+class BodyChunk:
+    """One source's rendered Markdown and the identities it was rendered from.
+
+    Merging a partly-covering run has to decide per chunk whether the bundle
+    already carries everything in it, and a chunk's *source* cannot answer that:
+    ``fetch`` is seen-filtered, so a re-run of a source returns only the items
+    that are new to it.  The identities it was rendered from can.
+    """
+
+    source_name: str
+    item_ids: tuple[str, ...]
+    text: str
+
+
 class PublicationRunCollector:
     """Collect one category's structured results before one canonical finalize."""
 
@@ -218,7 +233,8 @@ class PublicationRunCollector:
         self.failures: list[str] = []
         self.dropped_duplicates: list[str] = []
         self._item_ids: set[str] = set()
-        self._body_parts: list[tuple[str, str]] = []
+        self._body_parts: list[BodyChunk] = []
+        self._pending_ids: dict[str, list[str]] = {}
         self._pending_seen: list[tuple[Any, list[Any]]] = []
 
     def add_failure(self, message: str) -> None:
@@ -282,17 +298,22 @@ class PublicationRunCollector:
                 pass
             else:
                 self._item_ids.add(identity.item_id)
+                self._pending_ids.setdefault(result.source_name, []).append(
+                    identity.item_id
+                )
             self.results.append(result)
 
     def add_body(self, body: str, *, source_name: str) -> None:
         """Append one source's rendered Markdown.
 
-        The source is recorded with the chunk because merging a partly-covered
-        run has to decide per source whether its prose is already in the
-        bundle; a single joined string cannot answer that.
+        The identities added for this source since its previous chunk are
+        recorded with it, because the merge decision is per item: a chunk whose
+        items the bundle already has must not be appended, and one whose items
+        are new must be.
         """
+        item_ids = tuple(self._pending_ids.pop(source_name, []))
         if body.strip():
-            self._body_parts.append((source_name, body.strip()))
+            self._body_parts.append(BodyChunk(source_name, item_ids, body.strip()))
 
     def defer_seen(self, data_source: Any, items: list[Any]) -> None:
         """Defer source dedup-state mutation until canonical persistence succeeds."""
@@ -307,11 +328,11 @@ class PublicationRunCollector:
 
     @property
     def body(self) -> str:
-        return "\n\n".join(chunk for _source, chunk in self._body_parts)
+        return "\n\n".join(part.text for part in self._body_parts)
 
     @property
-    def body_parts(self) -> list[tuple[str, str]]:
-        """The rendered chunks, each paired with the source that produced it."""
+    def body_parts(self) -> list[BodyChunk]:
+        """The rendered chunks, each with the source and ids behind it."""
         return list(self._body_parts)
 
     def _input_for(

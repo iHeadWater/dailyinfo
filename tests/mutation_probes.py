@@ -282,15 +282,41 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
-        # A source the bundle never carried has to contribute its prose, even
-        # when another source in the same run did run before.
-        label="a new source's chunk reaches the merged body",
+        # The resume command only knows what it recovered through its own
+        # collector; without the wiring it reports success and posts nothing.
+        label="resume collects the run's own output",
+        path="scripts/resume_publication.py",
+        old="            collector=collector,",
+        new="            collector=None,",
+        test=(
+            "tests/test_resume_publication.py::test_resume_drives_the_real_dispatch"
+        ),
+    ),
+    Probe(
+        # A chunk has to be judged by the items it rendered, not by its source
+        # name: a re-run of a covered source still brings new prose.
+        label="a chunk whose own items are new reaches the merged body",
         path="scripts/run_pipelines.py",
-        old="        if source_name not in bundle_sources",
+        old="        if set(part.item_ids) - bundle_ids",
         new="        if False",
         test=(
             "tests/test_publication_unified.py"
-            "::test_a_new_source_brings_its_prose_even_when_another_source_also_ran"
+            "::test_new_items_of_a_covered_source_reach_the_body"
+        ),
+    ),
+    Probe(
+        # The delta is the recovered source's chunk, not everything the run
+        # happened to render.
+        label="the resume delta carries only the resumed source",
+        path="scripts/resume_publication.py",
+        old=(
+            "        part.text for part in collector.body_parts "
+            "if part.source_name == source"
+        ),
+        new="        part.text for part in collector.body_parts",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_posts_only_the_requested_source_chunk"
         ),
     ),
     Probe(

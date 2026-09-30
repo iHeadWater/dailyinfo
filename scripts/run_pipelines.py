@@ -892,14 +892,6 @@ def _finalize_category_publication(
     """Finalize exactly one category/date briefing after all sources finish."""
 
     publication_id = f"{category}-{DATE}"
-    if collector.dropped_duplicates:
-        # Repeated identities are dropped before rendering; say so, or the item
-        # looks like it simply vanished from the source.
-        log(
-            f"  publication_id={publication_id} category={category} "
-            f"action=dedup duplicates={len(collector.dropped_duplicates)} "
-            + "; ".join(collector.dropped_duplicates)
-        )
     if collector.failures:
         # The sources that did produce structured results are already in the
         # collector, so a source-level failure costs that source and not the
@@ -951,6 +943,15 @@ def _finalize_category_publication(
         f"  publication_id={bundle.briefing.id} category={category} "
         f"action={result.action} item_count={len(bundle.items)}"
     )
+    if collector.dropped_duplicates:
+        # Reported after finalization, which is also where a merge can add to
+        # this list: an identity the bundle already carries is only detectable
+        # once the bundle is loaded.
+        log(
+            f"  publication_id={publication_id} category={category} "
+            f"action=dedup duplicates={len(collector.dropped_duplicates)} "
+            + "; ".join(collector.dropped_duplicates)
+        )
 
 
 def _finalize_run(
@@ -994,11 +995,13 @@ def _finalize_run(
         # its body replaces the old one instead of stacking on top of it.
         return finalizer.finalize(briefing, item_inputs)
 
+    bundle_ids = {item.id for item in existing.items}
     bundle_sources = {item.source.name for item in existing.items}
     chunks = [
-        chunk
-        for source_name, chunk in collector.body_parts
-        if source_name not in bundle_sources
+        part.text
+        for part in collector.body_parts
+        if set(part.item_ids) - bundle_ids
+        or (not part.item_ids and part.source_name not in bundle_sources)
     ]
     return merge_bundle(
         existing,
@@ -1157,11 +1160,19 @@ def _process_regular_source_publication(
     # same set, or the Markdown would keep a paragraph the bundle dropped.
     structured_results = collector.take_new(structured_results)
     if structured_results:
-        content = _render_regular_publication(ds, structured_results)
-        save(category, f"{name}_briefing_{DATE}.md", content)
-        collector.add(structured_results)
-        collector.add_body(content, source_name=name)
-        log(f"    -> saved {name}_briefing_{DATE}.md")
+        try:
+            content = _render_regular_publication(ds, structured_results)
+            save(category, f"{name}_briefing_{DATE}.md", content)
+        except Exception as exc:
+            # One source's write failure must not take the category down, and
+            # the items stay out of the bundle (and unseen), so the next run
+            # retries them.
+            log(f"    WRITE ERR: {exc}")
+            collector.add_failure(f"{name}: briefing write failed: {exc}")
+        else:
+            collector.add(structured_results)
+            collector.add_body(content, source_name=name)
+            log(f"    -> saved {name}_briefing_{DATE}.md")
     if failed_items:
         # Preserve the existing retry/placeholder behavior for legacy sinks;
         # the failed items are never added to the canonical collector.
@@ -1327,7 +1338,12 @@ def _process_regular_source(
 
     Returns number of files saved (0 or 1).
     """
-    if PUBLICATION_INTEGRATION:
+    # A caller that passes a collector is asking for the canonical path, so the
+    # collector decides as well as the flag does.  Without this, a caller that
+    # never ran `main` (the resume command is one) fell through to the legacy
+    # path: the collector stayed empty and the legacy path marked the items
+    # seen, so the content it fetched was lost rather than published.
+    if PUBLICATION_INTEGRATION or collector is not None:
         own_collector = collector or PublicationRunCollector(ds.category)
         saved = _process_regular_source_publication(
             ds, feed_cfg, model_default, templates, default_tmpl_key, own_collector
@@ -1501,6 +1517,7 @@ def _run_category_pipeline(
     create_marker: bool = False,
     deep_content: bool = False,
     collector: PublicationRunCollector | None = None,
+    only_source: str | None = None,
 ) -> int:
     """Generic pipeline for a single category.
 
@@ -1509,7 +1526,10 @@ def _run_category_pipeline(
     in a finally block. If *deep_content* is True, the use_content
     path is used instead of the regular batched path. A *collector* may be
     supplied by a caller that needs the run's own output -- the resume path
-    does, to send the chunk it just recovered.
+    does, to send the chunk it just recovered. *only_source* restricts the run
+    to one named source, which is what a resume wants: relying on the
+    "briefing already exists" skip instead would re-run every source whose
+    today-file is a zero-item placeholder.
     """
     cfg, defaults, templates = _load_sources()
     model_default = defaults.get("model", "deepseek-flash")
@@ -1543,6 +1563,8 @@ def _run_category_pipeline(
                 feed_cfg, defaults, db=db, full_map=full_map, base_map=base_map
             )
             assert isinstance(ds, RSSDataSource)
+            if only_source is not None and ds.name != only_source:
+                continue
             if _has_real_briefing_today(ds.name, ds.category):
                 log(
                     f"  {ds.name}: briefing already exists for {DATE}, skip "
@@ -1576,6 +1598,8 @@ def _run_category_pipeline(
     # --- Non-RSS sources ---
     for source_cfg in _filter_sources(cfg, category, "scrape", "api"):
         ds = DataSource.create(source_cfg, defaults)
+        if only_source is not None and ds.name != only_source:
+            continue
         if _has_real_briefing_today(ds.name, ds.category):
             log(f"    briefing already exists for {DATE}, skip")
             continue

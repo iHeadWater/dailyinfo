@@ -235,7 +235,7 @@ def test_a_forced_single_source_rerun_keeps_the_other_sources():
     rerun.add(
         _results_for("nature", "https://www.nature.com/articles/x2", "10.1000/x2")
     )
-    rerun.add_body("# nature\n\nnature chunk rewritten", source_name="nature")
+    rerun.add_body("# nature\n\nAFTERNOON", source_name="nature")
     rp._finalize_category_publication("papers", rerun)
 
     bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
@@ -243,10 +243,31 @@ def test_a_forced_single_source_rerun_keeps_the_other_sources():
     assert len(bundle.items) == 3
     # The source that did not re-run keeps both its item and its prose.
     assert "science chunk" in bundle.briefing.body
-    assert "nature chunk" in bundle.briefing.body
-    # The re-run's own rendering is not appended: it would duplicate the prose
-    # the bundle already carries for that source.
-    assert "nature chunk rewritten" not in bundle.briefing.body
+    # The original prose is not duplicated ...
+    assert bundle.briefing.body.count("nature chunk") == 1
+    # ... and the re-run's chunk is kept, because it renders an item the bundle
+    # did not have.
+    assert "AFTERNOON" in bundle.briefing.body
+
+
+def test_new_items_of_a_covered_source_reach_the_body():
+    """fetch() is seen-filtered, so a re-run's chunk holds only new items.
+
+    Skipping it because the *source* was already in the bundle left those items
+    in the item list with no prose anywhere.
+    """
+    rp = _publish_nature()
+
+    afternoon = PublicationRunCollector("papers")
+    afternoon.add(
+        _results_for("nature", "https://www.nature.com/articles/x2", "10.1000/x2")
+    )
+    afternoon.add_body("# nature\n\nnature afternoon chunk", source_name="nature")
+    rp._finalize_category_publication("papers", afternoon)
+
+    bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
+    assert len(bundle.items) == 2
+    assert "nature afternoon chunk" in bundle.briefing.body
 
 
 def test_a_full_rerun_replaces_the_bundle_without_duplicating_prose():
@@ -505,10 +526,10 @@ def test_a_new_source_brings_its_prose_even_when_another_source_also_ran():
     bundle = PublicationStore().load_bundle(f"papers-{rp.DATE}")
     # The source the bundle never carried contributes its prose ...
     assert "science chunk" in bundle.briefing.body
-    # ... the prose it did carry survives ...
-    assert "nature chunk" in bundle.briefing.body
-    # ... and a re-rendered source is not stacked on top of itself.
-    assert "nature new chunk" not in bundle.briefing.body
+    # ... the prose it did carry survives, exactly once ...
+    assert bundle.briefing.body.count("nature chunk") == 1
+    # ... and the new item of a carried source brings the prose it rendered.
+    assert "nature new chunk" in bundle.briefing.body
 
 
 def test_a_retry_after_a_failed_write_is_not_a_duplicate(monkeypatch):

@@ -33,10 +33,20 @@ EXIT_FAILED = 1
 EXIT_UNSUPPORTED = 2
 
 
-def log(msg):
+def log(msg: str) -> None:
     """输出日志（附带当前环境标记）"""
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] [env:{CURRENT_ENV}] {msg}", flush=True)
+
+
+def _known_sources(category: str) -> list[str]:
+    cfg, _defaults, _templates = rp._load_sources()
+    return [
+        source["name"]
+        for source in cfg.get("sources", [])
+        if source.get("category") == category
+        and source.get("enabled", True) is not False
+    ]
 
 
 def main(category: str, source: str) -> int:
@@ -47,9 +57,19 @@ def main(category: str, source: str) -> int:
         )
         return EXIT_UNSUPPORTED
 
+    known = _known_sources(category)
+    if source not in known:
+        # A typo would otherwise force nothing, collect nothing, and report
+        # success.
+        log(
+            f"{category} has no enabled source named {source!r}; "
+            f"known sources: {', '.join(known) or '(none)'}"
+        )
+        return EXIT_FAILED
+
     briefing_id = f"{category}-{rp.DATE}"
     try:
-        bundle = PublicationStore().load_bundle(briefing_id)
+        PublicationStore().load_bundle(briefing_id)
     except FileNotFoundError:
         log(f"No canonical briefing {briefing_id}: run `dailyinfo run` first.")
         return EXIT_FAILED
@@ -57,51 +77,53 @@ def main(category: str, source: str) -> int:
         log(f"Cannot read {briefing_id}: {exc}")
         return EXIT_FAILED
 
-    already_present = source in {item.source.name for item in bundle.items}
-
-    # Force this one source past the "briefing already exists" skip; leave
-    # every other source skipped, which is what keeps the AI spend to one
-    # source.
+    # A collector means publication mode, but the flag has to be set too: the
+    # legacy path ignores the collector and marks the fetched items seen, which
+    # loses exactly what this command exists to recover.
+    rp.PUBLICATION_INTEGRATION = True
     rp.FORCE_ALL = False
     rp.FORCE_SOURCES = {source}
     collector = PublicationRunCollector(category)
     try:
         rp._run_category_pipeline(
             category,
+            create_marker=(category == "arxiv"),
             deep_content=(category == "ai_news"),
             collector=collector,
+            only_source=source,
         )
     except Exception as exc:
         log(f"Re-running {source} failed: {exc}")
         return EXIT_FAILED
 
-    if not collector.body:
+    if collector.failures:
+        log(
+            f"{source} failed again: " + "; ".join(collector.failures)
+        )
+        return EXIT_FAILED
+
+    delta = "\n\n".join(
+        part.text for part in collector.body_parts if part.source_name == source
+    )
+    if not delta:
         log(f"{source}: nothing new to add to {briefing_id}")
         return EXIT_OK
 
-    if already_present:
-        # Its prose is already in the body; re-posting the chunk would show the
-        # source twice in the channel.
-        log(
-            f"{source} is already in {briefing_id}: merged its items, did not "
-            "post its prose again (use `dailyinfo run --force all` for a full "
-            "rebuild)."
-        )
-    else:
-        channel = get_channel_id(category)
-        if not channel:
-            log(f"{category}: no Discord channel configured; skipped the delta.")
-        else:
-            header = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n"
-            if not send_to_discord(channel, header + collector.body):
-                log(
-                    f"Discord delivery failed for {source}; the canonical "
-                    "briefing itself was updated and the Web sink will be "
-                    "re-rendered."
-                )
-                return EXIT_FAILED
+    # The Web sink goes first: its delivery state for the day is already
+    # `success`, so if this command stopped here the merged content would reach
+    # no sink at all.
+    exit_code = _publish_web(category)
 
-    return _publish_web(category)
+    channel = get_channel_id(category)
+    if not channel:
+        log(f"{category}: no Discord channel configured; skipped the delta.")
+        return exit_code
+
+    header = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n"
+    if not send_to_discord(channel, header + delta):
+        log(f"Discord delivery failed for {source}; the briefing itself was updated.")
+        return EXIT_FAILED
+    return exit_code
 
 
 def _publish_web(category: str) -> int:
