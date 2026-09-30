@@ -97,7 +97,11 @@ def _git(cwd, *args, check=True):
 def _git_repo(tmp_path):
     remote = tmp_path / "web-remote.git"
     repo = tmp_path / "web"
-    _git(tmp_path, "init", "--bare", str(remote))
+    # -b main on the bare remote too: without it the remote's HEAD is whatever
+    # `init.defaultBranch` happens to be (`master` on an unconfigured machine),
+    # so the clone in the divergence test ends up without a `main` branch and
+    # its `git push origin main` fails for a reason the test never meant to test.
+    _git(tmp_path, "init", "--bare", "-b", "main", str(remote))
     _git(tmp_path, "init", "-b", "main", str(repo))
     (repo / "README.md").write_text("test web checkout\n", encoding="utf-8")
     _git(repo, "add", "README.md")
