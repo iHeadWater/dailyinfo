@@ -583,6 +583,22 @@ def test_resume_rechecks_coverage_right_before_posting(resume_env, monkeypatch):
     assert sent == []
 
 
+def test_the_helper_reports_an_unreadable_store_instead_of_raising(monkeypatch):
+    import resume_publication as resume
+    from publication import PublicationStore
+
+    logs: list[str] = []
+    monkeypatch.setattr(resume, "log", logs.append)
+    monkeypatch.setattr(
+        PublicationStore,
+        "load_bundle",
+        lambda self, briefing_id: (_ for _ in ()).throw(RuntimeError("corrupt")),
+    )
+
+    assert resume._bundle_item_ids("papers-2026-09-30") is None
+    assert any("cannot read" in line for line in logs)
+
+
 def test_resume_records_the_delta_it_posted(resume_env):
     """Otherwise the next plain push reposts the whole day."""
     from publication import DeliveryState, DeliveryStateStore

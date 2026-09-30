@@ -590,6 +590,17 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # An unreadable store used to escape as a traceback from mid-command.
+        label="an unreadable store is reported, not raised",
+        path="scripts/resume_publication.py",
+        old="    except Exception as exc:\n        log(f\"cannot read {briefing_id}: {exc}\")\n        return None",
+        new="    except Exception as exc:\n        raise",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_the_helper_reports_an_unreadable_store_instead_of_raising"
+        ),
+    ),
+    Probe(
         # A gap that does not reach the exit code is a gap cron cannot see.
         label="a canonical gap keeps the run non-zero",
         path="scripts/run_pipelines.py",

@@ -71,13 +71,26 @@ def _carries_the_day(briefing_id: str, sink: str) -> bool:
     return state is not None and state.status == "success"
 
 
-def _bundle_item_ids(briefing_id: str) -> set[str] | None:
-    """The identities today's briefing carries, or None when it has no briefing."""
+def _load_bundle(briefing_id: str):
+    """The bundle, or None when it cannot be read.  Never raises.
+
+    A corrupt or unreadable store used to surface as a traceback from the
+    middle of the command; the operator needs a line saying what could not be
+    read, and the callers already treat "no bundle" as a case they handle.
+    """
     try:
-        bundle = PublicationStore().load_bundle(briefing_id)
+        return PublicationStore().load_bundle(briefing_id)
     except FileNotFoundError:
         return None
-    return {item.id for item in bundle.items}
+    except Exception as exc:
+        log(f"cannot read {briefing_id}: {exc}")
+        return None
+
+
+def _bundle_item_ids(briefing_id: str) -> set[str] | None:
+    """The identities today's briefing carries, or None when it has no briefing."""
+    bundle = _load_bundle(briefing_id)
+    return {item.id for item in bundle.items} if bundle is not None else None
 
 
 def _known_sources(category: str) -> list[str]:
@@ -182,6 +195,7 @@ def main(category: str, source: str) -> int:
         else:
             if carries_the_day:
                 payload = f"📎 补充：{source} 今日简报（{category} {rp.DATE}）\n\n{delta}"
+                covered = before_ids | added
             else:
                 # The channel has none of today's briefing, so a supplement
                 # would be the only thing it ever sees.
@@ -189,12 +203,15 @@ def main(category: str, source: str) -> int:
                     "  Discord has no delivery for this briefing yet; posting "
                     "the whole briefing instead of a supplement"
                 )
-                payload = PublicationStore().load_bundle(briefing_id).briefing.body
-            covered = (
-                before_ids | added
-                if carries_the_day
-                else (_bundle_item_ids(briefing_id) or set())
-            )
+                # One read for both the body and the ids it covers: reading
+                # twice would let a merge in between count as covered while
+                # the body predates it.
+                bundle = _load_bundle(briefing_id)
+                if bundle is None:
+                    log(f"  {briefing_id} could not be read; nothing sent")
+                    return EXIT_FAILED
+                payload = bundle.briefing.body
+                covered = {item.id for item in bundle.items}
             if not _post_and_record(
                 briefing_id, channel, payload, covered_ids=covered
             ):
