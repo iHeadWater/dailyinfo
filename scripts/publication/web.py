@@ -19,6 +19,7 @@ import re
 import subprocess
 import tempfile
 from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from .delivery import sanitize_error
 from .models import Item, PublicationBundle
@@ -37,6 +38,11 @@ DEFAULT_WEB_VALIDATION_COMMANDS = (
     ("npm", "run", "build"),
 )
 _WEB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+# The editorial calendar every sink shares with the pipelines (run_pipelines
+# dates in Asia/Shanghai).  The Web site groups Items into days by the date
+# prefix of ``published_at``, so the representation has to speak this calendar.
+WEB_CONTENT_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 class WebPublishError(RuntimeError):
@@ -191,8 +197,32 @@ def _frontmatter(data: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def serialize_web_item(item: Item) -> str:
-    """Render an Item to the Web Markdown/frontmatter representation."""
+def _content_time(value: Optional[str]) -> Optional[str]:
+    """Re-express an ISO 8601 timestamp in the content timezone.
+
+    The site files an Item under the day named by the *date prefix* of
+    ``published_at`` (dailyinfo-web ``itemsOnDate``), and the pipeline's
+    editorial day is Asia/Shanghai -- the briefing ``date``.  The production
+    window runs before 08:00 Shanghai, when UTC is still the previous day, so
+    a UTC representation would file a whole briefing's Items one day before
+    the Briefing itself and leave the site's latest day empty.  Only the
+    representation changes; the instant is preserved.
+    """
+
+    if not isinstance(value, str) or not value:
+        return value
+    text = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return datetime.fromisoformat(text).astimezone(WEB_CONTENT_TIMEZONE).isoformat()
+
+
+def serialize_web_item(
+    item: Item, *, briefing_ids: Optional[Sequence[str]] = None
+) -> str:
+    """Render an Item to the Web Markdown/frontmatter representation.
+
+    ``briefing_ids`` overrides the membership list; the publisher passes the
+    union with what the checkout already records (see ``_serialize_item``).
+    """
 
     raw = item_to_dict(item)
     source = {
@@ -208,19 +238,21 @@ def serialize_web_item(item: Item) -> str:
         "title": raw["title"],
         "source": source,
         "authors": raw["authors"],
-        "source_published_at": raw["source_published_at"],
-        "retrieved_at": raw["retrieved_at"],
-        "published_at": raw["published_at"],
+        "source_published_at": _content_time(raw["source_published_at"]),
+        "retrieved_at": _content_time(raw["retrieved_at"]),
+        "published_at": _content_time(raw["published_at"]),
     }
     if raw["updated_at"] is not None:
-        data["updated_at"] = raw["updated_at"]
+        data["updated_at"] = _content_time(raw["updated_at"])
     data.update(
         {
             "summary": raw["summary"],
             "why_it_matters": raw["why_it_matters"],
             "tags": raw["tags"],
             "language": raw["language"],
-            "briefing_ids": raw["briefing_ids"],
+            "briefing_ids": (
+                list(briefing_ids) if briefing_ids is not None else raw["briefing_ids"]
+            ),
         }
     )
     return _frontmatter(data) + "\n"
@@ -236,11 +268,11 @@ def serialize_web_briefing(publication: PublicationBundle) -> str:
         "category": raw["category"],
         "date": raw["date"],
         "title": raw["title"],
-        "generated_at": raw["generated_at"],
-        "published_at": raw["published_at"],
+        "generated_at": _content_time(raw["generated_at"]),
+        "published_at": _content_time(raw["published_at"]),
     }
     if raw["updated_at"] is not None:
-        data["updated_at"] = raw["updated_at"]
+        data["updated_at"] = _content_time(raw["updated_at"])
     data["item_ids"] = raw["item_ids"]
     body = publication.briefing.body.rstrip("\n") + "\n"
     return _frontmatter(data) + "\n" + body
@@ -471,7 +503,7 @@ class WebPublisher:
             for briefing_id in item.briefing_ids:
                 self._validate_web_id(briefing_id, "Item.briefing_ids")
             path = self._item_path(item.category, item.id)
-            item_files[path] = serialize_web_item(item).encode("utf-8")
+            item_files[path] = self._serialize_item(item, path).encode("utf-8")
 
         self._validate_web_id(publication.briefing.id, "Briefing.id")
         for item_id in publication.briefing.item_ids:
@@ -509,6 +541,30 @@ class WebPublisher:
         self._check_managed_identity_conflicts(publication)
         item_files[briefing_path] = serialize_web_briefing(publication).encode("utf-8")
         return item_files
+
+    def _serialize_item(self, item: Item, path: Path) -> str:
+        """Render an Item, keeping the Briefings the checkout already records.
+
+        ``briefing_ids`` is the cross-repository membership record, validated
+        bidirectionally by the site: a Briefing's ``item_ids`` and its Items'
+        ``briefing_ids`` must agree (publication-v1 §7 / §11.7).  Content
+        published from an earlier data root exists only in the checkout --
+        ``PublicationStore.save`` unions membership within its own root, but
+        cannot see what a different root once published.  The same stable
+        identity re-published later (a repository trending twice, a paper
+        re-collected) must therefore extend the file's record, not replace it.
+        """
+        if not path.exists():
+            return serialize_web_item(item)
+        existing = _frontmatter_field(path, "briefing_ids")
+        if existing is None:
+            existing = []
+        if not isinstance(existing, list) or not all(
+            isinstance(value, str) for value in existing
+        ):
+            raise WebPublishError(f"managed Item briefing_ids is invalid: {path.name}")
+        membership = sorted(set(existing) | set(item.briefing_ids))
+        return serialize_web_item(item, briefing_ids=membership)
 
     @staticmethod
     def _validate_web_id(value: str, field_name: str) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 import subprocess
 import sys
 
@@ -34,6 +35,7 @@ def _item_input(
     summary: str = "A structured summary.",
     source_published_at=None,
     suffix: str = "001",
+    moment: datetime = NOW,
 ) -> PublicationItemInput:
     return PublicationItemInput(
         source_name=f"{category}-source",
@@ -47,8 +49,8 @@ def _item_input(
         authors=[],
         tags=[],
         language="en",
-        retrieved_at=NOW,
-        published_at=NOW,
+        retrieved_at=moment,
+        published_at=moment,
     )
 
 
@@ -61,14 +63,15 @@ def _bundle(
     body: str | None = None,
     source_published_at=None,
     suffix: str = "001",
+    moment: datetime = NOW,
 ):
     return PublicationFinalizer().finalize(
         PublicationBriefingInput(
             category=category,
             date=date_value,
             title=f"{category} briefing",
-            generated_at=NOW,
-            published_at=NOW,
+            generated_at=moment,
+            published_at=moment,
             body=body or f"# {category}\n\nCanonical briefing body.",
         ),
         [
@@ -78,6 +81,7 @@ def _bundle(
                 summary=summary,
                 source_published_at=source_published_at,
                 suffix=suffix,
+                moment=moment,
             )
         ],
     )
@@ -216,6 +220,84 @@ def test_web_publisher_keeps_one_item_file_for_shared_item_relationships(tmp_pat
     item_text = item_files[0].read_text(encoding="utf-8")
     assert "papers-2026-08-26" in item_text
     assert "papers-2026-08-27" in item_text
+
+
+def test_web_representation_uses_the_content_timezone():
+    """Every emitted timestamp keeps its instant but speaks Asia/Shanghai.
+
+    03:00 UTC is 11:00 in the content timezone; the site groups content by
+    dates in the editorial calendar, so the representation -- not the instant
+    -- is what it reads.
+    """
+    bundle = _bundle()
+    item_text = serialize_web_item(bundle.items[0])
+    briefing_text = serialize_web_briefing(bundle)
+
+    assert 'published_at: "2026-08-27T11:00:00+08:00"' in item_text
+    assert 'retrieved_at: "2026-08-27T11:00:00+08:00"' in item_text
+    assert 'generated_at: "2026-08-27T11:00:00+08:00"' in briefing_text
+    assert 'published_at: "2026-08-27T11:00:00+08:00"' in briefing_text
+
+
+def test_item_date_prefix_matches_the_briefing_date_in_the_pre_dawn_window(
+    tmp_path,
+):
+    """The site files Items by the *date prefix* of ``published_at``
+    (dailyinfo-web ``itemsOnDate``).  04:04 on 2026-10-01 in Shanghai is
+    20:04 on 09-30 in UTC -- the window the production cron runs in.  A UTC
+    representation would file the whole briefing's Items one day early and
+    leave the site's latest day with zero Items.
+    """
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    dawn = datetime(2026, 9, 30, 20, 4, tzinfo=UTC)
+    bundle = store.save(_bundle(date_value="2026-10-01", moment=dawn)).bundle
+
+    assert (
+        _publisher(tmp_path, repo, remote, store=store).publish(bundle).status
+        == "success"
+    )
+
+    item_text = (
+        repo / "src/content/items/generated/papers/papers-item-001.md"
+    ).read_text(encoding="utf-8")
+    stamp = re.search(r'published_at: "([^"]+)"', item_text).group(1)
+    assert stamp.startswith("2026-10-01"), stamp
+    assert stamp.endswith("+08:00"), stamp
+
+
+def test_republish_viewed_from_a_later_data_root_preserves_membership(tmp_path):
+    """The checkout is the durable membership record.
+
+    Content published from an earlier data root exists only there; the store
+    in use has no memory of it.  Re-publishing the same stable identity (a
+    repository trending twice, a paper re-collected) must extend the Item's
+    ``briefing_ids`` rather than replace them -- the site validates membership
+    bidirectionally and fails the whole publication closed otherwise
+    (publication-v1 contract, §7 and §11.7).
+    """
+    repo, remote = _git_repo(tmp_path)
+    earlier_root = _publisher(
+        tmp_path,
+        repo,
+        remote,
+        store=PublicationStore(tmp_path / "root-a" / "publications"),
+    )
+    assert earlier_root.publish(_bundle(date_value="2026-09-30")).status == "success"
+
+    later_root = _publisher(
+        tmp_path,
+        repo,
+        remote,
+        store=PublicationStore(tmp_path / "root-b" / "publications"),
+    )
+    assert later_root.publish(_bundle(date_value="2026-10-01")).status == "success"
+
+    item_text = (
+        repo / "src/content/items/generated/papers/papers-item-001.md"
+    ).read_text(encoding="utf-8")
+    assert "papers-2026-09-30" in item_text
+    assert "papers-2026-10-01" in item_text
 
 
 def test_web_validation_failure_rolls_back_generated_files_and_commit(tmp_path):
