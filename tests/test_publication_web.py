@@ -233,10 +233,16 @@ def test_web_representation_uses_the_content_timezone():
     item_text = serialize_web_item(bundle.items[0])
     briefing_text = serialize_web_briefing(bundle)
 
-    assert 'published_at: "2026-08-27T11:00:00+08:00"' in item_text
-    assert 'retrieved_at: "2026-08-27T11:00:00+08:00"' in item_text
-    assert 'generated_at: "2026-08-27T11:00:00+08:00"' in briefing_text
-    assert 'published_at: "2026-08-27T11:00:00+08:00"' in briefing_text
+    # Anchored: an unanchored 'published_at: ...' substring would also match
+    # the tail of 'source_published_at: ...'.
+    assert re.search(r'^published_at: "2026-08-27T11:00:00\+08:00"$', item_text, re.M)
+    assert re.search(r'^retrieved_at: "2026-08-27T11:00:00\+08:00"$', item_text, re.M)
+    assert re.search(
+        r'^generated_at: "2026-08-27T11:00:00\+08:00"$', briefing_text, re.M
+    )
+    assert re.search(
+        r'^published_at: "2026-08-27T11:00:00\+08:00"$', briefing_text, re.M
+    )
 
 
 def test_item_date_prefix_matches_the_briefing_date_in_the_pre_dawn_window(
@@ -261,7 +267,7 @@ def test_item_date_prefix_matches_the_briefing_date_in_the_pre_dawn_window(
     item_text = (
         repo / "src/content/items/generated/papers/papers-item-001.md"
     ).read_text(encoding="utf-8")
-    stamp = re.search(r'published_at: "([^"]+)"', item_text).group(1)
+    stamp = re.search(r'^published_at: "([^"]+)"', item_text, re.M).group(1)
     assert stamp.startswith("2026-10-01"), stamp
     assert stamp.endswith("+08:00"), stamp
 
@@ -273,8 +279,9 @@ def test_republish_viewed_from_a_later_data_root_preserves_membership(tmp_path):
     in use has no memory of it.  Re-publishing the same stable identity (a
     repository trending twice, a paper re-collected) must extend the Item's
     ``briefing_ids`` rather than replace them -- the site validates membership
-    bidirectionally and fails the whole publication closed otherwise
-    (publication-v1 contract, §7 and §11.7).
+    bidirectionally and fails the whole publication closed otherwise (the
+    publication-v1 contract in dailyinfo-web, ``docs/contracts/
+    publication-v1.md``, §7 and §11.7).
     """
     repo, remote = _git_repo(tmp_path)
     earlier_root = _publisher(
@@ -298,6 +305,93 @@ def test_republish_viewed_from_a_later_data_root_preserves_membership(tmp_path):
     ).read_text(encoding="utf-8")
     assert "papers-2026-09-30" in item_text
     assert "papers-2026-10-01" in item_text
+
+
+def test_briefing_update_that_drops_an_item_keeps_other_roots_membership(tmp_path):
+    """The reconciliation path must drop only THIS briefing's membership.
+
+    A later regeneration of 10-01 without the shared item reconciles the item
+    file from the store -- which never knew the 09-30 briefing, published from
+    an earlier data root.  Writing that store copy verbatim erased the 09-30
+    membership too, and the site's reverse-membership check then blocked the
+    whole category on every retry.
+    """
+    repo, remote = _git_repo(tmp_path)
+    root_a = PublicationStore(tmp_path / "root-a" / "publications")
+    earlier = _publisher(tmp_path, repo, remote, store=root_a)
+    assert (
+        earlier.publish(root_a.save(_bundle(date_value="2026-09-30")).bundle).status
+        == "success"
+    )
+
+    root_b = PublicationStore(tmp_path / "root-b" / "publications")
+    later = _publisher(tmp_path, repo, remote, store=root_b)
+    assert (
+        later.publish(root_b.save(_bundle(date_value="2026-10-01")).bundle).status
+        == "success"
+    )
+
+    # Regenerate 10-01 with a different item: the shared identity is dropped.
+    updated = root_b.save(_bundle(date_value="2026-10-01", suffix="002")).bundle
+    assert later.publish(updated).status == "success"
+
+    item_text = (
+        repo / "src/content/items/generated/papers/papers-item-001.md"
+    ).read_text(encoding="utf-8")
+    assert "papers-2026-09-30" in item_text
+    assert "papers-2026-10-01" not in item_text
+
+
+def test_union_drops_a_recorded_membership_whose_briefing_file_is_gone(tmp_path):
+    """A membership the site can no longer resolve is not preserved forever.
+
+    If a briefing file disappears from the checkout (a site-side removal, or
+    the state the reconciliation bug left behind), keeping the item's stale
+    reference would fail validation on every future publish of that item.
+    Dropping it here is the only place the dangling pair can heal.
+    """
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+    assert (
+        publisher.publish(store.save(_bundle(date_value="2026-09-30")).bundle).status
+        == "success"
+    )
+    assert (
+        publisher.publish(store.save(_bundle(date_value="2026-10-01")).bundle).status
+        == "success"
+    )
+
+    _git(
+        repo,
+        "rm",
+        "--quiet",
+        "src/content/briefings/generated/2026/09/30/papers.md",
+    )
+    _git(
+        repo,
+        "-c",
+        "user.name=Operator",
+        "-c",
+        "user.email=operator@example.com",
+        "commit",
+        "-m",
+        "operator removes a briefing",
+    )
+    _git(repo, "push", "origin", "main")
+
+    assert (
+        publisher.publish(
+            store.save(_bundle(date_value="2026-10-01", summary="Revised.")).bundle
+        ).status
+        == "success"
+    )
+
+    item_text = (
+        repo / "src/content/items/generated/papers/papers-item-001.md"
+    ).read_text(encoding="utf-8")
+    assert "papers-2026-10-01" in item_text
+    assert "papers-2026-09-30" not in item_text
 
 
 def test_web_validation_failure_rolls_back_generated_files_and_commit(tmp_path):

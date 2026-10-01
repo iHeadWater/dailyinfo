@@ -349,6 +349,9 @@ class WebPublisher:
         self._last_external_ref: Optional[str] = None
         self._remote_needs_push = False
         self._commit_created = False
+        # One briefing file backs many recorded memberships; the worktree does
+        # not change within a publish transaction, so the read is cached.
+        self._membership_claims: dict[str, Optional[frozenset[str]]] = {}
 
     def publish(self, publication: PublicationBundle):
         """Return a briefing-level ``PublishResult`` without leaking secrets."""
@@ -362,6 +365,10 @@ class WebPublisher:
         self._last_external_ref = None
         self._remote_needs_push = False
         self._commit_created = False
+        # The worktree can change between transactions -- the fetch and
+        # fast-forward below run inside the next one -- so the membership
+        # reads are cached per transaction, not per publisher.
+        self._membership_claims = {}
         try:
             with _PublishLock(self.config.lock_path):
                 external_ref = self._publish_locked(publication)
@@ -503,7 +510,9 @@ class WebPublisher:
             for briefing_id in item.briefing_ids:
                 self._validate_web_id(briefing_id, "Item.briefing_ids")
             path = self._item_path(item.category, item.id)
-            item_files[path] = self._serialize_item(item, path).encode("utf-8")
+            item_files[path] = self._serialize_item(
+                item, path, claimed_by=publication.briefing.id
+            ).encode("utf-8")
 
         self._validate_web_id(publication.briefing.id, "Briefing.id")
         for item_id in publication.briefing.item_ids:
@@ -534,37 +543,113 @@ class WebPublisher:
                 raise WebPublishError(
                     f"cannot load removed Item {item_id}: {sanitize_error(exc)}"
                 ) from exc
-            item_files[self._item_path(item.category, item.id)] = serialize_web_item(
-                item
+            item_path = self._item_path(item.category, item.id)
+            item_files[item_path] = self._serialize_item(
+                item, item_path, excluding=publication.briefing.id
             ).encode("utf-8")
 
         self._check_managed_identity_conflicts(publication)
         item_files[briefing_path] = serialize_web_briefing(publication).encode("utf-8")
         return item_files
 
-    def _serialize_item(self, item: Item, path: Path) -> str:
-        """Render an Item, keeping the Briefings the checkout already records.
+    def _serialize_item(
+        self,
+        item: Item,
+        path: Path,
+        *,
+        claimed_by: Optional[str] = None,
+        excluding: Optional[str] = None,
+    ) -> str:
+        """Render an Item, keeping every resolvable Briefing it belongs to.
 
         ``briefing_ids`` is the cross-repository membership record, validated
-        bidirectionally by the site: a Briefing's ``item_ids`` and its Items'
-        ``briefing_ids`` must agree (publication-v1 §7 / §11.7).  Content
-        published from an earlier data root exists only in the checkout --
-        ``PublicationStore.save`` unions membership within its own root, but
-        cannot see what a different root once published.  The same stable
-        identity re-published later (a repository trending twice, a paper
-        re-collected) must therefore extend the file's record, not replace it.
+        bidirectionally by the site (the publication-v1 contract in
+        dailyinfo-web, ``docs/contracts/publication-v1.md`` §7 and §11.7): a
+        Briefing's ``item_ids`` and its Items' ``briefing_ids`` must agree.
+        The checkout is its durable home -- ``PublicationStore.save`` unions
+        membership within its own data root, but content published from an
+        earlier root exists only in the checkout, and content whose publish
+        failed never reached it at all.
+
+        ``claimed_by`` is the Briefing this publish asserts membership in;
+        its file is being written in this transaction, so the claim is true
+        by construction.  ``excluding`` is the Briefing whose item list is
+        being reconciled away from the Item -- that membership must go.  Every
+        other recorded member is kept only while it still resolves in the
+        checkout: one whose Briefing file is gone, or no longer lists the
+        Item, is exactly the state the site rejects closed on every retry,
+        and this is the only place it can heal.
         """
-        if not path.exists():
-            return serialize_web_item(item)
+        membership = set(item.briefing_ids)
+        if claimed_by is not None:
+            membership.add(claimed_by)
+        if path.exists():
+            membership |= set(self._recorded_briefing_ids(path))
+        if excluding is not None:
+            membership.discard(excluding)
+        kept = sorted(
+            briefing_id
+            for briefing_id in membership
+            if briefing_id == claimed_by
+            or self._briefing_still_claims(briefing_id, item.id)
+        )
+        dropped = membership - set(kept)
+        if dropped:
+            logger.warning(
+                "dropping unresolvable briefing membership %s from %s",
+                ", ".join(sorted(dropped)),
+                path.name,
+            )
+        return serialize_web_item(item, briefing_ids=kept)
+
+    def _recorded_briefing_ids(self, path: Path) -> list[str]:
+        """The membership an existing checkout file records."""
+
         existing = _frontmatter_field(path, "briefing_ids")
         if existing is None:
-            existing = []
+            return []
         if not isinstance(existing, list) or not all(
             isinstance(value, str) for value in existing
         ):
             raise WebPublishError(f"managed Item briefing_ids is invalid: {path.name}")
-        membership = sorted(set(existing) | set(item.briefing_ids))
-        return serialize_web_item(item, briefing_ids=membership)
+        return existing
+
+    def _briefing_still_claims(self, briefing_id: str, item_id: str) -> bool:
+        """Whether a recorded membership still resolves in the checkout."""
+
+        if briefing_id not in self._membership_claims:
+            self._membership_claims[briefing_id] = self._read_briefing_claims(
+                briefing_id
+            )
+        claims = self._membership_claims[briefing_id]
+        return claims is not None and item_id in claims
+
+    def _read_briefing_claims(self, briefing_id: str) -> Optional[frozenset[str]]:
+        """The ``item_ids`` a Briefing file records, or None when unresolvable."""
+
+        parts = briefing_id.rsplit("-", 3)
+        if len(parts) != 4 or not all(_WEB_ID_RE.fullmatch(part) for part in parts):
+            return None
+        category, year, month, day = parts
+        path = (
+            self.config.repo_path
+            / self.config.managed_briefings_dir
+            / year
+            / month
+            / day
+            / f"{category}.md"
+        )
+        if not path.exists():
+            return None
+        try:
+            recorded = _frontmatter_field(path, "item_ids")
+        except WebPublishError:
+            return None
+        if not isinstance(recorded, list) or not all(
+            isinstance(value, str) for value in recorded
+        ):
+            return None
+        return frozenset(recorded)
 
     @staticmethod
     def _validate_web_id(value: str, field_name: str) -> None:

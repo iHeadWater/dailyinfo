@@ -525,13 +525,17 @@ timestamps:
   the UTC date is still the previous day; a UTC representation would file a
   briefing's Items one day before the Briefing itself. Only the representation
   changes -- the instant is preserved.
-- An Item's `briefing_ids` is a durable, cross-repository membership record
-  validated bidirectionally by the site (§7 of the publication-v1 contract).
-  `PublicationStore.save` unions membership within its own data root, but
-  content published from an earlier root exists only in the checkout, so the
-  publisher unions the file's recorded membership with the bundle's before
-  writing. The same stable identity re-published later — a repository trending
-  twice, a paper re-collected — extends the record instead of replacing it.
+- An Item's `briefing_ids` is a durable, cross-repository membership record,
+  validated bidirectionally by the site (§7 of the publication-v1 contract in
+  dailyinfo-web, `docs/contracts/publication-v1.md`). `PublicationStore.save`
+  unions membership within its own data root, but content published from an
+  earlier root exists only in the checkout. When an Item is published again,
+  the publisher therefore merges the membership the file records with the
+  bundle's; when a briefing update reconciles an Item out of that one
+  briefing, only that briefing's membership is removed and the others are
+  kept. A recorded membership that no longer resolves in the checkout — its
+  Briefing file is gone, or no longer lists the Item — is dropped with a
+  warning, because the site fails such a pair closed on every retry.
 
 Before any commit, the publisher runs `npm run validate`, `npm run test`,
 `npm run check`, and `npm run build` in the target checkout. It stages only its

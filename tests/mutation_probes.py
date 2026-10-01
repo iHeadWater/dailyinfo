@@ -858,16 +858,43 @@ PROBES: tuple[Probe, ...] = (
     ),
     Probe(
         # The checkout is the durable membership record; content imported
-        # from an earlier data root lives only there.  Without the union, a
+        # from an earlier data root lives only there.  Without the merge, a
         # re-published identity stripped the older Briefing's back-reference
         # and the site's bidirectional validation failed the category closed.
         label="a re-published Item keeps the checkout's recorded membership",
         path="scripts/publication/web.py",
-        old="        membership = sorted(set(existing) | set(item.briefing_ids))",
-        new="        membership = sorted(set(item.briefing_ids))",
+        old="            membership |= set(self._recorded_briefing_ids(path))",
+        new="            pass",
         test=(
             "tests/test_publication_web.py"
             "::test_republish_viewed_from_a_later_data_root_preserves_membership"
+        ),
+    ),
+    Probe(
+        # The reconciliation path removes the Item from ONE briefing.  Not
+        # discarding that briefing's membership lets it survive into the
+        # file, whose Briefing no longer lists the Item -- the mirror-image
+        # validation failure that blocks the category on every retry.
+        label="a reconciliation removes only its own briefing's membership",
+        path="scripts/publication/web.py",
+        old="            membership.discard(excluding)",
+        new="            pass",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_briefing_update_that_drops_an_item_keeps_other_roots_membership"
+        ),
+    ),
+    Probe(
+        # Without the resolve check, a membership whose Briefing file is gone
+        # is preserved on every re-publish and the site's validator rejects
+        # the pair closed forever; dropping it is the only self-heal.
+        label="an unresolvable recorded membership is dropped",
+        path="scripts/publication/web.py",
+        old="            or self._briefing_still_claims(briefing_id, item.id)",
+        new="            or True",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_union_drops_a_recorded_membership_whose_briefing_file_is_gone"
         ),
     ),
 )
