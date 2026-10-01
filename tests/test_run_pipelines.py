@@ -1585,7 +1585,7 @@ def test_call_ai_redacts_the_provider_supplied_finish_reason(monkeypatch):
         rp.requests,
         "post",
         lambda *a, **k: _StubAIResponse(
-            content="", finish_reason="sk-super-secret\u2028[WARN] forged"
+            content="", finish_reason="sk-super-secret [WARN] forged"
         ),
     )
 

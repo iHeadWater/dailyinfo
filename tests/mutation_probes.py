@@ -626,11 +626,90 @@ PROBES: tuple[Probe, ...] = (
         # every later run of the day (skipped deliveries included).
         label="the source summary is only posted by the run that delivered",
         path="scripts/push_to_discord.py",
-        old='            if statuses is not None and result.status == "success":',
-        new="            if statuses is not None:",
+        old='                and result.status == "success"',
+        new="                and True",
         test=(
             "tests/test_push_to_discord.py"
             "::test_the_summary_is_not_posted_by_a_skipped_run"
+        ),
+    ),
+    Probe(
+        # The archive consumes the day's evidence; a forced redelivery that
+        # rescans it reports every bundle-less source as "missing" and
+        # overwrites the good sidecar with that.
+        label="an archived day is not rescanned for the summary",
+        path="scripts/push_to_discord.py",
+        old="                and not already_archived",
+        new="                and True",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_forced_redelivery_does_not_rescan_an_archived_day"
+        ),
+    ),
+    Probe(
+        # The handler itself used to raise (one_line without its secret
+        # argument), turning a reported failure into a mislabelled delivery
+        # failure -- the exact shape this branch's reviews keep finding.
+        label="the sidecar writer reports its own failure",
+        path="scripts/push_to_discord.py",
+        old="源状态文件写入失败: {one_line(str(exc), DISCORD_BOT_TOKEN)}",
+        new="源状态文件写入失败: {one_line(str(exc))}",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_real_sidecar_write_error_is_reported_not_raised"
+        ),
+    ),
+    Probe(
+        # The two marker tuples live in different modules and are kept in
+        # sync by hand; a rename on either side must fail this test rather
+        # than silently reclassify failed sources as missing.
+        label="the failure markers stay in sync with the run notices",
+        path="scripts/push_to_discord.py",
+        old='    ("⚠️ 获取失败", "fetch_failed"),',
+        new='    ("⚠️ 取回失败", "fetch_failed"),',
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_failure_markers_match_the_run_notices"
+        ),
+    ),
+    Probe(
+        # A low-frequency source the run skipped has no file today; without
+        # the lookback check the summary reports it as a missing briefing.
+        label="a low-frequency skip reads as no_update, not missing",
+        path="scripts/push_to_discord.py",
+        old=(
+            "            if lookback > 24 and "
+            "_pushed_within_lookback(category, name, lookback):"
+        ),
+        new="            if False:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_low_frequency_source_skipped_by_the_run_reads_as_no_update"
+        ),
+    ),
+    Probe(
+        # An unreadable config used to vanish the summary silently: no
+        # message, no sidecar, exit 0.
+        label="an unreadable source config is reported",
+        path="scripts/push_to_discord.py",
+        old="    if not statuses:",
+        new="    if False:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_sources_config_failure_is_reported"
+        ),
+    ),
+    Probe(
+        # The deep-content contract asks for multi-line Markdown; without
+        # strict=False a literal newline in the JSON string loses the digest
+        # to a retry that produces the same bytes.
+        label="a literal newline inside the summary still parses",
+        path="scripts/publication/pipeline.py",
+        old="json.loads(_strip_json_fence(raw), strict=False)",
+        new="json.loads(_strip_json_fence(raw))",
+        test=(
+            "tests/test_publication_pipeline.py"
+            "::test_a_literal_newline_inside_the_summary_parses"
         ),
     ),
     Probe(

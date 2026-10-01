@@ -345,3 +345,18 @@ def test_structured_prompt_keeps_markdown_only_when_asked():
     for prompt in (strict, relaxed):
         assert "base prompt" in prompt
         assert '"items":[{"source_ref":"item-0001"' in prompt
+
+
+def test_a_literal_newline_inside_the_summary_parses():
+    """The deep-content contract asks for multi-line Markdown; a model that
+    writes a literal newline in the JSON string must not lose the digest to
+    a retry that would produce the same bytes."""
+    from publication.pipeline import parse_structured_response
+
+    raw = (
+        '{"items":[{"source_ref":"item-0001",'
+        '"summary":"## 模型进展\n- 第一条","why_it_matters":null,"tags":[]}]}'
+    )
+    parsed = parse_structured_response(raw, ["item-0001"])
+
+    assert parsed["item-0001"]["summary"] == "## 模型进展\n- 第一条"

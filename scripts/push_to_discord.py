@@ -302,6 +302,16 @@ def _archive_legacy_files(category, date):
     for source_path in _legacy_files(category, date):
         try:
             content = source_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            # A leftover that cannot be read at all is reported and left in
+            # place; the delivery already happened, so it must not fail the
+            # day or take the files around it down with it.
+            log(
+                f"  ⚠️  跳过无法读取的旧文件 {source_path.name}: "
+                f"{one_line(str(exc), DISCORD_BOT_TOKEN)}"
+            )
+            continue
+        try:
             if is_placeholder(content) or is_low_quality_content(content):
                 source_path.unlink()
                 continue
@@ -364,7 +374,7 @@ def is_low_quality_content(content):
     """Return True for extremely short non-Chinese content."""
     stripped = content.strip()
 
-    if len(stripped) < 100 and not any("\u4e00" <= c <= "\u9fff" for c in stripped):
+    if len(stripped) < 100 and not any("一" <= c <= "鿿" for c in stripped):
         return True
 
     return False
@@ -377,12 +387,12 @@ SUMMARY_CATEGORIES = ("papers",)
 # already covered by ``is_placeholder``; these mirror the non-zero entries of
 # ``_PLACEHOLDER_MARKERS`` there and must stay in sync with it.
 _FAILURE_MARKERS = (
-    ("\u26a0\ufe0f \u83b7\u53d6\u5931\u8d25", "fetch_failed"),
+    ("⚠️ 获取失败", "fetch_failed"),
     (
-        "\u26a0\ufe0f \u4ee5\u4e0b\u6587\u7ae0 AI \u6458\u8981\u751f\u6210\u5931\u8d25",
+        "⚠️ 以下文章 AI 摘要生成失败",
         "generation_failed",
     ),
-    ("\u26a0\ufe0f AI \u751f\u6210\u5931\u8d25", "generation_failed"),
+    ("⚠️ AI 生成失败", "generation_failed"),
 )
 
 
@@ -418,20 +428,27 @@ def collect_source_status(category, date, *, publication_store=None):
     ``pushed`` comes from the canonical bundle, which is authoritative and
     recomputable; "no_update" and "failed" exist only as the day's Markdown
     files, which the archive deletes -- so this must run before
-    ``publish_canonical_category``.  Raises ``FileNotFoundError`` when the day
-    has no canonical briefing, like the delivery path it precedes.
+    ``publish_canonical_category``.  A low-frequency source the run skipped
+    inside its lookback window counts as ``no_update``, matching the run's own
+    reason for writing nothing.  Raises ``FileNotFoundError`` when the day has
+    no canonical briefing, like the delivery path it precedes.
     """
     publication_store = publication_store or PublicationStore()
     bundle = publication_store.load_bundle(f"{category}-{date}")
 
     pushed = {item.source.name for item in bundle.items}
-    sources = _load_sources_by_category(category)
+    sources, defaults = _load_category_config(category)
+    default_lookback = defaults.get("lookback_hours", 24)
     no_update: set[str] = set()
     failed: dict[str, str] = {}
     for path in _legacy_files(category, date):
         try:
             content = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError) as exc:
+            log(
+                f"  ⚠️  读取 {path.name} 失败，该源将按缺失计入总结: "
+                f"{one_line(str(exc), DISCORD_BOT_TOKEN)}"
+            )
             continue
         name = _source_name_from_filename(path.name, sources)
         reason = failure_reason(content)
@@ -451,7 +468,11 @@ def collect_source_status(category, date, *, publication_store=None):
         elif name in no_update:
             statuses.append(SourceStatus(name, display_name, "no_update"))
         else:
-            statuses.append(SourceStatus(name, display_name, "missing"))
+            lookback = source.get("lookback_hours", default_lookback)
+            if lookback > 24 and _pushed_within_lookback(category, name, lookback):
+                statuses.append(SourceStatus(name, display_name, "no_update"))
+            else:
+                statuses.append(SourceStatus(name, display_name, "missing"))
     return statuses
 
 
@@ -484,6 +505,14 @@ def _write_json_atomic(path, value):
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, path)
+        try:
+            dir_fd = os.open(str(path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
     except BaseException:
         try:
             os.unlink(temp_name)
@@ -495,11 +524,11 @@ def _write_json_atomic(path, value):
 def write_source_status_sidecar(category, date, statuses, *, path=None):
     """Persist the day's source-status list for the future Web sink.
 
-    Written only by the run that delivered: on a skipped run the day's files
-    are already archived, and a second scan would replace a good list with
-    "missing" for most sources.  Returns False after logging when the file
-    cannot be written, so the caller reports it the way it reports an archive
-    error.
+    Written only by the run that delivered, while the day's evidence is still
+    on disk.  It is the snapshot of that run: a later ``resume`` merge adds
+    content to the briefing without updating this file.  Returns False after
+    logging when the file cannot be written, so the caller reports it the way
+    it reports an archive error.
     """
     path = path or source_status_path(category, date)
     payload = {
@@ -519,9 +548,7 @@ def write_source_status_sidecar(category, date, statuses, *, path=None):
     try:
         _write_json_atomic(path, payload)
     except OSError as exc:
-        log(
-            f"  \u26a0\ufe0f  \u6e90\u72b6\u6001\u6587\u4ef6\u5199\u5165\u5931\u8d25: {one_line(str(exc))}"
-        )
+        log(f"  ⚠️  源状态文件写入失败: {one_line(str(exc), DISCORD_BOT_TOKEN)}")
         return False
     return True
 
@@ -529,34 +556,65 @@ def write_source_status_sidecar(category, date, statuses, *, path=None):
 def post_source_summary(category, date, channel_id, statuses):
     """Post the per-source summary after a fresh delivery, then persist the
     day's source list.  Returns the errors the caller counts."""
+    if not statuses:
+        # No readable source config (or none enabled): the day cannot be
+        # described at all.  Silence here would leave the delivery marked
+        # done with no summary and no record anywhere.
+        return ["来源配置不可读，来源总结已跳过"]
     errors: list[str] = []
     summary = build_source_summary(category, date, statuses)
     if summary:
         if send_to_discord(channel_id, summary):
-            log(f"  \u2713 {category} \u6765\u6e90\u603b\u7ed3\u5df2\u53d1\u9001")
+            log(f"  ✓ {category} 来源总结已发送")
         else:
-            errors.append("\u6765\u6e90\u603b\u7ed3\u53d1\u9001\u5931\u8d25")
-            log(
-                f"  \u274c {category} \u6765\u6e90\u603b\u7ed3\u53d1\u9001\u5931\u8d25\uff08\u6b63\u6587\u5df2\u9001\u8fbe\uff1b\u91cd\u8dd1 push \u4e0d\u4f1a\u91cd\u53d1\uff09"
-            )
+            errors.append("来源总结发送失败")
+            log(f"  ❌ {category} 来源总结发送失败（正文已送达；重跑 push 不会重发）")
     if statuses and not write_source_status_sidecar(category, date, statuses):
-        errors.append("\u6e90\u72b6\u6001\u6587\u4ef6\u5199\u5165\u5931\u8d25")
+        errors.append("源状态文件写入失败")
     return errors
 
 
-def _load_sources_by_category(category):
-    """Load enabled sources for a category from config/sources.json."""
+def _load_category_config(category):
+    """Load one category's enabled sources plus the shared defaults."""
     try:
         with open(SOURCES_JSON, encoding="utf-8") as f:
             cfg = json.load(f)
     except Exception as e:
         log(f"  ⚠️  读取 sources.json 失败，无法生成来源总结: {e}")
-        return []
-    return [
+        return [], {}
+    sources = [
         source
         for source in cfg.get("sources", [])
         if source.get("category") == category and source.get("enabled", True)
     ]
+    return sources, cfg.get("defaults", {})
+
+
+def _load_sources_by_category(category):
+    """Load enabled sources for a category from config/sources.json."""
+    return _load_category_config(category)[0]
+
+
+def _pushed_within_lookback(category, name, lookback_hours):
+    """Whether the archive holds this source inside its lookback window.
+
+    Mirror of ``run_pipelines._already_pushed_within``, which is the reason a
+    low-frequency source can legitimately produce no file today: the summary
+    reads that as "no new content" rather than a missing briefing.
+    """
+    pushed_dir = PUSHED_DIR / category
+    if not pushed_dir.is_dir():
+        return False
+    cutoff = time.time() - lookback_hours * 3600
+    prefix = f"{name}_briefing_"
+    for fpath in pushed_dir.iterdir():
+        if fpath.name.startswith(prefix) and fpath.name.endswith(".md"):
+            try:
+                if fpath.stat().st_mtime > cutoff:
+                    return True
+            except OSError:
+                continue
+    return False
 
 
 def _source_name_from_filename(filename, sources):
@@ -854,13 +912,28 @@ def main(date=None, categories=None, force=False):
             continue
         try:
             statuses = None
+            already_archived = False
             if category in SUMMARY_CATEGORIES:
                 # Before the delivery: the archive it runs on success deletes
                 # the day's placeholders, the only record of a source that
                 # produced nothing today.
-                statuses = collect_source_status(
-                    category, date, publication_store=publication_store
-                )
+                try:
+                    statuses = collect_source_status(
+                        category, date, publication_store=publication_store
+                    )
+                except FileNotFoundError:
+                    raise
+                except Exception as exc:
+                    # The summary is auxiliary; a scan failure must not cost
+                    # the day's delivery.
+                    log(f"  ⚠️  {category} 来源状态扫描失败，跳过来源总结: {exc}")
+                    statuses = None
+                else:
+                    # The freshness mark: once the day has files in pushed/,
+                    # its briefings directory has been consumed and a rescan
+                    # would report "missing" for every source without a
+                    # bundle entry.
+                    already_archived = _legacy_archive_has_briefing(category, date)
             result, archive_errors = publish_canonical_category(
                 category,
                 channel_id,
@@ -887,10 +960,15 @@ def main(date=None, categories=None, force=False):
                     f"  ❌ {category} legacy archive compatibility failed: "
                     + "; ".join(archive_errors)
                 )
-            if statuses is not None and result.status == "success":
-                # Only the run that delivered posts the summary: a skipped run
-                # already posted it, and a failed one has no channel content
-                # for a summary to describe.
+            if (
+                statuses is not None
+                and result.status == "success"
+                and not already_archived
+            ):
+                # Only the run that delivered posts the summary, and only
+                # while the day's evidence is still on disk: an archived day
+                # (a forced redelivery) would re-scan as "missing" for every
+                # source without a bundle entry.
                 summary_errors = post_source_summary(
                     category, date, channel_id, statuses
                 )
@@ -900,6 +978,8 @@ def main(date=None, categories=None, force=False):
                         f"  ❌ {category} 推送后续步骤失败: "
                         + "; ".join(summary_errors)
                     )
+            elif statuses is not None and result.status == "success":
+                log(f"  ⊘ {category} 简报已归档（重投递），跳过来源总结")
         except FileNotFoundError:
             # Before Phase 2C, pending Markdown was the only source of a
             # delivery candidate. Keep that path for legacy data while making

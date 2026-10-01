@@ -77,7 +77,11 @@ def parse_structured_response(
     if not isinstance(raw, str) or not raw.strip():
         raise StructuredResultError("structured response is empty")
     try:
-        payload = json.loads(_strip_json_fence(raw))
+        # strict=False only relaxes control characters inside strings.  The
+        # deep-content contract asks for multi-line Markdown in ``summary``;
+        # a model writing a literal newline there must not lose the digest to
+        # a retry that would produce the same bytes.
+        payload = json.loads(_strip_json_fence(raw), strict=False)
     except (json.JSONDecodeError, StructuredResultError) as exc:
         if isinstance(exc, StructuredResultError):
             raise

@@ -164,11 +164,12 @@ def test_push_main_uses_canonical_bundle_and_skips_second_send(tmp_path, monkeyp
     monkeypatch.setattr(push, "PublicationStore", lambda: publication_store)
     monkeypatch.setattr(push, "DeliveryStateStore", lambda: delivery_store)
     monkeypatch.setattr(push, "DISCORD_CHANNELS", {"papers": "channel-1"})
-    # The per-source summary has its own tests; an empty papers config keeps
-    # this one about delivery semantics (exactly one body send, ever).
+    # The per-source summary has its own tests; stubbing it keeps this one
+    # about delivery semantics (exactly one body send, ever).
     sources = tmp_path / "sources.json"
     sources.write_text(json.dumps({"sources": []}), encoding="utf-8")
     monkeypatch.setattr(push, "SOURCES_JSON", str(sources))
+    monkeypatch.setattr(push, "post_source_summary", lambda *args: [])
     sent = []
     monkeypatch.setattr(
         push, "send_to_discord", lambda *args: sent.append(args) or True
