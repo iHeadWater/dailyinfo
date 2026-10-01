@@ -515,6 +515,24 @@ is narrower than the legacy Python validator for explicit IDs; therefore the
 WebPublisher rejects an uppercase or colon-containing ID before writing it,
 rather than rewriting a stable identity or producing an invalid Web path.
 
+Two representation rules exist because the site reads raw frontmatter, not
+timestamps:
+
+- Every emitted `*_at` is *represented* in the editorial calendar
+  (Asia/Shanghai), the same calendar as the briefing `date`. The site files an
+  Item under the day named by the date prefix of `published_at`
+  (`itemsOnDate`), and the production window runs before 08:00 Shanghai, when
+  the UTC date is still the previous day; a UTC representation would file a
+  briefing's Items one day before the Briefing itself. Only the representation
+  changes -- the instant is preserved.
+- An Item's `briefing_ids` is a durable, cross-repository membership record
+  validated bidirectionally by the site (§7 of the publication-v1 contract).
+  `PublicationStore.save` unions membership within its own data root, but
+  content published from an earlier root exists only in the checkout, so the
+  publisher unions the file's recorded membership with the bundle's before
+  writing. The same stable identity re-published later — a repository trending
+  twice, a paper re-collected — extends the record instead of replacing it.
+
 Before any commit, the publisher runs `npm run validate`, `npm run test`,
 `npm run check`, and `npm run build` in the target checkout. It stages only its
 generated paths, creates at most one ordinary `DailyInfo Bot` commit per
