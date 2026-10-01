@@ -650,8 +650,8 @@ PROBES: tuple[Probe, ...] = (
         # redelivery: the record's posted flag is what keeps it silent.
         label="an archived day does not re-post a delivered summary",
         path="scripts/push_to_discord.py",
-        old="                    if record is None or record.summary_posted:",
-        new="                    if False:",
+        old="                    elif record.summary_posted:",
+        new="                    elif False:",
         test=(
             "tests/test_push_to_discord.py"
             "::test_a_forced_redelivery_does_not_rescan_an_archived_day"
@@ -662,11 +662,63 @@ PROBES: tuple[Probe, ...] = (
         # out is rebuilt from it instead of staying missing forever.
         label="a summary that never went out is repaired from the record",
         path="scripts/push_to_discord.py",
-        old="                    if record is None or record.summary_posted:",
+        old="                    if record is None:",
         new="                    if True:",
         test=(
             "tests/test_push_to_discord.py"
             "::test_a_missing_summary_is_repaired_by_a_forced_redelivery"
+        ),
+    ),
+    Probe(
+        # The retry rides the same relaxed contract as the first call; a
+        # digest that only arrived on the retry must not be rejected by a
+        # stricter parse and degrade to a placeholder.
+        label="the deep-content retry keeps the relaxed contract",
+        path="scripts/run_pipelines.py",
+        old="                    allow_literal_newlines=True,",
+        new="                    allow_literal_newlines=False,",
+        test=(
+            "tests/test_run_pipelines.py"
+            "::test_the_deep_content_retry_keeps_markdown_in_the_summary"
+        ),
+    ),
+    Probe(
+        # A repair that cannot render (config broken after delivery) used to
+        # exit 0 with no summary and no record of why.
+        label="a repair without a readable config is reported",
+        path="scripts/push_to_discord.py",
+        old='        errors.append("来源配置不可读，来源总结无法生成")',
+        new="        pass",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_repair_without_a_readable_config_is_reported"
+        ),
+    ),
+    Probe(
+        # The header must count what the list renders: a stored record can
+        # name a source the config no longer has.
+        label="the summary header counts the rendered list",
+        path="scripts/push_to_discord.py",
+        old="    pushed_list = [n for n in configured_names if n in pushed_set]",
+        new="    pushed_list = list(pushed_set)",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_the_summary_count_reflects_the_rendered_list"
+        ),
+    ),
+    Probe(
+        # A record with an unknown status value must be dropped whole; kept,
+        # the row silently disappears from every bucket.
+        label="an untrusted source-status record is dropped",
+        path="scripts/push_to_discord.py",
+        old=(
+            '            or row.get("status")'
+            ' not in ("pushed", "no_update", "failed", "missing")'
+        ),
+        new="            or False",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_malformed_source_status_record_is_not_used"
         ),
     ),
     Probe(

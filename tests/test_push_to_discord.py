@@ -1055,6 +1055,70 @@ def test_an_unreadable_archive_does_not_block_the_delivery(monkeypatch, tmp_path
     assert any("nature body" in content for _, content in sent)
 
 
+def test_a_repair_without_a_readable_config_is_reported(monkeypatch, tmp_path):
+    import push_to_discord as pd
+    from paths import BRIEFINGS_DIR
+
+    _seed_sources_config(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature")
+    # A real file for nature gets archived, which is what makes the second
+    # run take the archived (record-based) branch.
+    _seed_briefing(
+        BRIEFINGS_DIR,
+        "papers",
+        f"nature_briefing_{date}.md",
+        "# nature\n\n一条真实的简报内容。",
+    )
+    sent = []
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "DISCORD_CHANNELS", {"papers": "channel-1"})
+    monkeypatch.setattr(pd, "log", logs.append)
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, content: (
+            sent.append((channel, content)) or "推送总结" not in content
+        ),
+    )
+    assert pd.main(date, categories=["papers"]) == 1  # the summary never went out
+
+    # The config breaks before the repair run.
+    monkeypatch.setattr(pd, "SOURCES_JSON", str(tmp_path / "missing.json"))
+    assert pd.main(date, categories=["papers"], force=True) == 1
+    assert any("推送后续步骤失败" in line for line in logs), logs
+
+
+def test_a_malformed_source_status_record_is_not_used(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    path = pd.source_status_path("papers", "2026-10-01")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"sources": [{"name": 123, "status": "pushed"}]}),
+        encoding="utf-8",
+    )
+    assert pd._read_source_status_record("papers", "2026-10-01") is None
+
+    path.write_text(
+        json.dumps({"sources": [{"name": "nature", "status": "weird"}]}),
+        encoding="utf-8",
+    )
+    assert pd._read_source_status_record("papers", "2026-10-01") is None
+
+
+def test_the_summary_count_reflects_the_rendered_list(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_sources_config(tmp_path, monkeypatch, entries=(("nature", "Nature"),))
+
+    summary = pd.build_push_summary(
+        "papers", "2026-04-25", pushed_names=["nature", "ghost"], placeholder_names=[]
+    )
+
+    assert "✅ 已推送期刊 (1):" in summary
+    assert "ghost" not in summary
+
+
 def test_the_lookback_mirror_matches_the_run_side(monkeypatch):
     import os
     import time

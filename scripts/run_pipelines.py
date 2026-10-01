@@ -1406,7 +1406,11 @@ def _process_deep_content_source_publication(
             try:
                 raw = call_ai(prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS)
                 result = results_from_response(
-                    raw, [item], source_name=name, retrieved_at=retrieved_at
+                    raw,
+                    [item],
+                    source_name=name,
+                    retrieved_at=retrieved_at,
+                    allow_literal_newlines=True,
                 )[0]
                 if not collector.take_new([result]):
                     committed_items.append(item)

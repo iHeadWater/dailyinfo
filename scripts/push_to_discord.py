@@ -457,7 +457,14 @@ def _read_source_status_record(category, date):
         return None
     statuses = []
     for row in rows:
-        if not isinstance(row, dict) or "name" not in row or "status" not in row:
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("name"), str)
+            or row.get("status") not in ("pushed", "no_update", "failed", "missing")
+        ):
+            # A record that cannot be trusted is not used at all: a bad row
+            # would otherwise surface as a mislabeled delivery failure or
+            # silently drop a source from every bucket.
             return None
         statuses.append(
             SourceStatus(
@@ -627,6 +634,11 @@ def post_source_summary(category, date, channel_id, statuses):
                 f"  ❌ {category} 来源总结发送失败（正文已送达；"
                 "可用 --force 重投递补发）"
             )
+    elif statuses:
+        # A non-empty record (a repair) that renders nothing means the config
+        # became unreadable since the delivering run; that cannot be silent.
+        # An empty scan is already reported by the guard above.
+        errors.append("来源配置不可读，来源总结无法生成")
     if not write_source_status_sidecar(category, date, statuses, summary_posted=posted):
         errors.append("源状态文件写入失败")
     return errors
@@ -747,6 +759,10 @@ def build_push_summary(
         if name in failed_set and name not in pushed_set
     ]
 
+    # The header counts what the list below actually renders: a name that is
+    # no longer configured (a stored record predating a config change) must
+    # not inflate the count of sources the message shows.
+    pushed_list = [n for n in configured_names if n in pushed_set]
     title = (
         "📊 论文频道推送总结"
         if category in ("papers", "arxiv")
@@ -755,10 +771,8 @@ def build_push_summary(
     lines = [
         f"{title} ({date})",
         "",
-        f"✅ 已推送期刊 ({len(pushed_set)}):",
-        _format_source_list(
-            [n for n in configured_names if n in pushed_set], display_names
-        ),
+        f"✅ 已推送期刊 ({len(pushed_list)}):",
+        _format_source_list(pushed_list, display_names),
         "",
         f"📭 今日无文章更新 ({len(no_update_names)}):",
         _format_source_list(no_update_names, display_names),
@@ -1049,7 +1063,12 @@ def main(date=None, categories=None, force=False):
                             )
                 else:
                     record = _read_source_status_record(category, date)
-                    if record is None or record.summary_posted:
+                    if record is None:
+                        log(
+                            f"  ⊘ {category} 无当日来源记录，跳过总结"
+                            "（无法判断是否已发）"
+                        )
+                    elif record.summary_posted:
                         log(f"  ⊘ {category} 简报已归档（重投递），跳过来源总结")
                     else:
                         # Archived, yet the record says the summary never went

@@ -1837,3 +1837,55 @@ def test_only_the_deep_content_prompt_keeps_markdown_in_the_summary(monkeypatch)
     assert len(prompts) == 1
     assert "no prose and no Markdown" in prompts[0]
     assert MARKDOWN_SUMMARY_CONTRACT not in prompts[0]
+
+
+def test_the_deep_content_retry_keeps_markdown_in_the_summary(monkeypatch):
+    """The retry rides the same relaxed contract as the first call: a digest
+    that only arrived on the retry must not be rejected by a stricter parse."""
+    from types import SimpleNamespace
+
+    import run_pipelines as rp
+    from datasource import Item as PipelineItem
+    from paths import BRIEFINGS_DIR
+    from publication import PublicationRunCollector
+
+    calls = {"n": 0}
+
+    def flaky_call_ai(prompt, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "1. legacy markdown, not the JSON contract"
+        return (
+            '{"items":[{"source_ref":"item-0001",'
+            '"summary":"## 🧠 模型进展\n- 第一条","why_it_matters":null,"tags":[]}]}'
+        )
+
+    monkeypatch.setattr(rp, "call_ai", flaky_call_ai)
+    item = PipelineItem(
+        title="AI newsletter item",
+        date=rp.DATE,
+        url="https://news.smol.ai/p/item-1",
+        content="Long raw content.",
+    )
+    ds = SimpleNamespace(
+        name="latent_space",
+        category="ai_news",
+        display_name="Latent Space",
+        fetch=lambda: [item],
+        commit_seen=lambda values: None,
+    )
+    collector = PublicationRunCollector("ai_news")
+
+    assert (
+        rp._process_deep_content_source_publication(ds, {}, "stub/model", {}, collector)
+        == 1
+    )
+
+    retry_file = (
+        BRIEFINGS_DIR / "ai_news" / f"latent_space_briefing_{rp.DATE}_retry1.md"
+    )
+    assert retry_file.exists()
+    assert "## 🧠 模型进展\n- 第一条" in retry_file.read_text(encoding="utf-8")
+    assert not (
+        BRIEFINGS_DIR / "ai_news" / f"latent_space_briefing_{rp.DATE}_failed1.md"
+    ).exists()
