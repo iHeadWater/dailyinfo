@@ -1378,7 +1378,7 @@ def _process_deep_content_source_publication(
         )
         ref = source_ref(0)
         entries = f"[source_ref={ref}]\nTitle: {item.title}\nContent:\n{item.content}"
-        prompt = structured_prompt(base, entries, [ref])
+        prompt = structured_prompt(base, entries, [ref], markdown_summary=True)
         try:
             raw = call_ai(prompt, model=model, max_tokens=_DEEP_CONTENT_MAX_TOKENS)
             result = results_from_response(

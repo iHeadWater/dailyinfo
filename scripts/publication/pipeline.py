@@ -129,20 +129,53 @@ def parse_structured_response(
     return result
 
 
+# Only the deep-content variant carries this sentence: there the summary *is*
+# the briefing, so the Markdown its prompt asks for has to survive inside the
+# JSON string instead of being flattened into one line.
+MARKDOWN_SUMMARY_CONTRACT = (
+    'Inside "summary", keep the Markdown the prompt above asks for -- its '
+    "section headings (## ...) and one bullet per item, each on its own line, "
+    "written as \\n escapes inside the JSON string. No other field may contain "
+    "Markdown or newlines."
+)
+
+
 def structured_prompt(
-    base_prompt: str, entries: str, expected_refs: Iterable[str]
+    base_prompt: str,
+    entries: str,
+    expected_refs: Iterable[str],
+    *,
+    markdown_summary: bool = False,
 ) -> str:
-    """Append the strict structured-output contract to an existing prompt."""
+    """Append the strict structured-output contract to an existing prompt.
+
+    ``markdown_summary`` relaxes the contract for a call whose summary *is*
+    the briefing (the deep-content path): the JSON envelope stays strict
+    either way, only the text inside ``summary`` may carry Markdown.
+    """
 
     refs = ", ".join(expected_refs)
+    intro = (
+        "IMPORTANT OUTPUT CONTRACT (overrides the shape of the earlier "
+        "formatting instructions; their Markdown belongs inside summary):\n"
+        if markdown_summary
+        else "IMPORTANT OUTPUT CONTRACT (overrides any earlier Markdown formatting):\n"
+    )
+    json_rule = (
+        "Return ONLY one valid JSON object, with no prose outside it, "
+        if markdown_summary
+        else "Return ONLY one valid JSON object, with no prose and no Markdown, "
+    )
+    markdown_rule = f"\n{MARKDOWN_SUMMARY_CONTRACT}" if markdown_summary else ""
     return (
         f"{base_prompt}\n\n"
         f"INPUT ITEMS WITH CORRELATION KEYS:\n{entries}\n\n"
-        "IMPORTANT OUTPUT CONTRACT (overrides any earlier Markdown formatting):\n"
-        "Return ONLY one valid JSON object, with no prose and no Markdown, "
+        f"{intro}"
+        f"{json_rule}"
         "in this shape:\n"
         '{"items":[{"source_ref":"item-0001","summary":"...",'
         '"why_it_matters":null,"tags":[]}]}'
+        f"{markdown_rule}"
         "\nEach input item must appear exactly once. Use these exact "
         "source_ref values: "
         f"{refs}. Never infer or replace a source_ref from a title or list position."

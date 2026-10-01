@@ -326,3 +326,22 @@ def test_finalizer_failure_does_not_commit_deferred_seen_state(monkeypatch):
     with pytest.raises(rp.PublicationIntegrationError):
         rp._finalize_category_publication("papers", collector)
     assert seen == []
+
+
+def test_structured_prompt_keeps_markdown_only_when_asked():
+    """The strict contract stays strict; the deep-content variant opens only
+    the summary field so the digest keeps its Markdown structure."""
+    from publication.pipeline import MARKDOWN_SUMMARY_CONTRACT, structured_prompt
+
+    strict = structured_prompt("base prompt", "entries", ["item-0001"])
+    relaxed = structured_prompt(
+        "base prompt", "entries", ["item-0001"], markdown_summary=True
+    )
+
+    assert "no prose and no Markdown" in strict
+    assert MARKDOWN_SUMMARY_CONTRACT not in strict
+    assert "no prose and no Markdown" not in relaxed
+    assert MARKDOWN_SUMMARY_CONTRACT in relaxed
+    for prompt in (strict, relaxed):
+        assert "base prompt" in prompt
+        assert '"items":[{"source_ref":"item-0001"' in prompt

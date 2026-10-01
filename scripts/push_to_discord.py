@@ -4,7 +4,9 @@
 import os
 import requests
 import json
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
+import tempfile
 import time
 import shutil
 
@@ -368,6 +370,180 @@ def is_low_quality_content(content):
     return False
 
 
+# Categories that post a per-source summary after a fresh delivery.
+SUMMARY_CATEGORIES = ("papers",)
+
+# The failure notices ``run_pipelines`` writes.  The no-update notice is
+# already covered by ``is_placeholder``; these mirror the non-zero entries of
+# ``_PLACEHOLDER_MARKERS`` there and must stay in sync with it.
+_FAILURE_MARKERS = (
+    ("\u26a0\ufe0f \u83b7\u53d6\u5931\u8d25", "fetch_failed"),
+    (
+        "\u26a0\ufe0f \u4ee5\u4e0b\u6587\u7ae0 AI \u6458\u8981\u751f\u6210\u5931\u8d25",
+        "generation_failed",
+    ),
+    ("\u26a0\ufe0f AI \u751f\u6210\u5931\u8d25", "generation_failed"),
+)
+
+
+def failure_reason(content):
+    """Return the failure reason a run notice records, or None."""
+    for marker, reason in _FAILURE_MARKERS:
+        if marker in content:
+            return reason
+    return None
+
+
+@dataclass(frozen=True)
+class SourceStatus:
+    """One configured source's outcome for a category/day."""
+
+    name: str
+    display_name: str
+    status: str  # "pushed" | "no_update" | "failed" | "missing"
+    reason: str | None = None
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "display_name": self.display_name,
+            "status": self.status,
+            "reason": self.reason,
+        }
+
+
+def collect_source_status(category, date, *, publication_store=None):
+    """Classify every enabled source of ``category`` for ``date``.
+
+    ``pushed`` comes from the canonical bundle, which is authoritative and
+    recomputable; "no_update" and "failed" exist only as the day's Markdown
+    files, which the archive deletes -- so this must run before
+    ``publish_canonical_category``.  Raises ``FileNotFoundError`` when the day
+    has no canonical briefing, like the delivery path it precedes.
+    """
+    publication_store = publication_store or PublicationStore()
+    bundle = publication_store.load_bundle(f"{category}-{date}")
+
+    pushed = {item.source.name for item in bundle.items}
+    sources = _load_sources_by_category(category)
+    no_update: set[str] = set()
+    failed: dict[str, str] = {}
+    for path in _legacy_files(category, date):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        name = _source_name_from_filename(path.name, sources)
+        reason = failure_reason(content)
+        if reason is not None:
+            failed.setdefault(name, reason)
+        elif is_placeholder(content):
+            no_update.add(name)
+
+    statuses = []
+    for source in sources:
+        name = source["name"]
+        display_name = source.get("display_name", name)
+        if name in pushed:
+            statuses.append(SourceStatus(name, display_name, "pushed"))
+        elif name in failed:
+            statuses.append(SourceStatus(name, display_name, "failed", failed[name]))
+        elif name in no_update:
+            statuses.append(SourceStatus(name, display_name, "no_update"))
+        else:
+            statuses.append(SourceStatus(name, display_name, "missing"))
+    return statuses
+
+
+def build_source_summary(category, date, statuses):
+    """Render the per-source summary through ``build_push_summary``."""
+    return build_push_summary(
+        category,
+        date,
+        [s.name for s in statuses if s.status == "pushed"],
+        [s.name for s in statuses if s.status == "no_update"],
+        failed_names=[s.name for s in statuses if s.status == "failed"],
+    )
+
+
+def source_status_path(category, date):
+    """Return the sidecar path for one category/day."""
+    return STATE_DIR / "source_status" / f"{category}-{date}.json"
+
+
+def _write_json_atomic(path, value):
+    """Write JSON through a same-directory temp file and an atomic replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
+
+
+def write_source_status_sidecar(category, date, statuses, *, path=None):
+    """Persist the day's source-status list for the future Web sink.
+
+    Written only by the run that delivered: on a skipped run the day's files
+    are already archived, and a second scan would replace a good list with
+    "missing" for most sources.  Returns False after logging when the file
+    cannot be written, so the caller reports it the way it reports an archive
+    error.
+    """
+    path = path or source_status_path(category, date)
+    payload = {
+        "schema_version": 1,
+        "category": category,
+        "date": date,
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "counts": {
+            "configured": len(statuses),
+            "pushed": sum(s.status == "pushed" for s in statuses),
+            "no_update": sum(s.status == "no_update" for s in statuses),
+            "failed": sum(s.status == "failed" for s in statuses),
+            "missing": sum(s.status == "missing" for s in statuses),
+        },
+        "sources": [status.to_dict() for status in statuses],
+    }
+    try:
+        _write_json_atomic(path, payload)
+    except OSError as exc:
+        log(
+            f"  \u26a0\ufe0f  \u6e90\u72b6\u6001\u6587\u4ef6\u5199\u5165\u5931\u8d25: {one_line(str(exc))}"
+        )
+        return False
+    return True
+
+
+def post_source_summary(category, date, channel_id, statuses):
+    """Post the per-source summary after a fresh delivery, then persist the
+    day's source list.  Returns the errors the caller counts."""
+    errors: list[str] = []
+    summary = build_source_summary(category, date, statuses)
+    if summary:
+        if send_to_discord(channel_id, summary):
+            log(f"  \u2713 {category} \u6765\u6e90\u603b\u7ed3\u5df2\u53d1\u9001")
+        else:
+            errors.append("\u6765\u6e90\u603b\u7ed3\u53d1\u9001\u5931\u8d25")
+            log(
+                f"  \u274c {category} \u6765\u6e90\u603b\u7ed3\u53d1\u9001\u5931\u8d25\uff08\u6b63\u6587\u5df2\u9001\u8fbe\uff1b\u91cd\u8dd1 push \u4e0d\u4f1a\u91cd\u53d1\uff09"
+            )
+    if statuses and not write_source_status_sidecar(category, date, statuses):
+        errors.append("\u6e90\u72b6\u6001\u6587\u4ef6\u5199\u5165\u5931\u8d25")
+    return errors
+
+
 def _load_sources_by_category(category):
     """Load enabled sources for a category from config/sources.json."""
     try:
@@ -402,7 +578,12 @@ def _format_source_list(names, display_names):
 
 
 def build_push_summary(
-    category, date, pushed_names, placeholder_names, pending_names=None
+    category,
+    date,
+    pushed_names,
+    placeholder_names,
+    pending_names=None,
+    failed_names=None,
 ):
     """Build a deterministic per-category push summary message."""
     sources = _load_sources_by_category(category)
@@ -416,6 +597,7 @@ def build_push_summary(
     pushed_set = set(pushed_names)
     placeholder_set = set(placeholder_names)
     pending_set = set(pending_names or [])
+    failed_set = set(failed_names or [])
 
     no_update_names = [
         name
@@ -423,6 +605,7 @@ def build_push_summary(
         if name in placeholder_set
         and name not in pushed_set
         and name not in pending_set
+        and name not in failed_set
     ]
     missing_names = [
         name
@@ -430,6 +613,12 @@ def build_push_summary(
         if name not in pushed_set
         and name not in placeholder_set
         and name not in pending_set
+        and name not in failed_set
+    ]
+    failed_list = [
+        name
+        for name in configured_names
+        if name in failed_set and name not in pushed_set
     ]
 
     title = (
@@ -448,6 +637,14 @@ def build_push_summary(
         f"📭 今日无文章更新 ({len(no_update_names)}):",
         _format_source_list(no_update_names, display_names),
     ]
+    if failed_list:
+        lines.extend(
+            [
+                "",
+                f"⚠️ 抓取或摘要失败 ({len(failed_list)}):",
+                _format_source_list(failed_list, display_names),
+            ]
+        )
     if missing_names:
         lines.extend(
             [
@@ -656,6 +853,14 @@ def main(date=None, categories=None, force=False):
                 log(f"  ❌ {category} legacy delivery failed: {sanitize_error(exc)}")
             continue
         try:
+            statuses = None
+            if category in SUMMARY_CATEGORIES:
+                # Before the delivery: the archive it runs on success deletes
+                # the day's placeholders, the only record of a source that
+                # produced nothing today.
+                statuses = collect_source_status(
+                    category, date, publication_store=publication_store
+                )
             result, archive_errors = publish_canonical_category(
                 category,
                 channel_id,
@@ -682,6 +887,19 @@ def main(date=None, categories=None, force=False):
                     f"  ❌ {category} legacy archive compatibility failed: "
                     + "; ".join(archive_errors)
                 )
+            if statuses is not None and result.status == "success":
+                # Only the run that delivered posts the summary: a skipped run
+                # already posted it, and a failed one has no channel content
+                # for a summary to describe.
+                summary_errors = post_source_summary(
+                    category, date, channel_id, statuses
+                )
+                if summary_errors:
+                    failed += 1
+                    log(
+                        f"  ❌ {category} 推送后续步骤失败: "
+                        + "; ".join(summary_errors)
+                    )
         except FileNotFoundError:
             # Before Phase 2C, pending Markdown was the only source of a
             # delivery candidate. Keep that path for legacy data while making

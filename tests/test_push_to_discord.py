@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+
+import pytest
 
 
 def test_split_message_short_passthrough():
@@ -321,3 +324,345 @@ def test_send_failure_redacts_and_bounds_the_response_body(monkeypatch):
     assert "sk-bot-secret" not in joined, joined
     assert "x" * 250 not in joined, joined  # body excerpt is bounded
     assert all(len(m.splitlines()) == 1 for m in logs), logs
+
+
+# ---------------------------------------------------------------------------
+# Canonical delivery: the per-source push summary (papers)
+# ---------------------------------------------------------------------------
+
+_PAPERS_SOURCES = (
+    ("nature", "Nature"),
+    ("aies", "AIES"),
+    ("wrr", "Water Resources Research (WRR)"),
+    ("science", "Science"),
+)
+
+
+def _publish_bundle(category, *source_names):
+    """Finalize a canonical bundle for today with one item per source."""
+    from datetime import timezone
+
+    import run_pipelines as rp
+    from datasource import Item as PipelineItem
+    from publication import PublicationRunCollector
+    from publication.pipeline import results_from_response
+
+    collector = PublicationRunCollector(category)
+    for index, name in enumerate(source_names):
+        item = PipelineItem(
+            title=f"{name} title",
+            date=rp.DATE,
+            url=f"https://example.org/{name}/{index}",
+            extra={"item_id": f"{name}-{index}"},
+        )
+        results = results_from_response(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "source_ref": "item-0001",
+                            "summary": f"{name} summary",
+                            "why_it_matters": None,
+                            "tags": [],
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            ),
+            [item],
+            retrieved_at=datetime(2026, 8, 27, 1, tzinfo=timezone.utc),
+            source_name=name,
+        )
+        collector.add(results)
+        collector.add_body(f"# {name}\n\n{name} body", source_name=name)
+    rp._finalize_category_publication(category, collector)
+    return rp.DATE
+
+
+def _seed_papers_sources(tmp_path, monkeypatch, entries=_PAPERS_SOURCES):
+    """Point push_to_discord at a small papers sources.json."""
+    import push_to_discord as pd
+
+    path = tmp_path / "sources.json"
+    path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "name": name,
+                        "display_name": display,
+                        "category": "papers",
+                        "enabled": True,
+                    }
+                    for name, display in entries
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pd, "SOURCES_JSON", str(path))
+
+
+def _seed_today_files(date, *, zero=(), failed=()):
+    from paths import BRIEFINGS_DIR
+
+    for name in zero:
+        _seed_briefing(
+            BRIEFINGS_DIR,
+            "papers",
+            f"{name}_briefing_{date}.md",
+            f"# {name} - {date}\n\n📭 过去 24 小时无新内容\n",
+        )
+    for name in failed:
+        _seed_briefing(
+            BRIEFINGS_DIR,
+            "papers",
+            f"{name}_briefing_{date}_failed.md",
+            f"# {name} - {date}\n\n⚠️ 以下文章 AI 摘要生成失败，仅保留标题和链接：\n",
+        )
+
+
+def _capture_sends(monkeypatch, channels):
+    import push_to_discord as pd
+
+    sent = []
+    monkeypatch.setattr(pd, "DISCORD_CHANNELS", dict(channels))
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, content: (sent.append((channel, content)) or True),
+    )
+    return sent
+
+
+def test_collect_source_status_buckets_every_configured_source(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature", "science")
+    _seed_today_files(date, zero=("wrr",), failed=("aies",))
+
+    statuses = pd.collect_source_status("papers", date)
+
+    assert [(s.name, s.status, s.reason) for s in statuses] == [
+        ("nature", "pushed", None),
+        ("aies", "failed", "generation_failed"),
+        ("wrr", "no_update", None),
+        ("science", "pushed", None),
+    ]
+    assert statuses[0].display_name == "Nature"
+    assert statuses[2].display_name == "Water Resources Research (WRR)"
+
+
+def test_collect_source_status_requires_a_canonical_briefing(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+
+    with pytest.raises(FileNotFoundError):
+        pd.collect_source_status("papers", "2020-01-01")
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("# X\n\n⚠️ 获取失败\n", "fetch_failed"),
+        (
+            "# X\n\n⚠️ 以下文章 AI 摘要生成失败，仅保留标题和链接：\n",
+            "generation_failed",
+        ),
+        ("# X\n\n⚠️ AI 生成失败\n", "generation_failed"),
+        ("# X\n\n📭 过去 24 小时无新内容\n", None),
+        ("# X\n\n1. **真实论文**\n   > 摘要\n", None),
+    ],
+)
+def test_failure_notices_are_recognised_but_a_real_briefing_is_not(content, expected):
+    import push_to_discord as pd
+
+    assert pd.failure_reason(content) == expected
+
+
+def test_build_push_summary_lists_failed_sources_apart_from_missing(
+    monkeypatch, tmp_path
+):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+
+    summary = pd.build_push_summary(
+        "papers",
+        "2026-04-25",
+        pushed_names=["nature"],
+        placeholder_names=["wrr"],
+        failed_names=["aies"],
+    )
+
+    assert "✅ 已推送期刊 (1):\n- Nature (`nature`)" in summary
+    assert "⚠️ 抓取或摘要失败 (1):\n- AIES (`aies`)" in summary
+    assert "⚠️ 未发现今日简报文件 (1):\n- Science (`science`)" in summary
+
+
+def test_canonical_delivery_posts_the_body_then_the_source_summary(
+    monkeypatch, tmp_path
+):
+    import push_to_discord as pd
+    from paths import BRIEFINGS_DIR
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature", "science")
+    _seed_today_files(date, zero=("wrr",), failed=("aies",))
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1"})
+
+    assert pd.main(date, categories=["papers"]) == 0
+
+    assert len(sent) == 2
+    body_channel, body = sent[0]
+    assert body_channel == "channel-1"
+    assert "# nature" in body and "nature body" in body
+    summary_channel, summary = sent[1]
+    assert summary_channel == "channel-1"
+    assert "📊 论文频道推送总结" in summary
+    assert "✅ 已推送期刊 (2):" in summary
+    assert "- Nature (`nature`)" in summary
+    assert "- Science (`science`)" in summary
+    assert "📭 今日无文章更新 (1):" in summary
+    assert "- Water Resources Research (WRR) (`wrr`)" in summary
+    assert "⚠️ 抓取或摘要失败 (1):" in summary
+    assert "- AIES (`aies`)" in summary
+    # The scan ran before the archive: the placeholder evidence is gone now.
+    assert not (BRIEFINGS_DIR / "papers" / f"wrr_briefing_{date}.md").exists()
+
+
+def test_the_summary_is_not_posted_by_a_skipped_run(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature")
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1"})
+
+    assert pd.main(date, categories=["papers"]) == 0
+    after_first = len(sent)
+    assert pd.main(date, categories=["papers"]) == 0
+
+    assert len(sent) == after_first
+    summaries = [content for _, content in sent if "论文频道推送总结" in content]
+    assert len(summaries) == 1
+
+
+def test_no_summary_when_the_delivery_fails(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature")
+    _seed_today_files(date, zero=("wrr",))
+
+    sent = []
+    monkeypatch.setattr(pd, "DISCORD_CHANNELS", {"papers": "channel-1"})
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, content: (sent.append((channel, content)) or False),
+    )
+
+    assert pd.main(date, categories=["papers"]) == 1
+    assert sent  # the body was attempted
+    assert not any("推送总结" in content for _, content in sent)
+
+
+def test_the_summary_counts_a_source_whose_file_was_archived(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch, entries=(("nature", "Nature"),))
+    date = _publish_bundle("papers", "nature")
+    # No file for nature exists: the bundle is the only place it appears.
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1"})
+
+    assert pd.main(date, categories=["papers"]) == 0
+
+    summary = sent[-1][1]
+    assert "✅ 已推送期刊 (1):" in summary
+    assert "- Nature (`nature`)" in summary
+    assert "未发现" not in summary
+
+
+def test_the_source_status_sidecar_records_every_source(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature", "science")
+    _seed_today_files(date, zero=("wrr",), failed=("aies",))
+    _capture_sends(monkeypatch, {"papers": "channel-1"})
+
+    assert pd.main(date, categories=["papers"]) == 0
+
+    payload = json.loads(pd.source_status_path("papers", date).read_text("utf-8"))
+    assert payload["schema_version"] == 1
+    assert payload["category"] == "papers"
+    assert payload["date"] == date
+    assert payload["counts"] == {
+        "configured": 4,
+        "pushed": 2,
+        "no_update": 1,
+        "failed": 1,
+        "missing": 0,
+    }
+    assert [(s["name"], s["status"], s["reason"]) for s in payload["sources"]] == [
+        ("nature", "pushed", None),
+        ("aies", "failed", "generation_failed"),
+        ("wrr", "no_update", None),
+        ("science", "pushed", None),
+    ]
+
+
+def test_a_sidecar_write_failure_keeps_the_delivered_day_and_reports(
+    monkeypatch, tmp_path
+):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature")
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1"})
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "log", logs.append)
+    monkeypatch.setattr(pd, "write_source_status_sidecar", lambda *a, **k: False)
+
+    assert pd.main(date, categories=["papers"]) == 1
+    assert any("推送总结" in content for _, content in sent)
+    assert any("推送后续步骤失败" in line for line in logs), logs
+
+
+def test_a_summary_send_failure_is_counted_as_failed(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_papers_sources(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature")
+    sent = []
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "DISCORD_CHANNELS", {"papers": "channel-1"})
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, content: (
+            sent.append((channel, content)) or "推送总结" not in content
+        ),
+    )
+    monkeypatch.setattr(pd, "log", logs.append)
+
+    assert pd.main(date, categories=["papers"]) == 1
+    assert any("来源总结发送失败" in line for line in logs), logs
+    # The day's source list is still on disk for the Web sink.
+    assert pd.source_status_path("papers", date).exists()
+
+
+def test_the_summary_is_papers_only(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    date = _publish_bundle("code", "github_trending")
+    sent = _capture_sends(monkeypatch, {"code": "channel-1"})
+
+    assert pd.main(date, categories=["code"]) == 0
+
+    assert sent
+    assert not any("推送总结" in content for _, content in sent)
+    assert not pd.source_status_path("code", date).exists()

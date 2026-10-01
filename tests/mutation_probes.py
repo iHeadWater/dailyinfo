@@ -608,6 +608,71 @@ PROBES: tuple[Probe, ...] = (
             "::test_a_canonical_gap_makes_run_exit_nonzero"
         ),
     ),
+    Probe(
+        # Folding failed sources into "missing" (or dropping the count) was
+        # the shape of the old summary; the point of this one is that a
+        # source that failed is named as failed, not just absent.
+        label="the summary lists the sources that failed to fetch or summarize",
+        path="scripts/push_to_discord.py",
+        old='                f"⚠️ 抓取或摘要失败 ({len(failed_list)}):",',
+        new='                f"⚠️ 抓取或摘要失败:",',
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_build_push_summary_lists_failed_sources_apart_from_missing"
+        ),
+    ),
+    Probe(
+        # Posting the summary outside the success gate would double it on
+        # every later run of the day (skipped deliveries included).
+        label="the source summary is only posted by the run that delivered",
+        path="scripts/push_to_discord.py",
+        old='            if statuses is not None and result.status == "success":',
+        new="            if statuses is not None:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_the_summary_is_not_posted_by_a_skipped_run"
+        ),
+    ),
+    Probe(
+        # The legacy Markdown files are archived at delivery, so the bundle is
+        # the only surviving record of which sources had content.
+        label="the pushed list comes from the canonical bundle",
+        path="scripts/push_to_discord.py",
+        old="    pushed = {item.source.name for item in bundle.items}",
+        new="    pushed = set()",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_the_summary_counts_a_source_whose_file_was_archived"
+        ),
+    ),
+    Probe(
+        # An empty sidecar still parses; only the row assertion catches a
+        # writer that stopped recording the sources.
+        label="the source-status sidecar records a row per source",
+        path="scripts/push_to_discord.py",
+        old='        "sources": [status.to_dict() for status in statuses],',
+        new='        "sources": [],',
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_the_source_status_sidecar_records_every_source"
+        ),
+    ),
+    Probe(
+        # Relaxing the wrong call site (or all of them) would let model
+        # Markdown leak into papers/code summaries, which the renderers there
+        # do not expect; only the deep-content call may keep it.
+        label="the deep-content prompt keeps Markdown inside the summary",
+        path="scripts/run_pipelines.py",
+        old=(
+            "        prompt = structured_prompt("
+            "base, entries, [ref], markdown_summary=True)"
+        ),
+        new="        prompt = structured_prompt(base, entries, [ref])",
+        test=(
+            "tests/test_run_pipelines.py"
+            "::test_only_the_deep_content_prompt_keeps_markdown_in_the_summary"
+        ),
+    ),
 )
 
 

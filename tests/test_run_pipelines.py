@@ -912,8 +912,6 @@ def test_merge_briefing_parts_without_highlights():
 
 def _make_dlut_news_sources_json(path, templates_extra=None):
     """Write a minimal sources.json with two dlut_news group sources + one recruitment source."""
-    from datetime import datetime
-
     now = datetime.now()
     fresh_day = now.strftime("%d")
     fresh_ym = now.strftime("%Y-%m")
@@ -1735,3 +1733,94 @@ def test_read_dotenv_value_manual_branch(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "dotenv", None)
 
     assert rp._read_dotenv_value("DAILYINFO_FALLBACK_MODEL") == "glm-manual"
+
+
+def test_only_the_deep_content_prompt_keeps_markdown_in_the_summary(monkeypatch):
+    """The JSON envelope is strict everywhere, but only the deep-content call
+    carries the Markdown that shapes the digest on Discord and the Web."""
+    import json
+    from types import SimpleNamespace
+
+    import run_pipelines as rp
+    from datasource import Item as PipelineItem
+    from publication import PublicationRunCollector
+    from publication.pipeline import MARKDOWN_SUMMARY_CONTRACT
+
+    prompts: list[str] = []
+
+    def capturing_call_ai(prompt, **_kwargs):
+        prompts.append(prompt)
+        return json.dumps(
+            {
+                "items": [
+                    {
+                        "source_ref": "item-0001",
+                        "summary": "## 🧠 模型进展\n- 第一条\n- 第二条",
+                        "why_it_matters": None,
+                        "tags": [],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(rp, "call_ai", capturing_call_ai)
+    monkeypatch.setattr(rp, "PUBLICATION_INTEGRATION", True)
+
+    digest_item = PipelineItem(
+        title="AI newsletter item",
+        date=rp.DATE,
+        url="https://news.smol.ai/p/item-1",
+        content="Long raw newsletter content.",
+    )
+    digest_ds = SimpleNamespace(
+        name="latent_space",
+        category="ai_news",
+        fetch=lambda: [digest_item],
+        commit_seen=lambda values: None,
+    )
+    collector = PublicationRunCollector("ai_news")
+    rp._process_deep_content_source_publication(
+        digest_ds,
+        {"prompt_template": "latent_space_ainews"},
+        "stub/model",
+        {"latent_space_ainews": "总结：{content}"},
+        collector,
+    )
+
+    assert len(prompts) == 1
+    assert MARKDOWN_SUMMARY_CONTRACT in prompts[0]
+    assert "no prose and no Markdown" not in prompts[0]
+    # The sectioned Markdown survives the JSON round-trip into the body.
+    assert "## 🧠 模型进展\n- 第一条\n- 第二条" in collector.body
+
+    prompts.clear()
+    paper_item = PipelineItem(
+        title="A paper",
+        date=rp.DATE,
+        url="https://example.org/paper/1",
+        content="raw source content",
+    )
+    paper_ds = SimpleNamespace(
+        name="fixture_papers",
+        category="papers",
+        display_name="Fixture Papers",
+        lookback_hours=24,
+        _total_before_filter=1,
+        fetch=lambda: [paper_item],
+        get_batches=lambda values: [values],
+        format_items=lambda values: values[0].title,
+        commit_seen=lambda values: None,
+    )
+    rp._process_regular_source(
+        paper_ds,
+        {},
+        "stub/model",
+        {"one_line_summary": "Summarize {count}: {article_list}"},
+        "one_line_summary",
+        PublicationRunCollector("papers"),
+    )
+
+    assert len(prompts) == 1
+    assert "no prose and no Markdown" in prompts[0]
+    assert MARKDOWN_SUMMARY_CONTRACT not in prompts[0]

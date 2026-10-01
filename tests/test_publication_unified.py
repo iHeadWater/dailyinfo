@@ -583,9 +583,7 @@ def test_a_notice_does_not_overwrite_a_real_briefing(tmp_path, monkeypatch):
     real = "# Nature\n\n一条提到 ⚠️ 撤稿提醒的正常简报。\n" + "内容" * 60
     target.write_text(real, encoding="utf-8")
 
-    rp._save_placeholder(
-        "papers", target.name, f"# Nature - {rp.DATE}\n\n⚠️ 获取失败\n"
-    )
+    rp._save_placeholder("papers", target.name, f"# Nature - {rp.DATE}\n\n⚠️ 获取失败\n")
 
     assert target.read_text(encoding="utf-8") == real
 
