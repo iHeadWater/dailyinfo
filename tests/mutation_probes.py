@@ -626,11 +626,10 @@ PROBES: tuple[Probe, ...] = (
         # every later run of the day (skipped deliveries included).
         label="the source summary is only posted by the run that delivered",
         path="scripts/push_to_discord.py",
-        old='                and result.status == "success"',
-        new="                and True",
+        old='            if result.status == "success" and category in SUMMARY_CATEGORIES:',
+        new="            if category in SUMMARY_CATEGORIES:",
         test=(
-            "tests/test_push_to_discord.py"
-            "::test_the_summary_is_not_posted_by_a_skipped_run"
+            "tests/test_push_to_discord.py" "::test_no_summary_when_the_delivery_fails"
         ),
     ),
     Probe(
@@ -639,11 +638,48 @@ PROBES: tuple[Probe, ...] = (
         # overwrites the good sidecar with that.
         label="an archived day is not rescanned for the summary",
         path="scripts/push_to_discord.py",
-        old="                and not already_archived",
-        new="                and True",
+        old="                if not already_archived:",
+        new="                if True:",
         test=(
             "tests/test_push_to_discord.py"
             "::test_a_forced_redelivery_does_not_rescan_an_archived_day"
+        ),
+    ),
+    Probe(
+        # A delivered day must not re-post its summary on every forced
+        # redelivery: the record's posted flag is what keeps it silent.
+        label="an archived day does not re-post a delivered summary",
+        path="scripts/push_to_discord.py",
+        old="                    if record is None or record.summary_posted:",
+        new="                    if False:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_forced_redelivery_does_not_rescan_an_archived_day"
+        ),
+    ),
+    Probe(
+        # The record also carries the repair path: a summary that never went
+        # out is rebuilt from it instead of staying missing forever.
+        label="a summary that never went out is repaired from the record",
+        path="scripts/push_to_discord.py",
+        old="                    if record is None or record.summary_posted:",
+        new="                    if True:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_missing_summary_is_repaired_by_a_forced_redelivery"
+        ),
+    ),
+    Probe(
+        # Same defect class as the scan and archive read sites: an unreadable
+        # leftover in the bundleless branch used to raise out of main() and
+        # kill every later category.
+        label="an unreadable leftover counts as a real pending file",
+        path="scripts/push_to_discord.py",
+        old="        except (OSError, UnicodeDecodeError):",
+        new="        except OSError:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_non_utf8_leftover_does_not_crash_a_bundleless_category"
         ),
     ),
     Probe(
@@ -705,7 +741,7 @@ PROBES: tuple[Probe, ...] = (
         # to a retry that produces the same bytes.
         label="a literal newline inside the summary still parses",
         path="scripts/publication/pipeline.py",
-        old="json.loads(_strip_json_fence(raw), strict=False)",
+        old="json.loads(_strip_json_fence(raw), strict=not allow_literal_newlines)",
         new="json.loads(_strip_json_fence(raw))",
         test=(
             "tests/test_publication_pipeline.py"

@@ -273,9 +273,20 @@ def _legacy_files(category, date):
 def _legacy_archive_has_briefing(category, date):
     """Return whether ``pushed/`` contains a historical briefing for a day."""
     category_dir = PUSHED_DIR / category
-    if not category_dir.is_dir():
+    try:
+        if not category_dir.is_dir():
+            return False
+        return any(
+            path.is_file() and date in path.name for path in category_dir.iterdir()
+        )
+    except OSError as exc:
+        # An unreadable archive reads as "no archive": the direction that
+        # attempts delivery instead of silently skipping it.
+        log(
+            f"  ⚠️  无法读取归档目录 {category_dir.name}: "
+            f"{one_line(str(exc), DISCORD_BOT_TOKEN)}"
+        )
         return False
-    return any(path.is_file() and date in path.name for path in category_dir.iterdir())
 
 
 def _legacy_has_real_pending_file(category, date):
@@ -283,7 +294,11 @@ def _legacy_has_real_pending_file(category, date):
     for path in _legacy_files(category, date):
         try:
             content = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # Unreadable counts as a real candidate, like an OSError always
+            # did: refusing the fallback is the safe direction, and raising
+            # here would escape main()'s FileNotFoundError branch and kill
+            # every later category.
             return True
         if not is_placeholder(content) and not is_low_quality_content(content):
             return True
@@ -307,7 +322,8 @@ def _archive_legacy_files(category, date):
             # place; the delivery already happened, so it must not fail the
             # day or take the files around it down with it.
             log(
-                f"  ⚠️  跳过无法读取的旧文件 {source_path.name}: "
+                f"  ⚠️  跳过无法读取的旧文件 {source_path}"
+                f"（留在原地，不会重试也不会自动清理）: "
                 f"{one_line(str(exc), DISCORD_BOT_TOKEN)}"
             )
             continue
@@ -422,6 +438,38 @@ class SourceStatus:
         }
 
 
+@dataclass(frozen=True)
+class SourceStatusRecord:
+    """The source-status sidecar as read back: rows plus summary state."""
+
+    statuses: list
+    summary_posted: bool
+
+
+def _read_source_status_record(category, date):
+    """The recorded source list and whether its summary went out, or None."""
+    try:
+        payload = json.loads(source_status_path(category, date).read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    rows = payload.get("sources") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return None
+    statuses = []
+    for row in rows:
+        if not isinstance(row, dict) or "name" not in row or "status" not in row:
+            return None
+        statuses.append(
+            SourceStatus(
+                row["name"],
+                row.get("display_name", row["name"]),
+                row["status"],
+                row.get("reason"),
+            )
+        )
+    return SourceStatusRecord(statuses, bool(payload.get("summary_posted")))
+
+
 def collect_source_status(category, date, *, publication_store=None):
     """Classify every enabled source of ``category`` for ``date``.
 
@@ -521,14 +569,18 @@ def _write_json_atomic(path, value):
         raise
 
 
-def write_source_status_sidecar(category, date, statuses, *, path=None):
+def write_source_status_sidecar(
+    category, date, statuses, *, path=None, summary_posted=False
+):
     """Persist the day's source-status list for the future Web sink.
 
     Written only by the run that delivered, while the day's evidence is still
     on disk.  It is the snapshot of that run: a later ``resume`` merge adds
-    content to the briefing without updating this file.  Returns False after
-    logging when the file cannot be written, so the caller reports it the way
-    it reports an archive error.
+    content to the briefing without updating this file.  ``summary_posted``
+    records whether the Discord summary went out, which is what lets a later
+    forced redelivery repair one that never did.  Returns False after logging
+    when the file cannot be written, so the caller reports it the way it
+    reports an archive error.
     """
     path = path or source_status_path(category, date)
     payload = {
@@ -536,6 +588,7 @@ def write_source_status_sidecar(category, date, statuses, *, path=None):
         "category": category,
         "date": date,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "summary_posted": bool(summary_posted),
         "counts": {
             "configured": len(statuses),
             "pushed": sum(s.status == "pushed" for s in statuses),
@@ -562,32 +615,47 @@ def post_source_summary(category, date, channel_id, statuses):
         # done with no summary and no record anywhere.
         return ["来源配置不可读，来源总结已跳过"]
     errors: list[str] = []
+    posted = False
     summary = build_source_summary(category, date, statuses)
     if summary:
         if send_to_discord(channel_id, summary):
+            posted = True
             log(f"  ✓ {category} 来源总结已发送")
         else:
             errors.append("来源总结发送失败")
-            log(f"  ❌ {category} 来源总结发送失败（正文已送达；重跑 push 不会重发）")
-    if statuses and not write_source_status_sidecar(category, date, statuses):
+            log(
+                f"  ❌ {category} 来源总结发送失败（正文已送达；"
+                "可用 --force 重投递补发）"
+            )
+    if not write_source_status_sidecar(category, date, statuses, summary_posted=posted):
         errors.append("源状态文件写入失败")
     return errors
 
 
 def _load_category_config(category):
-    """Load one category's enabled sources plus the shared defaults."""
+    """Load one category's enabled sources plus the shared defaults.
+
+    A config that parses but has the wrong shape counts as unreadable: it must
+    report through the same failed count as a missing file, not vanish into a
+    scan degradation.
+    """
     try:
         with open(SOURCES_JSON, encoding="utf-8") as f:
             cfg = json.load(f)
+        if not isinstance(cfg, dict):
+            raise ValueError(f"top level must be an object, got {type(cfg).__name__}")
+        sources = [
+            source
+            for source in cfg.get("sources", [])
+            if source.get("category") == category and source.get("enabled", True)
+        ]
+        defaults = cfg.get("defaults", {})
+        if not isinstance(defaults, dict):
+            defaults = {}
     except Exception as e:
         log(f"  ⚠️  读取 sources.json 失败，无法生成来源总结: {e}")
         return [], {}
-    sources = [
-        source
-        for source in cfg.get("sources", [])
-        if source.get("category") == category and source.get("enabled", True)
-    ]
-    return sources, cfg.get("defaults", {})
+    return sources, defaults
 
 
 def _load_sources_by_category(category):
@@ -724,7 +792,7 @@ def _cleanup_placeholder_files(filepaths):
                 content = f.read()
             if is_placeholder(content):
                 os.remove(filepath)
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             log(f"  ⚠️  清理 {os.path.basename(filepath)} 出错: {e}")
 
 
@@ -914,9 +982,14 @@ def main(date=None, categories=None, force=False):
             statuses = None
             already_archived = False
             if category in SUMMARY_CATEGORIES:
-                # Before the delivery: the archive it runs on success deletes
-                # the day's placeholders, the only record of a source that
-                # produced nothing today.
+                # The freshness marks come first: the delivery below archives
+                # the day's files, which are the only record of the sources
+                # that produced nothing.
+                already_archived = _legacy_archive_has_briefing(category, date)
+                if _legacy_files(category, date):
+                    # Fresh files mean the day was (re)generated after any
+                    # archive; the archive alone must not suppress the summary.
+                    already_archived = False
                 try:
                     statuses = collect_source_status(
                         category, date, publication_store=publication_store
@@ -925,15 +998,13 @@ def main(date=None, categories=None, force=False):
                     raise
                 except Exception as exc:
                     # The summary is auxiliary; a scan failure must not cost
-                    # the day's delivery.
-                    log(f"  ⚠️  {category} 来源状态扫描失败，跳过来源总结: {exc}")
+                    # the day's delivery -- but it is still a failure.
+                    log(
+                        f"  ⚠️  {category} 来源状态扫描失败，跳过来源总结: "
+                        f"{one_line(str(exc), DISCORD_BOT_TOKEN)}"
+                    )
                     statuses = None
-                else:
-                    # The freshness mark: once the day has files in pushed/,
-                    # its briefings directory has been consumed and a rescan
-                    # would report "missing" for every source without a
-                    # bundle entry.
-                    already_archived = _legacy_archive_has_briefing(category, date)
+                    failed += 1
             result, archive_errors = publish_canonical_category(
                 category,
                 channel_id,
@@ -960,26 +1031,39 @@ def main(date=None, categories=None, force=False):
                     f"  ❌ {category} legacy archive compatibility failed: "
                     + "; ".join(archive_errors)
                 )
-            if (
-                statuses is not None
-                and result.status == "success"
-                and not already_archived
-            ):
+            if result.status == "success" and category in SUMMARY_CATEGORIES:
                 # Only the run that delivered posts the summary, and only
                 # while the day's evidence is still on disk: an archived day
                 # (a forced redelivery) would re-scan as "missing" for every
                 # source without a bundle entry.
-                summary_errors = post_source_summary(
-                    category, date, channel_id, statuses
-                )
-                if summary_errors:
-                    failed += 1
-                    log(
-                        f"  ❌ {category} 推送后续步骤失败: "
-                        + "; ".join(summary_errors)
-                    )
-            elif statuses is not None and result.status == "success":
-                log(f"  ⊘ {category} 简报已归档（重投递），跳过来源总结")
+                if not already_archived:
+                    if statuses is not None:
+                        summary_errors = post_source_summary(
+                            category, date, channel_id, statuses
+                        )
+                        if summary_errors:
+                            failed += 1
+                            log(
+                                f"  ❌ {category} 推送后续步骤失败: "
+                                + "; ".join(summary_errors)
+                            )
+                else:
+                    record = _read_source_status_record(category, date)
+                    if record is None or record.summary_posted:
+                        log(f"  ⊘ {category} 简报已归档（重投递），跳过来源总结")
+                    else:
+                        # Archived, yet the record says the summary never went
+                        # out: rebuild it from that record.
+                        log(f"  ↻ {category} 来源总结未发出，用当日记录补发")
+                        summary_errors = post_source_summary(
+                            category, date, channel_id, record.statuses
+                        )
+                        if summary_errors:
+                            failed += 1
+                            log(
+                                f"  ❌ {category} 推送后续步骤失败: "
+                                + "; ".join(summary_errors)
+                            )
         except FileNotFoundError:
             # Before Phase 2C, pending Markdown was the only source of a
             # delivery candidate. Keep that path for legacy data while making

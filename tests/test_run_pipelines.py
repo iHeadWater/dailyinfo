@@ -1585,7 +1585,7 @@ def test_call_ai_redacts_the_provider_supplied_finish_reason(monkeypatch):
         rp.requests,
         "post",
         lambda *a, **k: _StubAIResponse(
-            content="", finish_reason="sk-super-secret [WARN] forged"
+            content="", finish_reason="sk-super-secret\u2028[WARN] forged"
         ),
     )
 
@@ -1611,7 +1611,9 @@ def test_call_ai_redacts_and_flattens_the_fallback_finish_reason(monkeypatch):
     def fake_post(url, *args, **kwargs):
         if "deepseek" in url:
             raise rp.requests.RequestException("deepseek transient error")
-        return _StubAIResponse(content="", finish_reason="sk-glm-secret [WARN] forged")
+        return _StubAIResponse(
+            content="", finish_reason="sk-glm-secret\u2028[WARN] forged"
+        )
 
     monkeypatch.setattr(rp.requests, "post", fake_post)
 
@@ -1750,12 +1752,22 @@ def test_only_the_deep_content_prompt_keeps_markdown_in_the_summary(monkeypatch)
 
     def capturing_call_ai(prompt, **_kwargs):
         prompts.append(prompt)
+        # A literal newline inside the JSON string: only the deep-content
+        # path is allowed to accept it (allow_literal_newlines).
+        return (
+            '{"items":[{"source_ref":"item-0001",'
+            '"summary":"## 🧠 模型进展\n- 第一条\n- 第二条",'
+            '"why_it_matters":null,"tags":[]}]}'
+        )
+
+    def strict_call_ai(prompt, **_kwargs):
+        prompts.append(prompt)
         return json.dumps(
             {
                 "items": [
                     {
                         "source_ref": "item-0001",
-                        "summary": "## 🧠 模型进展\n- 第一条\n- 第二条",
+                        "summary": "一句话摘要",
                         "why_it_matters": None,
                         "tags": [],
                     }
@@ -1795,6 +1807,7 @@ def test_only_the_deep_content_prompt_keeps_markdown_in_the_summary(monkeypatch)
     assert "## 🧠 模型进展\n- 第一条\n- 第二条" in collector.body
 
     prompts.clear()
+    monkeypatch.setattr(rp, "call_ai", strict_call_ai)
     paper_item = PipelineItem(
         title="A paper",
         date=rp.DATE,

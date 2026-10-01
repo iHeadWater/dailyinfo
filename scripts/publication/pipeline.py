@@ -65,23 +65,26 @@ def _strip_json_fence(raw: str) -> str:
 
 
 def parse_structured_response(
-    raw: str, expected_refs: Iterable[str]
+    raw: str,
+    expected_refs: Iterable[str],
+    *,
+    allow_literal_newlines: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Parse and validate the minimal JSON response contract.
 
     The parser intentionally accepts no Markdown fallback and no title-based
     matching.  A response must contain exactly one object for every expected
-    ``source_ref``.
+    ``source_ref``.  ``allow_literal_newlines`` relaxes only control characters
+    inside strings, for the deep-content call whose summary *is* the briefing:
+    a model writing a literal newline there must not lose the digest to a
+    retry that would produce the same bytes.  Every other caller keeps the
+    strict envelope.
     """
 
     if not isinstance(raw, str) or not raw.strip():
         raise StructuredResultError("structured response is empty")
     try:
-        # strict=False only relaxes control characters inside strings.  The
-        # deep-content contract asks for multi-line Markdown in ``summary``;
-        # a model writing a literal newline there must not lose the digest to
-        # a retry that would produce the same bytes.
-        payload = json.loads(_strip_json_fence(raw), strict=False)
+        payload = json.loads(_strip_json_fence(raw), strict=not allow_literal_newlines)
     except (json.JSONDecodeError, StructuredResultError) as exc:
         if isinstance(exc, StructuredResultError):
             raise
@@ -205,6 +208,7 @@ def results_from_response(
     source_names: list[str] | None = None,
     sections: Mapping[str, str] | None = None,
     display_titles: Mapping[str, str] | None = None,
+    allow_literal_newlines: bool = False,
 ) -> list[StructuredItemResult]:
     """Join validated model output to source objects by ``source_ref`` only."""
 
@@ -222,7 +226,9 @@ def results_from_response(
     )
     if len(retrieved_times) != len(items):
         raise ValueError("retrieved_at values must match items")
-    parsed = parse_structured_response(raw, refs)
+    parsed = parse_structured_response(
+        raw, refs, allow_literal_newlines=allow_literal_newlines
+    )
     return [
         StructuredItemResult(
             source_ref=ref,

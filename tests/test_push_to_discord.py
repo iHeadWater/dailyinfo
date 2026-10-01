@@ -622,6 +622,7 @@ def test_the_source_status_sidecar_records_every_source(monkeypatch, tmp_path):
     ]
     # The timestamp is a contract for the future Web reader; pin the format.
     datetime.strptime(payload["generated_at"], "%Y-%m-%dT%H:%M:%S.%fZ")
+    assert payload["summary_posted"] is True
 
 
 def test_a_sidecar_write_failure_keeps_the_delivered_day_and_reports(
@@ -882,3 +883,200 @@ def test_a_low_frequency_source_skipped_by_the_run_reads_as_no_update(
         ("nature", "pushed"),
         ("shuili_xuebao", "no_update"),
     ]
+
+
+def test_a_non_utf8_leftover_does_not_crash_a_bundleless_category(
+    monkeypatch, tmp_path
+):
+    import push_to_discord as pd
+    from paths import BRIEFINGS_DIR
+
+    # papers has no canonical bundle, so the push falls into the legacy
+    # branch -- where an unreadable leftover used to raise out of main() and
+    # take every later category down with it.
+    date = _publish_bundle("code", "github_trending")
+    cat_dir = BRIEFINGS_DIR / "papers"
+    cat_dir.mkdir(parents=True, exist_ok=True)
+    (cat_dir / f"leftover_{date}.md").write_bytes(b"\xff\xfe not utf-8")
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1", "code": "channel-1"})
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "log", logs.append)
+
+    assert pd.main(date, categories=["papers", "code"]) == 1
+
+    # code still delivered: the failure stays contained to papers.
+    assert any("github_trending body" in content for _, content in sent)
+    assert any("refusing fallback" in line for line in logs), logs
+
+
+def test_cleanup_placeholder_files_tolerates_unreadable_files(tmp_path, monkeypatch):
+    import push_to_discord as pd
+
+    bad = tmp_path / "bad_briefing.md"
+    bad.write_bytes(b"\xff\xfe not utf-8")
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "log", logs.append)
+
+    pd._cleanup_placeholder_files([str(bad)])
+
+    assert bad.exists()
+    assert any("出错" in line for line in logs), logs
+
+
+def test_a_missing_summary_is_repaired_by_a_forced_redelivery(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_sources_config(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature", "science")
+    _seed_today_files(date, zero=("wrr",), failed=("aies",))
+    sent: list[tuple] = []
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "DISCORD_CHANNELS", {"papers": "channel-1"})
+    monkeypatch.setattr(pd, "log", logs.append)
+
+    def delivered_summaries():
+        return [
+            content for _, content, ok in sent if ok and "论文频道推送总结" in content
+        ]
+
+    # The body delivers, its summary never does.
+    def send_failing_summary(channel, content):
+        delivered = "推送总结" not in content
+        sent.append((channel, content, delivered))
+        return delivered
+
+    monkeypatch.setattr(pd, "send_to_discord", send_failing_summary)
+
+    assert pd.main(date, categories=["papers"]) == 1
+    assert delivered_summaries() == []
+    payload = json.loads(pd.source_status_path("papers", date).read_text("utf-8"))
+    assert payload["summary_posted"] is False
+
+    # A forced redelivery repairs it from the record of that run.
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, content: (sent.append((channel, content, True)) or True),
+    )
+    assert pd.main(date, categories=["papers"], force=True) == 0
+
+    summaries = delivered_summaries()
+    assert len(summaries) == 1
+    assert "📭 今日无文章更新 (1):" in summaries[0]
+    assert "⚠️ 抓取或摘要失败 (1):" in summaries[0]
+    payload = json.loads(pd.source_status_path("papers", date).read_text("utf-8"))
+    assert payload["summary_posted"] is True
+
+    # Once posted, further redeliveries stay silent.
+    assert pd.main(date, categories=["papers"], force=True) == 0
+    assert len(delivered_summaries()) == 1
+
+
+def test_a_regenerated_day_with_old_archive_still_posts_the_summary(
+    monkeypatch, tmp_path
+):
+    import push_to_discord as pd
+    from paths import PUSHED_DIR
+
+    _seed_sources_config(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature", "science")
+    _seed_today_files(date, zero=("wrr",), failed=("aies",))
+    # A previous delivery's archive exists for the date, but the files on
+    # disk are fresh again: a forced re-run regenerated the day and voided
+    # its delivery state (the pending attempt below stands in for that).
+    pushed_dir = PUSHED_DIR / "papers"
+    pushed_dir.mkdir(parents=True, exist_ok=True)
+    (pushed_dir / f"nature_briefing_{date}.md").write_text("旧归档", encoding="utf-8")
+    from datetime import timezone
+
+    pd.DeliveryStateStore().begin_attempt(
+        f"papers-{date}", "discord", attempted_at=datetime.now(timezone.utc)
+    )
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1"})
+
+    assert pd.main(date, categories=["papers"]) == 0
+
+    summaries = [content for _, content in sent if "论文频道推送总结" in content]
+    assert len(summaries) == 1
+    assert "📭 今日无文章更新 (1):" in summaries[0]
+
+
+def test_a_scan_crash_does_not_block_the_delivery(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    _seed_sources_config(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature")
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1"})
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "log", logs.append)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(pd, "collect_source_status", boom)
+
+    # The summary is auxiliary, but its failure is counted, not swallowed.
+    assert pd.main(date, categories=["papers"]) == 1
+    assert any("nature body" in content for _, content in sent)
+    assert any("来源状态扫描失败" in line for line in logs), logs
+
+
+def test_a_structurally_broken_sources_config_is_reported(monkeypatch, tmp_path):
+    import push_to_discord as pd
+
+    broken = tmp_path / "sources.json"
+    broken.write_text(json.dumps({"sources": "not-a-list"}), encoding="utf-8")
+    monkeypatch.setattr(pd, "SOURCES_JSON", str(broken))
+    date = _publish_bundle("papers", "nature")
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1"})
+    logs: list[str] = []
+    monkeypatch.setattr(pd, "log", logs.append)
+
+    assert pd.main(date, categories=["papers"]) == 1
+    assert not any("推送总结" in content for _, content in sent)
+    assert any("推送后续步骤失败" in line for line in logs), logs
+
+
+def test_an_unreadable_archive_does_not_block_the_delivery(monkeypatch, tmp_path):
+    import push_to_discord as pd
+    from paths import PUSHED_DIR
+
+    _seed_sources_config(tmp_path, monkeypatch)
+    date = _publish_bundle("papers", "nature")
+    pushed_dir = PUSHED_DIR / "papers"
+    pushed_dir.mkdir(parents=True, exist_ok=True)
+    pushed_dir.chmod(0)
+    sent = _capture_sends(monkeypatch, {"papers": "channel-1"})
+    try:
+        assert pd.main(date, categories=["papers"]) == 0
+    finally:
+        pushed_dir.chmod(0o755)
+
+    assert any("nature body" in content for _, content in sent)
+
+
+def test_the_lookback_mirror_matches_the_run_side(monkeypatch):
+    import os
+    import time
+
+    import push_to_discord as pd
+    import run_pipelines as rp
+    from paths import PUSHED_DIR
+
+    monkeypatch.setattr(rp, "FORCE_ALL", False)
+    monkeypatch.setattr(rp, "FORCE_SOURCES", set())
+
+    pushed_dir = PUSHED_DIR / "papers"
+    pushed_dir.mkdir(parents=True, exist_ok=True)
+    (pushed_dir / "nature_briefing_2026-09-30.md").write_text("x", encoding="utf-8")
+    stale = pushed_dir / "science_briefing_2026-09-30.md"
+    stale.write_text("x", encoding="utf-8")
+    long_ago = time.time() - 72 * 3600
+    os.utime(stale, (long_ago, long_ago))
+    (pushed_dir / "other_briefing_2026-09-30.md").write_text("x", encoding="utf-8")
+
+    for name in ("nature", "science", "ghost"):
+        for lookback in (48, 720):
+            assert pd._pushed_within_lookback("papers", name, lookback) == (
+                rp._already_pushed_within(name, "papers", lookback)
+            )

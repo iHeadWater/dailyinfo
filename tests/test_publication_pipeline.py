@@ -357,6 +357,10 @@ def test_a_literal_newline_inside_the_summary_parses():
         '{"items":[{"source_ref":"item-0001",'
         '"summary":"## 模型进展\n- 第一条","why_it_matters":null,"tags":[]}]}'
     )
-    parsed = parse_structured_response(raw, ["item-0001"])
+    # The strict contract still rejects it...
+    with pytest.raises(StructuredResultError):
+        parse_structured_response(raw, ["item-0001"])
+    # ...and only the deep-content path may keep the literal newline.
+    parsed = parse_structured_response(raw, ["item-0001"], allow_literal_newlines=True)
 
     assert parsed["item-0001"]["summary"] == "## 模型进展\n- 第一条"
