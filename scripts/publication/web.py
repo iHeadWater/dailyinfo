@@ -575,10 +575,10 @@ class WebPublisher:
         its file is being written in this transaction, so the claim is true
         by construction.  ``excluding`` is the Briefing whose item list is
         being reconciled away from the Item -- that membership must go.  Every
-        other recorded member is kept only while it still resolves in the
-        checkout: one whose Briefing file is gone, or no longer lists the
-        Item, is exactly the state the site rejects closed on every retry,
-        and this is the only place it can heal.
+        other member is kept only while it still resolves in the checkout,
+        wherever it came from: one whose Briefing file is gone, or no longer
+        lists the Item, is exactly the state the site rejects closed on every
+        retry, and this is the only place it can heal.
         """
         membership = set(item.briefing_ids)
         if claimed_by is not None:

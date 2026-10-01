@@ -897,6 +897,20 @@ PROBES: tuple[Probe, ...] = (
             "::test_union_drops_a_recorded_membership_whose_briefing_file_is_gone"
         ),
     ),
+    Probe(
+        # The resolve check has two halves: the Briefing file exists AND it
+        # still lists the Item.  A file that dropped the Item fails the site's
+        # forward check just like a missing file; only the second half of the
+        # condition catches it.
+        label="a Briefing that dropped the Item no longer counts as a claim",
+        path="scripts/publication/web.py",
+        old="        return claims is not None and item_id in claims",
+        new="        return claims is not None",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_union_drops_a_membership_the_briefing_no_longer_lists"
+        ),
+    ),
 )
 
 

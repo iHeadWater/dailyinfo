@@ -533,9 +533,11 @@ timestamps:
   the publisher therefore merges the membership the file records with the
   bundle's; when a briefing update reconciles an Item out of that one
   briefing, only that briefing's membership is removed and the others are
-  kept. A recorded membership that no longer resolves in the checkout — its
-  Briefing file is gone, or no longer lists the Item — is dropped with a
-  warning, because the site fails such a pair closed on every retry.
+  kept. A membership that no longer resolves in the checkout — its Briefing
+  file is gone, or no longer lists the Item — is dropped with a warning,
+  whether it came from the file, the store, or the bundle (a publish that
+  failed and rolled back leaves exactly that shape); the site fails such a
+  pair closed on every retry.
 
 Before any commit, the publisher runs `npm run validate`, `npm run test`,
 `npm run check`, and `npm run build` in the target checkout. It stages only its

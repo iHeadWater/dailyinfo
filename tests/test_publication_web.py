@@ -394,6 +394,62 @@ def test_union_drops_a_recorded_membership_whose_briefing_file_is_gone(tmp_path)
     assert "papers-2026-09-30" not in item_text
 
 
+def test_union_drops_a_membership_the_briefing_no_longer_lists(tmp_path):
+    """A Briefing file that exists but dropped the Item is equally unresolvable.
+
+    The pair fails the site's forward check ("lists briefing which does not
+    include the item"), so keeping the recorded membership would block every
+    future publish of that Item just like a missing briefing file would.
+    """
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+    assert (
+        publisher.publish(store.save(_bundle(date_value="2026-09-30")).bundle).status
+        == "success"
+    )
+    assert (
+        publisher.publish(store.save(_bundle(date_value="2026-10-01")).bundle).status
+        == "success"
+    )
+
+    briefing_path = repo / "src/content/briefings/generated/2026/09/30/papers.md"
+    briefing_path.write_text(
+        re.sub(
+            r"^item_ids: .*$",
+            "item_ids: []",
+            briefing_path.read_text(encoding="utf-8"),
+            flags=re.M,
+        ),
+        encoding="utf-8",
+    )
+    _git(repo, "add", "--", "src/content/briefings/generated/2026/09/30/papers.md")
+    _git(
+        repo,
+        "-c",
+        "user.name=Operator",
+        "-c",
+        "user.email=operator@example.com",
+        "commit",
+        "-m",
+        "operator detaches an item from a briefing",
+    )
+    _git(repo, "push", "origin", "main")
+
+    assert (
+        publisher.publish(
+            store.save(_bundle(date_value="2026-10-01", summary="Revised.")).bundle
+        ).status
+        == "success"
+    )
+
+    item_text = (
+        repo / "src/content/items/generated/papers/papers-item-001.md"
+    ).read_text(encoding="utf-8")
+    assert "papers-2026-10-01" in item_text
+    assert "papers-2026-09-30" not in item_text
+
+
 def test_web_validation_failure_rolls_back_generated_files_and_commit(tmp_path):
     repo, remote = _git_repo(tmp_path)
     failing_gate = (
