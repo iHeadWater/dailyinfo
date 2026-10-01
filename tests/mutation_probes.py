@@ -840,6 +840,36 @@ PROBES: tuple[Probe, ...] = (
             "::test_only_the_deep_content_prompt_keeps_markdown_in_the_summary"
         ),
     ),
+    Probe(
+        # The site files Items by the date prefix of published_at, and the
+        # production window runs before 08:00 Shanghai, when UTC is still the
+        # previous day; a UTC representation empties the site's latest day.
+        label="Web timestamps are represented in the content timezone",
+        path="scripts/publication/web.py",
+        old=(
+            "    return datetime.fromisoformat(text)"
+            ".astimezone(WEB_CONTENT_TIMEZONE).isoformat()"
+        ),
+        new="    return datetime.fromisoformat(text).isoformat()",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_item_date_prefix_matches_the_briefing_date_in_the_pre_dawn_window"
+        ),
+    ),
+    Probe(
+        # The checkout is the durable membership record; content imported
+        # from an earlier data root lives only there.  Without the union, a
+        # re-published identity stripped the older Briefing's back-reference
+        # and the site's bidirectional validation failed the category closed.
+        label="a re-published Item keeps the checkout's recorded membership",
+        path="scripts/publication/web.py",
+        old="        membership = sorted(set(existing) | set(item.briefing_ids))",
+        new="        membership = sorted(set(item.briefing_ids))",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_republish_viewed_from_a_later_data_root_preserves_membership"
+        ),
+    ),
 )
 
 
