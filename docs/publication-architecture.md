@@ -492,7 +492,7 @@ the caller passes `--force`. The WebPublisher never reads legacy
 
 The configured `DAILYINFO_WEB_REPO` must point to a persistent clean checkout of
 `dailyinfo-web`. `DAILYINFO_WEB_REMOTE` and `DAILYINFO_WEB_BRANCH` default to
-`git@github.com:CylenLC/dailyinfo-web.git` and `main`. The publisher holds a
+`git@github.com:iHeadWater/dailyinfo-web.git` and `main`. The publisher holds a
 process lock across fetch, fast-forward, generated-file write, Web validation,
 commit, and push. It rejects a wrong checkout root, branch, origin, dirty
 worktree, detached head, diverged/non-fast-forward history, and local commits

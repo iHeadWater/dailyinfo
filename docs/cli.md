@@ -172,7 +172,7 @@ FRESHRSS_PASSWORD=freshrss123
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) — controls data dir and channel suffix |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`; env-suffixed for dev/staging) |
 | `DAILYINFO_WEB_REPO` | Local `dailyinfo-web` checkout required by `publish --sink web` |
-| `DAILYINFO_WEB_REMOTE` | Expected Web `origin` URL (default `git@github.com:CylenLC/dailyinfo-web.git`) |
+| `DAILYINFO_WEB_REMOTE` | Expected Web `origin` URL (default `git@github.com:iHeadWater/dailyinfo-web.git`) |
 | `DAILYINFO_WEB_BRANCH` | Expected Web branch (default `main`) |
 | `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
 | `FRESHRSS_PASSWORD` | FreshRSS password |

@@ -29,7 +29,7 @@ from .validation import validate_bundle
 logger = logging.getLogger(__name__)
 
 WEB_SINK = "web"
-DEFAULT_WEB_REMOTE = "git@github.com:CylenLC/dailyinfo-web.git"
+DEFAULT_WEB_REMOTE = "git@github.com:iHeadWater/dailyinfo-web.git"
 DEFAULT_WEB_BRANCH = "main"
 DEFAULT_WEB_VALIDATION_COMMANDS = (
     ("npm", "run", "validate"),
