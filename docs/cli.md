@@ -113,6 +113,13 @@ and fast-forwards only, writes only `src/content/items/generated/` and
 gates, then creates and pushes one ordinary DailyInfo Bot commit for each
 changed Briefing. A push failure leaves that local publisher commit for retry.
 
+Each successful publish also enforces the rolling retention window
+(`DAILYINFO_WEB_WINDOW_DAYS`, default `7`; `0` disables the sweep): the sweep
+is anchored to the newest canonical date, prunes Briefings and Items that fell
+out of the window in the same commit, and never touches another publisher's
+content in the shared generated directories (see the retention section of
+`docs/publication-architecture.md`).
+
 `dailyinfo publish` reads canonical `publications/` only; it never reconstructs
 a PublicationBundle from legacy Markdown. With `--sink all`, a failed sink does
 not roll back a successful other sink, and the command exits non-zero if either
@@ -174,6 +181,7 @@ FRESHRSS_PASSWORD=freshrss123
 | `DAILYINFO_WEB_REPO` | Local `dailyinfo-web` checkout required by `publish --sink web` |
 | `DAILYINFO_WEB_REMOTE` | Expected Web `origin` URL (default `git@github.com:iHeadWater/dailyinfo-web.git`) |
 | `DAILYINFO_WEB_BRANCH` | Expected Web branch (default `main`) |
+| `DAILYINFO_WEB_WINDOW_DAYS` | Rolling Web retention window in days (default `7`; `0` disables the sweep) |
 | `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
 | `FRESHRSS_PASSWORD` | FreshRSS password |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `glm-5.3-flash`, a Zhipu model name) |

@@ -123,18 +123,26 @@ def _git_repo(tmp_path):
     return repo, remote
 
 
-def _config(repo, remote, *, validation_commands=(), lock_path=None):
+def _config(repo, remote, *, validation_commands=(), lock_path=None, window_days=7):
     return WebPublishConfig(
         repo_path=repo,
         expected_remote=str(remote),
         expected_branch="main",
         validation_commands=validation_commands,
         lock_path=lock_path,
+        window_days=window_days,
     )
 
 
 def _publisher(
-    tmp_path, repo, remote, *, validation_commands=(), store=None, runner=subprocess.run
+    tmp_path,
+    repo,
+    remote,
+    *,
+    validation_commands=(),
+    store=None,
+    runner=subprocess.run,
+    window_days=7,
 ):
     return WebPublisher(
         _config(
@@ -142,6 +150,7 @@ def _publisher(
             remote,
             validation_commands=validation_commands,
             lock_path=tmp_path / "publish.lock",
+            window_days=window_days,
         ),
         publication_store=store,
         runner=runner,
@@ -348,11 +357,16 @@ def test_union_drops_a_recorded_membership_whose_briefing_file_is_gone(tmp_path)
     If a briefing file disappears from the checkout (a site-side removal, or
     the state the reconciliation bug left behind), keeping the item's stale
     reference would fail validation on every future publish of that item.
-    Dropping it here is the only place the dangling pair can heal.
+    Dropping it here is the union path's job.
+
+    ``window_days=0`` isolates that path: the retention sweep heals the same
+    dangling state for its own reason (pinned by
+    ``test_window_pruning_a_briefing_drops_it_from_surviving_items``), and
+    with the sweep active it would mask this test's mutation.
     """
     repo, remote = _git_repo(tmp_path)
     store = PublicationStore(tmp_path / "publications")
-    publisher = _publisher(tmp_path, repo, remote, store=store)
+    publisher = _publisher(tmp_path, repo, remote, store=store, window_days=0)
     assert (
         publisher.publish(store.save(_bundle(date_value="2026-09-30")).bundle).status
         == "success"
@@ -625,6 +639,261 @@ def test_web_publisher_rejects_ids_web_cannot_represent(tmp_path):
     assert "cannot be represented" in (result.error or "")
     assert _commit_count(repo) == 1
     assert _git(repo, "status", "--porcelain").stdout == ""
+
+
+def _publish_days(publisher, store, days, *, suffix=None):
+    """Publish one briefing per date; suffix pins the Item identity."""
+
+    for date_value in days:
+        year, month, day = (int(part) for part in date_value.split("-"))
+        moment = datetime(year, month, day, 3, 0, tzinfo=UTC)
+        bundle = store.save(
+            _bundle(
+                date_value=date_value,
+                suffix=suffix or date_value.replace("-", ""),
+                moment=moment,
+            )
+        ).bundle
+        assert publisher.publish(bundle).status == "success"
+
+
+def _briefing_file(repo, date_value, category="papers"):
+    year, month, day = date_value.split("-")
+    return (
+        repo / "src/content/briefings/generated" / year / month / day / f"{category}.md"
+    )
+
+
+def _item_file(repo, suffix, category="papers"):
+    return repo / f"src/content/items/generated/{category}/papers-item-{suffix}.md"
+
+
+def _operator_commit(repo, message):
+    _git(repo, "add", "-A")
+    _git(
+        repo,
+        "-c",
+        "user.name=Operator",
+        "-c",
+        "user.email=operator@example.com",
+        "commit",
+        "-m",
+        message,
+    )
+    _git(repo, "push", "origin", "main")
+
+
+# ---------------------------------------------------------------------------
+# Rolling retention window
+# ---------------------------------------------------------------------------
+
+
+def test_window_prunes_content_older_than_seven_days(tmp_path):
+    """A window of 7 keeps the newest seven calendar days of content.
+
+    Ten days of content: once 10-01 is the newest, 09-22..09-24 have fallen
+    out -- Briefing and Item both -- while the cutoff day 09-25 itself and
+    everything newer remain.
+    """
+
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+
+    days = [f"2026-09-{day:02d}" for day in range(22, 31)] + ["2026-10-01"]
+    _publish_days(publisher, store, days)
+
+    for date_value in ("2026-09-22", "2026-09-23", "2026-09-24"):
+        assert not _briefing_file(repo, date_value).exists(), date_value
+        assert not _item_file(repo, date_value.replace("-", "")).exists(), date_value
+    for date_value in [f"2026-09-{day:02d}" for day in range(25, 31)] + ["2026-10-01"]:
+        assert _briefing_file(repo, date_value).exists(), date_value
+        assert _item_file(repo, date_value.replace("-", "")).exists(), date_value
+
+
+def test_window_is_idempotent_across_reruns(tmp_path):
+    """A settled window prunes nothing, rewrites nothing, commits nothing.
+
+    Re-delivering the identical newest day must leave the checkout and HEAD
+    exactly where the previous run left them.
+    """
+
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+
+    days = [f"2026-09-{day:02d}" for day in range(26, 31)] + [
+        "2026-10-01",
+        "2026-10-02",
+        "2026-10-03",
+    ]
+    _publish_days(publisher, store, days)
+    assert not _briefing_file(repo, "2026-09-26").exists()
+
+    head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    count = _commit_count(repo)
+    newest = store.load_bundle("papers-2026-10-03")
+    assert publisher.publish(newest).status == "success"
+
+    assert _commit_count(repo) == count
+    assert _git(repo, "rev-parse", "HEAD").stdout.strip() == head
+    assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+
+
+def test_window_anchor_follows_the_newest_content_not_the_clock(tmp_path):
+    """The cutoff derives from the newest content date, never from today.
+
+    Every day in this fixture is in the past relative to the wall clock.  A
+    clock anchor would put the cutoff near today and empty the public site;
+    the content anchor keeps the newest seven days the store actually holds
+    and prunes only what fell out of them (sync.mjs made the same decision,
+    from the same outage scenario).
+    """
+
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+
+    days = ["2026-09-15"] + [f"2026-09-{day:02d}" for day in range(19, 25)]
+    _publish_days(publisher, store, days)
+
+    assert not _briefing_file(repo, "2026-09-15").exists()
+    assert not _item_file(repo, "20260915").exists()
+    for date_value in [f"2026-09-{day:02d}" for day in range(19, 25)]:
+        assert _briefing_file(repo, date_value).exists(), date_value
+
+
+def test_expired_briefing_shared_with_the_other_publisher_keeps_their_section(
+    tmp_path,
+):
+    """Pruning a shared Briefing removes only this publisher's part.
+
+    dailyinfo-web's sync writes into the same ``YYYY/MM/DD/papers.md`` files,
+    fencing its section with ``<!-- dailyinfo-sync:… -->`` markers and
+    minting ``dailyinfo-…`` ids.  A file that carries such content must lose
+    our body and our ids only -- their section stays verbatim and the file is
+    deleted only once nothing else is left (their ``pruneBriefing`` makes the
+    mirror-image decision).
+    """
+
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+    _publish_days(publisher, store, ["2026-09-20"])
+
+    sync_item_id = "dailyinfo-papers-nature-2026-09-20"
+    sync_block = (
+        "<!-- dailyinfo-sync:start -->\n"
+        "## Nature 简报\n\nKept verbatim.\n"
+        "<!-- dailyinfo-sync:end -->"
+    )
+    briefing = _briefing_file(repo, "2026-09-20")
+    text = briefing.read_text(encoding="utf-8")
+    assert 'item_ids: ["papers-item-20260920"]' in text
+    text = text.replace(
+        'item_ids: ["papers-item-20260920"]',
+        f'item_ids: ["papers-item-20260920", "{sync_item_id}"]',
+    )
+    briefing.write_text(
+        text.rstrip("\n") + "\n\n" + sync_block + "\n", encoding="utf-8"
+    )
+
+    sync_item = repo / f"src/content/items/generated/papers/{sync_item_id}.md"
+    sync_item.write_text(
+        "---\n"
+        f'id: "{sync_item_id}"\n'
+        'category: "papers"\n'
+        'briefing_ids: ["papers-2026-09-20"]\n'
+        "---\n\nSync item body.\n",
+        encoding="utf-8",
+    )
+    sync_item_bytes = sync_item.read_bytes()
+    _operator_commit(repo, "the sync path shares the 09-20 briefing")
+
+    _publish_days(publisher, store, ["2026-10-01"])
+
+    assert briefing.exists()
+    pruned = briefing.read_text(encoding="utf-8")
+    assert sync_block in pruned
+    assert "Canonical briefing body" not in pruned
+    assert sync_item_id in pruned
+    assert "papers-item-20260920" not in pruned
+    assert not _item_file(repo, "20260920").exists()
+    assert sync_item.read_bytes() == sync_item_bytes
+    assert _briefing_file(repo, "2026-10-01").exists()
+
+
+def test_window_keeps_an_expired_item_a_living_briefing_still_claims(tmp_path):
+    """Expiry is decided against the surviving Briefings, not the Item date alone.
+
+    The site fails the whole publication closed when a Briefing lists an Item
+    that is gone, so an Item whose own date fell out of the window survives
+    while any in-window Briefing still lists it.  The checkout state is
+    written by hand -- an operator edit, or what an older writer leaves
+    behind -- because the sweep must read the files as it finds them, not as
+    this pipeline would have written them.
+    """
+
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+    _publish_days(publisher, store, ["2026-09-18", "2026-10-01"])
+
+    # Age the 10-01 Item past the window without touching its membership.
+    stale = _item_file(repo, "20261001")
+    stale.write_text(
+        re.sub(
+            r'^published_at: ".*"$',
+            'published_at: "2026-09-18T11:00:00+08:00"',
+            stale.read_text(encoding="utf-8"),
+            flags=re.M,
+        ),
+        encoding="utf-8",
+    )
+    # Control: an expired orphan must fall out in the same sweep.
+    orphan = _item_file(repo, "orphan")
+    orphan.write_text(
+        "---\n"
+        'id: "papers-item-orphan"\n'
+        'category: "papers"\n'
+        'published_at: "2026-09-10T11:00:00+08:00"\n'
+        "briefing_ids: []\n"
+        'title: "Orphan"\n'
+        "---\n\nOrphan body.\n",
+        encoding="utf-8",
+    )
+    _operator_commit(repo, "age an item and strand an orphan")
+
+    _publish_days(publisher, store, ["2026-10-02"])
+
+    assert stale.exists()
+    assert "papers-2026-10-01" in stale.read_text(encoding="utf-8")
+    assert not orphan.exists()
+    assert _briefing_file(repo, "2026-10-01").exists()
+
+
+def test_window_pruning_a_briefing_drops_it_from_surviving_items(tmp_path):
+    """The reverse reference is pruned together with the Briefing.
+
+    One stable identity collected on 09-27 and again on 10-04 (a repository
+    trending twice) keeps its file with both memberships; once 09-27 falls
+    out of the window, that dead reference must leave the file -- the site
+    rejects ``Item.briefing_ids`` pointing at a missing Briefing, and the
+    sweep is the only place the pair can heal.
+    """
+
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+    _publish_days(publisher, store, ["2026-09-27"], suffix="20260927")
+    _publish_days(publisher, store, ["2026-10-04"], suffix="20260927")
+
+    assert not _briefing_file(repo, "2026-09-27").exists()
+    item = _item_file(repo, "20260927")
+    assert item.exists()
+    item_text = item.read_text(encoding="utf-8")
+    assert "papers-2026-10-04" in item_text
+    assert "papers-2026-09-27" not in item_text
 
 
 def test_publish_script_ignores_legacy_only_files(tmp_path):

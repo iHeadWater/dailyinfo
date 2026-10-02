@@ -9,7 +9,7 @@ RSS, sitemap, and Pages deployment.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import fcntl
 import json
 import logging
@@ -31,6 +31,10 @@ logger = logging.getLogger(__name__)
 WEB_SINK = "web"
 DEFAULT_WEB_REMOTE = "git@github.com:iHeadWater/dailyinfo-web.git"
 DEFAULT_WEB_BRANCH = "main"
+# The site is a rolling seven-day intelligence digest, not an archive.  The
+# window is applied by the publisher itself (see ``_plan_retention``); 0 turns
+# the sweep off entirely.
+DEFAULT_WEB_WINDOW_DAYS = 7
 DEFAULT_WEB_VALIDATION_COMMANDS = (
     ("npm", "run", "validate"),
     ("npm", "run", "test"),
@@ -43,6 +47,19 @@ _WEB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 # dates in Asia/Shanghai).  The Web site groups Items into days by the date
 # prefix of ``published_at``, so the representation has to speak this calendar.
 WEB_CONTENT_TIMEZONE = ZoneInfo("Asia/Shanghai")
+
+# The shared-Briefing protocol.  dailyinfo-web's sync publisher writes into the
+# same ``YYYY/MM/DD/{category}.md`` files, fencing its section with these
+# markers and claiming every ``dailyinfo-…`` id (its own ITEM_FILE_RE marks
+# its item files the same way).  Retention mirrors its ``pruneBriefing``:
+# remove this publisher's part, keep theirs verbatim, delete the file only
+# once nothing else is left.
+_SYNC_SECTION_RE = re.compile(
+    r"<!-- dailyinfo-sync:start -->.*?<!-- dailyinfo-sync:end -->", re.DOTALL
+)
+_FOREIGN_ID_PREFIX = "dailyinfo-"
+_FOREIGN_ITEM_FILE_RE = re.compile(r"^dailyinfo-.*-\d{4}-\d{2}-\d{2}\.md$")
+_DATE_PREFIX_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
 
 
 class WebPublishError(RuntimeError):
@@ -67,6 +84,7 @@ class WebPublishConfig:
     repo_path: Path
     expected_remote: str = DEFAULT_WEB_REMOTE
     expected_branch: str = DEFAULT_WEB_BRANCH
+    window_days: int = DEFAULT_WEB_WINDOW_DAYS
     managed_items_dir: Path = Path("src/content/items/generated")
     managed_briefings_dir: Path = Path("src/content/briefings/generated")
     validation_commands: tuple[tuple[str, ...], ...] = DEFAULT_WEB_VALIDATION_COMMANDS
@@ -87,6 +105,8 @@ class WebPublishConfig:
             raise ValueError("expected_branch contains unsupported characters")
         if self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
+        if not isinstance(self.window_days, int) or self.window_days < 0:
+            raise ValueError("window_days must be a non-negative integer")
         if self.lock_path is None:
             lock_path = (
                 repo_path.parent / f".{repo_path.name}.dailyinfo-web.publish.lock"
@@ -112,7 +132,27 @@ class WebPublishConfig:
             expected_branch=(
                 _read_config_value("DAILYINFO_WEB_BRANCH") or DEFAULT_WEB_BRANCH
             ),
+            window_days=_read_window_days(),
         )
+
+
+def _read_window_days() -> int:
+    """Parse ``DAILYINFO_WEB_WINDOW_DAYS``; empty means the default window."""
+
+    raw = _read_config_value("DAILYINFO_WEB_WINDOW_DAYS")
+    if not raw:
+        return DEFAULT_WEB_WINDOW_DAYS
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise WebPublishError(
+            f"DAILYINFO_WEB_WINDOW_DAYS must be a non-negative integer, got {raw!r}"
+        ) from exc
+    if value < 0:
+        raise WebPublishError(
+            f"DAILYINFO_WEB_WINDOW_DAYS must be a non-negative integer, got {raw!r}"
+        )
+    return value
 
 
 def _read_config_value(key: str) -> str:
@@ -329,6 +369,87 @@ def _frontmatter_field(path: Path, field: str) -> Any:
     return None
 
 
+def _split_frontmatter_text(text: str) -> Optional[tuple[str, str]]:
+    """Split managed Markdown into (frontmatter, body); None when it has none.
+
+    Boundaries match ``_read_frontmatter``; unlike that helper this one is
+    tolerant because retention reads files it did not just write.
+    """
+
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---", 4)
+    if end < 0:
+        return None
+    body = text[end + 4 :]
+    if body.startswith("\n"):
+        body = body[1:]
+    return text[4:end], body
+
+
+def _replace_frontmatter_field(frontmatter: str, field: str, values: list) -> str:
+    """Replace one inline frontmatter field, leaving the rest byte-identical."""
+
+    rendered = _yaml_value(values)
+    pattern = re.compile(rf"^{re.escape(field)}: .*$", re.MULTILINE)
+    if pattern.search(frontmatter) is None:
+        raise WebPublishError(f"managed Web content is missing {field}")
+    return pattern.sub(lambda _match: f"{field}: {rendered}", frontmatter, count=1)
+
+
+def _parse_date_prefix(value: Any, field_name: str, path: Path) -> date:
+    """Read the ``YYYY-MM-DD`` prefix the site files content under."""
+
+    match = _DATE_PREFIX_RE.match(value) if isinstance(value, str) else None
+    if match is None:
+        raise WebPublishError(
+            f"managed Web content has an unusable {field_name}: {path.name}"
+        )
+    return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _briefing_path_parts(path: Path) -> Optional[tuple[str, str, str, str]]:
+    """Split ``…/YYYY/MM/DD/{category}.md``; None for any other layout."""
+
+    if path.suffix != ".md":
+        return None
+    parts = path.parts
+    if len(parts) < 4:
+        return None
+    year, month, day = parts[-4], parts[-3], parts[-2]
+    if not (
+        len(year) == 4
+        and len(month) == 2
+        and len(day) == 2
+        and year.isdigit()
+        and month.isdigit()
+        and day.isdigit()
+    ):
+        return None
+    return year, month, day, path.stem
+
+
+def _briefing_date_from_path(path: Path) -> Optional[date]:
+    parts = _briefing_path_parts(path)
+    if parts is None:
+        return None
+    year, month, day, _ = parts
+    try:
+        return date(int(year), int(month), int(day))
+    except ValueError:
+        return None
+
+
+def _briefing_id_from_path(path: Path) -> Optional[str]:
+    """The canonical Briefing id (``{category}-{date}``) a managed path names."""
+
+    parts = _briefing_path_parts(path)
+    if parts is None:
+        return None
+    year, month, day, category = parts
+    return f"{category}-{year}-{month}-{day}"
+
+
 class WebPublisher:
     """Synchronize one canonical briefing to a persistent Web checkout."""
 
@@ -396,6 +517,7 @@ class WebPublisher:
             path: path.read_bytes() if path.exists() else None for path in desired
         }
         changed: list[Path] = []
+        retention_deletions: list[Path] = []
         try:
             for path, content in desired.items():
                 if path.exists() and not path.is_file():
@@ -408,9 +530,32 @@ class WebPublisher:
                 self._atomic_write(path, content)
                 changed.append(path)
 
-            self._assert_owned_worktree(desired)
+            # Retention runs on the state the site will see (the publication's
+            # own files are already on disk) and rides the same transaction:
+            # the prune is committed and pushed together with the publish, or
+            # rolls back with it.
+            retention_rewrites, retention_deletions = self._plan_retention(publication)
+            for path, content in retention_rewrites.items():
+                # A rewritten path may be one the publication just wrote; the
+                # rollback snapshot must stay the pre-transaction bytes.
+                if path not in originals:
+                    originals[path] = path.read_bytes() if path.exists() else None
+                current = path.read_bytes() if path.exists() else None
+                desired[path] = content
+                if current == content:
+                    continue
+                self._atomic_write(path, content)
+                if path not in changed:
+                    changed.append(path)
+            for path in retention_deletions:
+                originals[path] = path.read_bytes()
+                path.unlink()
+                changed.append(path)
+
+            owned = [*desired, *retention_deletions]
+            self._assert_owned_worktree(owned)
             self._run_web_gates()
-            self._assert_owned_worktree(desired)
+            self._assert_owned_worktree(owned)
             self._run_git(("diff", "--check"), stage="git diff check")
 
             if not changed:
@@ -436,7 +581,7 @@ class WebPublisher:
                 )
                 return head
 
-            relative_paths = [self._relative(path) for path in desired]
+            relative_paths = [self._relative(path) for path in owned]
             self._run_git(("add", "--", *relative_paths), stage="stage Web content")
             staged = self._git_stdout(
                 ("diff", "--cached", "--name-only"), stage="inspect staged Web content"
@@ -453,10 +598,13 @@ class WebPublisher:
                 ("diff", "--cached", "--check"), stage="staged Web diff check"
             )
             subject = f"publish({publication.briefing.category}): {publication.briefing.date.isoformat()}"
+            pruned = len(retention_rewrites) + len(retention_deletions)
             body = (
                 f"Publication-ID: {publication.briefing.id}\n"
                 f"Schema-Version: {publication.schema_version}"
             )
+            if pruned:
+                body += f"\nPruned-Paths: {pruned}"
             self._run_git(
                 (
                     "-c",
@@ -487,18 +635,19 @@ class WebPublisher:
                 ) from exc
             self._assert_clean()
             logger.info(
-                "publication_id=%s category=%s sink=web action=commit item_count=%d commit=%s",
+                "publication_id=%s category=%s sink=web action=commit item_count=%d pruned=%d commit=%s",
                 publication.briefing.id,
                 publication.briefing.category,
                 len(publication.items),
+                pruned,
                 commit_sha,
             )
             return commit_sha
         except WebPublishError:
-            self._cleanup_transaction(desired, originals, changed)
+            self._cleanup_transaction(desired, originals, changed, retention_deletions)
             raise
         except Exception as exc:
-            self._cleanup_transaction(desired, originals, changed)
+            self._cleanup_transaction(desired, originals, changed, retention_deletions)
             raise WebPublishError(
                 f"Web publication failed: {sanitize_error(exc)}"
             ) from exc
@@ -696,6 +845,210 @@ class WebPublisher:
             / f"{publication.briefing.category}.md"
         )
 
+    # ------------------------------------------------------------------
+    # Rolling retention window
+    # ------------------------------------------------------------------
+
+    def _retention_cutoff(self) -> Optional[date]:
+        """The oldest date the site keeps, anchored to the newest content.
+
+        Anchoring to the wall clock instead would let a collection outage
+        slide the window forward and empty a public site; content the store
+        actually holds cannot do that.  ``window_days`` of 0 disables the
+        sweep, and without a store there is no content anchor to trust.
+        """
+
+        if self.config.window_days <= 0 or self.publication_store is None:
+            return None
+        try:
+            briefings = self.publication_store.list_briefings()
+        except Exception as exc:
+            raise WebPublishError(
+                f"cannot read the canonical store for Web retention: {sanitize_error(exc)}"
+            ) from exc
+        if not briefings:
+            return None
+        newest = max(briefing.date for briefing in briefings)
+        return newest - timedelta(days=self.config.window_days - 1)
+
+    def _plan_retention(
+        self, publication: PublicationBundle
+    ) -> tuple[dict[Path, bytes], list[Path]]:
+        """Plan the (rewrites, deletions) that fall out of the window.
+
+        Runs after the publication's own files are on disk, so membership is
+        read from the state the site will actually see.  The publication's
+        own Briefing and Items are never candidates: a deliberate backfill of
+        an old date must not delete itself in the same transaction.
+        """
+
+        cutoff = self._retention_cutoff()
+        if cutoff is None:
+            return {}, []
+        current_briefing_path = self._briefing_path(publication)
+        current_item_paths = {
+            self._item_path(item.category, item.id) for item in publication.items
+        }
+
+        rewrites: dict[Path, bytes] = {}
+        deletions: list[Path] = []
+        surviving_ids: dict[Path, tuple[str, ...]] = {}
+        briefing_root = self.config.repo_path / self.config.managed_briefings_dir
+        if briefing_root.exists():
+            for path in sorted(briefing_root.rglob("*.md")):
+                if not path.is_file() or path == current_briefing_path:
+                    continue
+                briefing_date = _briefing_date_from_path(path)
+                if briefing_date is None or briefing_date >= cutoff:
+                    continue
+                outcome, content, remaining = self._prune_briefing_file(path)
+                if outcome == "deleted":
+                    deletions.append(path)
+                elif outcome == "rewritten":
+                    rewrites[path] = content
+                    surviving_ids[path] = remaining
+
+        # An Item is only ever referenced by a Briefing that survives, so the
+        # claim set has to reflect the post-prune briefing state below.
+        claims: set[str] = set()
+        live_briefing_ids: set[str] = set()
+        if briefing_root.exists():
+            deleted = set(deletions)
+            for path in sorted(briefing_root.rglob("*.md")):
+                if not path.is_file() or path in deleted:
+                    continue
+                briefing_id = _briefing_id_from_path(path)
+                if briefing_id is not None:
+                    live_briefing_ids.add(briefing_id)
+                if path in surviving_ids:
+                    claims.update(surviving_ids[path])
+                else:
+                    claims.update(self._briefing_item_ids(path) or ())
+
+        items_root = self.config.repo_path / self.config.managed_items_dir
+        if items_root.exists():
+            for path in sorted(items_root.rglob("*.md")):
+                if not path.is_file():
+                    continue
+                if _FOREIGN_ITEM_FILE_RE.match(path.name):
+                    # Another publisher's item file; its own sweep owns it.
+                    continue
+                item_id, published_at, briefing_ids = self._read_item_fields(path)
+                expired = (
+                    _parse_date_prefix(published_at, "published_at", path) < cutoff
+                )
+                # The transaction must not delete what it is publishing (a
+                # deliberate backfill of an old date), but it may still clean
+                # the references the sweep is about to orphan.
+                if expired and item_id not in claims and path not in current_item_paths:
+                    deletions.append(path)
+                    continue
+                live_refs = [ref for ref in briefing_ids if ref in live_briefing_ids]
+                if live_refs != briefing_ids:
+                    rewrites[path] = self._strip_item_membership(path, live_refs)
+        return rewrites, deletions
+
+    def _prune_briefing_file(
+        self, path: Path
+    ) -> tuple[str, Optional[bytes], tuple[str, ...]]:
+        """Remove this publisher's part of an expired shared Briefing file.
+
+        Returns ``("untouched", None, ())`` when the file carries nothing of
+        ours, ``("deleted", None, ())`` when nothing else is left in it, and
+        ``("rewritten", content, remaining_ids)`` otherwise -- the other
+        publisher's marked sections and ``dailyinfo-…`` ids stay verbatim.
+        Unreadable frontmatter is treated as foreign rather than as an error:
+        retention reads files this publisher did not just write.
+        """
+
+        try:
+            item_ids = _frontmatter_field(path, "item_ids")
+        except WebPublishError as exc:
+            logger.warning(
+                "web retention: leaving %s alone (%s)", path.name, sanitize_error(exc)
+            )
+            return "untouched", None, ()
+        if item_ids is None:
+            item_ids = []
+        if not isinstance(item_ids, list) or not all(
+            isinstance(value, str) for value in item_ids
+        ):
+            logger.warning(
+                "web retention: leaving %s alone (item_ids is not a list of strings)",
+                path.name,
+            )
+            return "untouched", None, ()
+        split = _split_frontmatter_text(path.read_text(encoding="utf-8"))
+        if split is None:
+            return "untouched", None, ()
+        frontmatter, body = split
+        foreign_blocks = [match.group(0) for match in _SYNC_SECTION_RE.finditer(body)]
+        our_body = _SYNC_SECTION_RE.sub("", body).strip()
+        our_ids = [
+            value for value in item_ids if not value.startswith(_FOREIGN_ID_PREFIX)
+        ]
+        foreign_ids = [
+            value for value in item_ids if value.startswith(_FOREIGN_ID_PREFIX)
+        ]
+        if not our_body and not our_ids:
+            return "untouched", None, ()
+        remaining_body = "\n\n".join(foreign_blocks)
+        if not remaining_body and not foreign_ids:
+            return "deleted", None, ()
+        new_frontmatter = _replace_frontmatter_field(
+            frontmatter, "item_ids", foreign_ids
+        )
+        rendered = f"---\n{new_frontmatter}\n---\n"
+        if remaining_body:
+            rendered += f"{remaining_body}\n"
+        return "rewritten", rendered.encode("utf-8"), tuple(foreign_ids)
+
+    @staticmethod
+    def _briefing_item_ids(path: Path) -> Optional[tuple[str, ...]]:
+        """Item ids a managed Briefing lists; None when it cannot be read."""
+
+        try:
+            values = _frontmatter_field(path, "item_ids")
+        except WebPublishError:
+            return None
+        if values is None:
+            return ()
+        if not isinstance(values, list) or not all(
+            isinstance(value, str) for value in values
+        ):
+            return None
+        return tuple(values)
+
+    @staticmethod
+    def _read_item_fields(path: Path) -> tuple[str, Any, list[str]]:
+        item_id = _frontmatter_field(path, "id")
+        if not isinstance(item_id, str):
+            raise WebPublishError(f"managed Web Item identity is invalid: {path.name}")
+        published_at = _frontmatter_field(path, "published_at")
+        briefing_ids = _frontmatter_field(path, "briefing_ids")
+        if briefing_ids is None:
+            briefing_ids = []
+        if not isinstance(briefing_ids, list) or not all(
+            isinstance(value, str) for value in briefing_ids
+        ):
+            raise WebPublishError(
+                f"managed Web Item membership is invalid: {path.name}"
+            )
+        return item_id, published_at, briefing_ids
+
+    @staticmethod
+    def _strip_item_membership(path: Path, refs: list[str]) -> bytes:
+        """Rewrite ``briefing_ids`` in place; every other byte is preserved."""
+
+        split = _split_frontmatter_text(path.read_text(encoding="utf-8"))
+        if split is None:
+            raise WebPublishError(f"managed Web Item has no frontmatter: {path.name}")
+        frontmatter, body = split
+        new_frontmatter = _replace_frontmatter_field(
+            frontmatter, "briefing_ids", list(refs)
+        )
+        return f"---\n{new_frontmatter}\n---\n{body}".encode("utf-8")
+
     def _validate_and_sync_repo(self) -> None:
         repo = self.config.repo_path
         if not repo.is_dir():
@@ -803,11 +1156,11 @@ class WebPublisher:
         if status:
             raise WebPublishError("Web checkout must be clean")
 
-    def _assert_owned_worktree(self, desired: Mapping[Path, bytes]) -> None:
+    def _assert_owned_worktree(self, owned: Iterable[Path]) -> None:
         status = self._git_status()
         if not status:
             return
-        allowed = {self._relative(path) for path in desired}
+        allowed = {self._relative(path) for path in owned}
         actual = set()
         for line in status.splitlines():
             if len(line) < 4:
@@ -865,6 +1218,7 @@ class WebPublisher:
         desired: Mapping[Path, bytes],
         originals: Mapping[Path, Optional[bytes]],
         changed: Iterable[Path],
+        deletions: Sequence[Path] = (),
     ) -> None:
         # A push failure leaves an auditable local publisher commit in place;
         # only pre-commit failures are eligible for file rollback.
@@ -888,14 +1242,20 @@ class WebPublisher:
             )
             if staged.returncode == 0 and staged.stdout:
                 self._run_git(
-                    ("reset", "--", *[self._relative(path) for path in desired]),
+                    (
+                        "reset",
+                        "--",
+                        *[self._relative(path) for path in [*desired, *deletions]],
+                    ),
                     stage="unstage Web transaction",
                     check=False,
                 )
             for path in changed:
                 original = originals[path]
                 current = path.read_bytes() if path.exists() else None
-                expected = desired[path]
+                # A deletion's expected state is absence; a written file's is
+                # its content.  Both were recorded by the transaction.
+                expected = desired.get(path)
                 if current != expected:
                     raise WebPublishError(
                         "Web transaction changed unexpectedly; refusing unsafe rollback"
@@ -916,6 +1276,7 @@ __all__ = [
     "DEFAULT_WEB_BRANCH",
     "DEFAULT_WEB_REMOTE",
     "DEFAULT_WEB_VALIDATION_COMMANDS",
+    "DEFAULT_WEB_WINDOW_DAYS",
     "WEB_SINK",
     "WebPublishConfig",
     "WebPublisher",

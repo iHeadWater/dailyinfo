@@ -911,6 +911,69 @@ PROBES: tuple[Probe, ...] = (
             "::test_union_drops_a_membership_the_briefing_no_longer_lists"
         ),
     ),
+    Probe(
+        # A wall-clock anchor slides the window forward over a stale store --
+        # the exact outage that empties a public site.  The cutoff has to
+        # follow the newest content the store holds instead.
+        label="the retention cutoff is anchored to the newest content",
+        path="scripts/publication/web.py",
+        old="        newest = max(briefing.date for briefing in briefings)",
+        new="        newest = datetime.now(WEB_CONTENT_TIMEZONE).date()",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_anchor_follows_the_newest_content_not_the_clock"
+        ),
+    ),
+    Probe(
+        # The cutoff day itself is inside the window; shifting the comparison
+        # by one silently shortens the site by a day.
+        label="the cutoff day itself stays inside the window",
+        path="scripts/publication/web.py",
+        old="                if briefing_date is None or briefing_date >= cutoff:",
+        new="                if briefing_date is None or briefing_date > cutoff:",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_prunes_content_older_than_seven_days"
+        ),
+    ),
+    Probe(
+        # Deleting an expired Item a surviving Briefing still lists fails the
+        # site's forward membership check and blocks every retry.
+        label="an expired item a surviving briefing lists is kept",
+        path="scripts/publication/web.py",
+        old="                if expired and item_id not in claims and path not in current_item_paths:",
+        new="                if expired and path not in current_item_paths:",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_keeps_an_expired_item_a_living_briefing_still_claims"
+        ),
+    ),
+    Probe(
+        # A shared Briefing file carries the other publisher's fenced
+        # section; deleting the whole file destroys content this publisher
+        # does not own.
+        label="a shared expired briefing is rewritten, not deleted",
+        path="scripts/publication/web.py",
+        old='        return "rewritten", rendered.encode("utf-8"), tuple(foreign_ids)',
+        new='        return "deleted", None, ()',
+        test=(
+            "tests/test_publication_web.py"
+            "::test_expired_briefing_shared_with_the_other_publisher_keeps_their_section"
+        ),
+    ),
+    Probe(
+        # A pruned Briefing leaves a dangling reverse reference in every
+        # surviving Item unless the sweep strips it; the site rejects the
+        # pair closed from the other direction.
+        label="pruned briefings are stripped from surviving items",
+        path="scripts/publication/web.py",
+        old="                if live_refs != briefing_ids:",
+        new="                if False:",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_pruning_a_briefing_drops_it_from_surviving_items"
+        ),
+    ),
 )
 
 

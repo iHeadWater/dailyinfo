@@ -539,6 +539,33 @@ timestamps:
   failed and rolled back leaves exactly that shape); the site fails such a
   pair closed on every retry.
 
+### Rolling retention window (2026-10, Web cutover)
+
+The site is the newest seven days of intelligence, not an archive, so every
+successful publish also prunes the checkout (`DAILYINFO_WEB_WINDOW_DAYS`,
+default 7; `0` disables the sweep). The prune rides the same transaction — one
+commit, or none — and obeys four rules the site's fail-closed validation
+demands:
+
+- **The cutoff is anchored to the newest date in the canonical store, never
+  to the wall clock.** A collection outage then holds the window still and the
+  site goes slightly stale; a clock anchor would slide the window forward over
+  a stale store and empty a public site. (dailyinfo-web's sync publisher made
+  the same decision from the same scenario.)
+- **An expired Item is deleted only when no surviving Briefing still lists
+  it.** Items are reused across days, and a Briefing that references a missing
+  Item fails the whole publication closed.
+- **Pruning a Briefing strips its reference from every surviving Item file.**
+  The reverse dangling reference (`Item.briefing_ids` → missing Briefing)
+  fails the same validation; only the `briefing_ids` frontmatter line is
+  rewritten, everything else stays byte-identical.
+- **A Briefing file is shared with the sync publisher.** The sync fences its
+  section in `<!-- dailyinfo-sync:start/end -->` markers and owns every
+  `dailyinfo-…` id; pruning removes only this publisher's body and ids, keeps
+  the foreign section and ids verbatim, and deletes the file only once nothing
+  else is left in it — the mirror of the sync's own `pruneBriefing`. Foreign
+  item files (`dailyinfo-…-{date}.md`) are never sweep candidates.
+
 Before any commit, the publisher runs `npm run validate`, `npm run test`,
 `npm run check`, and `npm run build` in the target checkout. It stages only its
 generated paths, creates at most one ordinary `DailyInfo Bot` commit per
