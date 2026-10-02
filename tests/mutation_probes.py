@@ -941,11 +941,37 @@ PROBES: tuple[Probe, ...] = (
         # site's forward membership check and blocks every retry.
         label="an expired item a surviving briefing lists is kept",
         path="scripts/publication/web.py",
-        old="                if expired and item_id not in claims and path not in current_item_paths:",
-        new="                if expired and path not in current_item_paths:",
+        old="                if expired and item_id not in claims and path not in reserved:",
+        new="                if expired and path not in reserved:",
         test=(
             "tests/test_publication_web.py"
             "::test_window_keeps_an_expired_item_a_living_briefing_still_claims"
+        ),
+    ),
+    Probe(
+        # The transaction must not delete what it is writing: a reconciled
+        # Item the sweep also planned to delete breaks rollback (expected
+        # content vs. absent file) and leaves the worktree dirty.
+        label="a path the transaction is writing is never deleted",
+        path="scripts/publication/web.py",
+        old="                if expired and item_id not in claims and path not in reserved:",
+        new="                if expired and item_id not in claims:",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_deletion_rolls_back_with_the_transaction"
+        ),
+    ),
+    Probe(
+        # A rewritten shared Briefing still exists at its path but claims only
+        # the ids it still lists; keeping item references on bare file
+        # existence deadlocks the site's reverse membership check.
+        label="a rewritten shared briefing stops claiming the items it dropped",
+        path="scripts/publication/web.py",
+        old="                    if item_id in claims_by_briefing.get(ref, frozenset())",
+        new="                    if ref in claims_by_briefing",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_strips_a_rewritten_shared_briefing_from_its_items"
         ),
     ),
     Probe(

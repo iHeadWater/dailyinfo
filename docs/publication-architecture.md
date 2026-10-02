@@ -558,17 +558,32 @@ demands:
   the same decision from the same scenario.)
 - **An expired Item is deleted only when no surviving Briefing still lists
   it.** Items are reused across days, and a Briefing that references a missing
-  Item fails the whole publication closed.
+  Item fails the whole publication closed. A Briefing claims only what its
+  *surviving* `item_ids` list — one rewritten around this publisher's part
+  claims only the other publisher's ids, not what its path exists to suggest.
 - **Pruning a Briefing strips its reference from every surviving Item file.**
-  The reverse dangling reference (`Item.briefing_ids` → missing Briefing)
-  fails the same validation; only the `briefing_ids` frontmatter line is
-  rewritten, everything else stays byte-identical.
+  The reverse dangling reference (`Item.briefing_ids` → missing Briefing, or
+  → a Briefing that no longer lists the Item) fails the same validation; only
+  the `briefing_ids` frontmatter line is rewritten, everything else stays
+  byte-identical.
+- **The transaction never deletes a path it is writing.** The publication's
+  own Briefing and Items, and any file the reconciliation branch rewrote, are
+  excluded from deletion (they may still have their references reconciled);
+  their removal, when due, happens on a later transaction.
 - **A Briefing file is shared with the sync publisher.** The sync fences its
   section in `<!-- dailyinfo-sync:start/end -->` markers and owns every
   `dailyinfo-…` id; pruning removes only this publisher's body and ids, keeps
   the foreign section and ids verbatim, and deletes the file only once nothing
   else is left in it — the mirror of the sync's own `pruneBriefing`. Foreign
   item files (`dailyinfo-…-{date}.md`) are never sweep candidates.
+
+The mirror image is not yet implemented on the write path: publishing a
+Briefing replaces the whole file, so re-publishing a date the sync has already
+written into would drop its ids and fail the site's reverse check until its
+content ages out. The cutover sequence keeps the two publishers off the same
+date (the sync is retired and its generated content removed before this
+publisher's first production run), and the shared-file handling above keeps
+the *prune* side safe regardless.
 
 Before any commit, the publisher runs `npm run validate`, `npm run test`,
 `npm run check`, and `npm run build` in the target checkout. It stages only its

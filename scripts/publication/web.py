@@ -534,7 +534,9 @@ class WebPublisher:
             # own files are already on disk) and rides the same transaction:
             # the prune is committed and pushed together with the publish, or
             # rolls back with it.
-            retention_rewrites, retention_deletions = self._plan_retention(publication)
+            retention_rewrites, retention_deletions = self._plan_retention(
+                publication, set(desired)
+            )
             for path, content in retention_rewrites.items():
                 # A rewritten path may be one the publication just wrote; the
                 # rollback snapshot must stay the pre-transaction bytes.
@@ -872,31 +874,29 @@ class WebPublisher:
         return newest - timedelta(days=self.config.window_days - 1)
 
     def _plan_retention(
-        self, publication: PublicationBundle
+        self, publication: PublicationBundle, reserved: set[Path]
     ) -> tuple[dict[Path, bytes], list[Path]]:
         """Plan the (rewrites, deletions) that fall out of the window.
 
         Runs after the publication's own files are on disk, so membership is
-        read from the state the site will actually see.  The publication's
-        own Briefing and Items are never candidates: a deliberate backfill of
-        an old date must not delete itself in the same transaction.
+        read from the state the site will actually see.  ``reserved`` holds
+        every path the transaction is already writing (the publication's own
+        files and its reconciliation writes): those are never deleted -- a
+        deliberate backfill of an old date must not delete itself, and a
+        reconciled file must stay for the rollback to restore -- though their
+        references are still reconciled against the surviving Briefings.
         """
 
         cutoff = self._retention_cutoff()
         if cutoff is None:
             return {}, []
-        current_briefing_path = self._briefing_path(publication)
-        current_item_paths = {
-            self._item_path(item.category, item.id) for item in publication.items
-        }
-
         rewrites: dict[Path, bytes] = {}
         deletions: list[Path] = []
         surviving_ids: dict[Path, tuple[str, ...]] = {}
         briefing_root = self.config.repo_path / self.config.managed_briefings_dir
         if briefing_root.exists():
             for path in sorted(briefing_root.rglob("*.md")):
-                if not path.is_file() or path == current_briefing_path:
+                if not path.is_file() or path in reserved:
                     continue
                 briefing_date = _briefing_date_from_path(path)
                 if briefing_date is None or briefing_date >= cutoff:
@@ -909,21 +909,26 @@ class WebPublisher:
                     surviving_ids[path] = remaining
 
         # An Item is only ever referenced by a Briefing that survives, so the
-        # claim set has to reflect the post-prune briefing state below.
-        claims: set[str] = set()
-        live_briefing_ids: set[str] = set()
+        # claim set has to reflect the post-prune briefing state below -- and
+        # a rewritten Briefing claims only what it still lists, not what its
+        # path exists to suggest.
+        claims_by_briefing: dict[str, frozenset[str]] = {}
         if briefing_root.exists():
             deleted = set(deletions)
             for path in sorted(briefing_root.rglob("*.md")):
                 if not path.is_file() or path in deleted:
                     continue
                 briefing_id = _briefing_id_from_path(path)
-                if briefing_id is not None:
-                    live_briefing_ids.add(briefing_id)
+                if briefing_id is None:
+                    continue
                 if path in surviving_ids:
-                    claims.update(surviving_ids[path])
+                    ids = surviving_ids[path]
                 else:
-                    claims.update(self._briefing_item_ids(path) or ())
+                    ids = self._briefing_item_ids(path) or ()
+                claims_by_briefing[briefing_id] = frozenset(ids)
+        claims: set[str] = set()
+        for ids in claims_by_briefing.values():
+            claims.update(ids)
 
         items_root = self.config.repo_path / self.config.managed_items_dir
         if items_root.exists():
@@ -937,13 +942,14 @@ class WebPublisher:
                 expired = (
                     _parse_date_prefix(published_at, "published_at", path) < cutoff
                 )
-                # The transaction must not delete what it is publishing (a
-                # deliberate backfill of an old date), but it may still clean
-                # the references the sweep is about to orphan.
-                if expired and item_id not in claims and path not in current_item_paths:
+                if expired and item_id not in claims and path not in reserved:
                     deletions.append(path)
                     continue
-                live_refs = [ref for ref in briefing_ids if ref in live_briefing_ids]
+                live_refs = [
+                    ref
+                    for ref in briefing_ids
+                    if item_id in claims_by_briefing.get(ref, frozenset())
+                ]
                 if live_refs != briefing_ids:
                     rewrites[path] = self._strip_item_membership(path, live_refs)
         return rewrites, deletions

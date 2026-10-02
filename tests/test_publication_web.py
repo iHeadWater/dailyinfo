@@ -324,17 +324,21 @@ def test_briefing_update_that_drops_an_item_keeps_other_roots_membership(tmp_pat
     an earlier data root.  Writing that store copy verbatim erased the 09-30
     membership too, and the site's reverse-membership check then blocked the
     whole category on every retry.
+
+    ``window_days=0`` isolates the reconciliation path: the retention sweep
+    reconciles dangling references for its own reason, and with the sweep
+    active it would mask this test's mutation.
     """
     repo, remote = _git_repo(tmp_path)
     root_a = PublicationStore(tmp_path / "root-a" / "publications")
-    earlier = _publisher(tmp_path, repo, remote, store=root_a)
+    earlier = _publisher(tmp_path, repo, remote, store=root_a, window_days=0)
     assert (
         earlier.publish(root_a.save(_bundle(date_value="2026-09-30")).bundle).status
         == "success"
     )
 
     root_b = PublicationStore(tmp_path / "root-b" / "publications")
-    later = _publisher(tmp_path, repo, remote, store=root_b)
+    later = _publisher(tmp_path, repo, remote, store=root_b, window_days=0)
     assert (
         later.publish(root_b.save(_bundle(date_value="2026-10-01")).bundle).status
         == "success"
@@ -414,10 +418,15 @@ def test_union_drops_a_membership_the_briefing_no_longer_lists(tmp_path):
     The pair fails the site's forward check ("lists briefing which does not
     include the item"), so keeping the recorded membership would block every
     future publish of that Item just like a missing briefing file would.
+
+    ``window_days=0`` isolates the union path: the retention sweep reconciles
+    dangling references for its own reason (the rewritten-briefing rule in
+    ``docs/publication-architecture.md``), and with the sweep active it would
+    mask this test's mutation.
     """
     repo, remote = _git_repo(tmp_path)
     store = PublicationStore(tmp_path / "publications")
-    publisher = _publisher(tmp_path, repo, remote, store=store)
+    publisher = _publisher(tmp_path, repo, remote, store=store, window_days=0)
     assert (
         publisher.publish(store.save(_bundle(date_value="2026-09-30")).bundle).status
         == "success"
@@ -763,6 +772,44 @@ def test_window_anchor_follows_the_newest_content_not_the_clock(tmp_path):
         assert _briefing_file(repo, date_value).exists(), date_value
 
 
+def _share_briefing_with_sync(repo, date_value, *, item_suffix):
+    """Leave the checkout in the state the sync publisher would produce.
+
+    Its fenced section and its minted ``dailyinfo-…`` id land in the same
+    ``YYYY/MM/DD/papers.md`` file ours wrote, and it owns a matching item
+    file.  Returns (sync_item_path, sync_block, sync_item_id).
+    """
+
+    sync_item_id = f"dailyinfo-papers-nature-{date_value}"
+    sync_block = (
+        "<!-- dailyinfo-sync:start -->\n"
+        "## Nature 简报\n\nKept verbatim.\n"
+        "<!-- dailyinfo-sync:end -->"
+    )
+    briefing = _briefing_file(repo, date_value)
+    text = briefing.read_text(encoding="utf-8")
+    ours = f'item_ids: ["papers-item-{item_suffix}"]'
+    assert ours in text
+    text = text.replace(
+        ours, f'item_ids: ["papers-item-{item_suffix}", "{sync_item_id}"]'
+    )
+    briefing.write_text(
+        text.rstrip("\n") + "\n\n" + sync_block + "\n", encoding="utf-8"
+    )
+
+    sync_item = repo / f"src/content/items/generated/papers/{sync_item_id}.md"
+    sync_item.write_text(
+        "---\n"
+        f'id: "{sync_item_id}"\n'
+        'category: "papers"\n'
+        f'briefing_ids: ["papers-{date_value}"]\n'
+        "---\n\nSync item body.\n",
+        encoding="utf-8",
+    )
+    _operator_commit(repo, f"the sync path shares the {date_value} briefing")
+    return sync_item, sync_block, sync_item_id
+
+
 def test_expired_briefing_shared_with_the_other_publisher_keeps_their_section(
     tmp_path,
 ):
@@ -781,37 +828,14 @@ def test_expired_briefing_shared_with_the_other_publisher_keeps_their_section(
     publisher = _publisher(tmp_path, repo, remote, store=store)
     _publish_days(publisher, store, ["2026-09-20"])
 
-    sync_item_id = "dailyinfo-papers-nature-2026-09-20"
-    sync_block = (
-        "<!-- dailyinfo-sync:start -->\n"
-        "## Nature 简报\n\nKept verbatim.\n"
-        "<!-- dailyinfo-sync:end -->"
-    )
-    briefing = _briefing_file(repo, "2026-09-20")
-    text = briefing.read_text(encoding="utf-8")
-    assert 'item_ids: ["papers-item-20260920"]' in text
-    text = text.replace(
-        'item_ids: ["papers-item-20260920"]',
-        f'item_ids: ["papers-item-20260920", "{sync_item_id}"]',
-    )
-    briefing.write_text(
-        text.rstrip("\n") + "\n\n" + sync_block + "\n", encoding="utf-8"
-    )
-
-    sync_item = repo / f"src/content/items/generated/papers/{sync_item_id}.md"
-    sync_item.write_text(
-        "---\n"
-        f'id: "{sync_item_id}"\n'
-        'category: "papers"\n'
-        'briefing_ids: ["papers-2026-09-20"]\n'
-        "---\n\nSync item body.\n",
-        encoding="utf-8",
+    sync_item, sync_block, sync_item_id = _share_briefing_with_sync(
+        repo, "2026-09-20", item_suffix="20260920"
     )
     sync_item_bytes = sync_item.read_bytes()
-    _operator_commit(repo, "the sync path shares the 09-20 briefing")
 
     _publish_days(publisher, store, ["2026-10-01"])
 
+    briefing = _briefing_file(repo, "2026-09-20")
     assert briefing.exists()
     pruned = briefing.read_text(encoding="utf-8")
     assert sync_block in pruned
@@ -821,6 +845,92 @@ def test_expired_briefing_shared_with_the_other_publisher_keeps_their_section(
     assert not _item_file(repo, "20260920").exists()
     assert sync_item.read_bytes() == sync_item_bytes
     assert _briefing_file(repo, "2026-10-01").exists()
+
+
+def test_window_strips_a_rewritten_shared_briefing_from_its_items(tmp_path):
+    """A rewritten (not deleted) shared Briefing stops counting as a claim.
+
+    The rewritten file still exists at its path, but its surviving item_ids
+    are the other publisher's; a reference kept on bare file existence would
+    fail the site's reverse check ("lists briefing … which does not include
+    the item") and deadlock every retry.  The reference follows the
+    surviving ids, not the path.
+    """
+
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+    _publish_days(publisher, store, ["2026-09-20"], suffix="20260920")
+    _, sync_block, _ = _share_briefing_with_sync(
+        repo, "2026-09-20", item_suffix="20260920"
+    )
+
+    # The same stable identity is collected again on 10-01: the Item
+    # outlives the shared Briefing with two recorded memberships.
+    _publish_days(publisher, store, ["2026-10-01"], suffix="20260920")
+
+    briefing = _briefing_file(repo, "2026-09-20")
+    assert briefing.exists()
+    assert sync_block in briefing.read_text(encoding="utf-8")
+    item = _item_file(repo, "20260920")
+    assert item.exists()
+    item_text = item.read_text(encoding="utf-8")
+    assert "papers-2026-10-01" in item_text
+    assert "papers-2026-09-20" not in item_text
+
+
+def test_window_deletion_rolls_back_with_the_transaction(tmp_path):
+    """A failing gate restores every file the sweep deleted.
+
+    The reconciliation branch can put an Item file into the transaction that
+    the sweep also plans to delete (the briefing dropped it, its own date is
+    outside the window, nothing claims it).  When the transaction then fails
+    -- here the first gate -- every file must be restored and the reported
+    error must be the gate's, not a rollback failure.
+    """
+
+    repo, remote = _git_repo(tmp_path)
+    store = PublicationStore(tmp_path / "publications")
+    publisher = _publisher(tmp_path, repo, remote, store=store)
+    _publish_days(publisher, store, ["2026-09-27"], suffix="20260927")
+    _publish_days(publisher, store, ["2026-10-04"], suffix="20260927")
+
+    failing_gate = (sys.executable, "-c", "raise SystemExit(1)")
+    failing = _publisher(
+        tmp_path, repo, remote, store=store, validation_commands=(failing_gate,)
+    )
+
+    # Regenerate 10-04 without the shared identity: the reconciliation branch
+    # rewrites the Item, whose own date (09-27) is now outside the window.
+    updated = store.save(_bundle(date_value="2026-10-04", suffix="20261004")).bundle
+    result = failing.publish(updated)
+
+    assert result.status == "failed"
+    assert "refusing unsafe rollback" not in (result.error or "")
+    assert _git(repo, "status", "--porcelain").stdout.strip() == ""
+    assert _item_file(repo, "20260927").exists()
+
+
+def test_web_config_pins_the_migrated_remote_and_the_window_knob(monkeypatch):
+    """The org-migrated default and the window env parsing are pinned."""
+
+    from publication.web import (
+        DEFAULT_WEB_REMOTE,
+        WebPublishError,
+        _read_window_days,
+    )
+
+    assert DEFAULT_WEB_REMOTE == "git@github.com:iHeadWater/dailyinfo-web.git"
+
+    monkeypatch.setenv("DAILYINFO_WEB_WINDOW_DAYS", "0")
+    assert _read_window_days() == 0
+    monkeypatch.setenv("DAILYINFO_WEB_WINDOW_DAYS", "3")
+    assert _read_window_days() == 3
+    monkeypatch.delenv("DAILYINFO_WEB_WINDOW_DAYS")
+    assert _read_window_days() == 7
+    monkeypatch.setenv("DAILYINFO_WEB_WINDOW_DAYS", "garbage")
+    with pytest.raises(WebPublishError, match="non-negative integer"):
+        _read_window_days()
 
 
 def test_window_keeps_an_expired_item_a_living_briefing_still_claims(tmp_path):
