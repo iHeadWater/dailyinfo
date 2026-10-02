@@ -441,8 +441,6 @@ def _looks_cut_off(content: str) -> bool:
         return True
     if stripped.endswith(("**", "*", "`", "：", ":", "，", ",")):
         return True
-    if "Today's Highlight" in stripped and stripped[-1] not in "。！？.!?)）】”’":
-        return True
     return False
 
 
@@ -582,15 +580,17 @@ def _retry_failed_items(
 
 # Regex patterns for parsing AI-generated briefing parts
 _RE_HEADER = re.compile(r"^## 📚 .+$", re.MULTILINE)
-_RE_HIGHLIGHT = re.compile(r"\n🔭 \*\*Today's? Highlight\*\*", re.IGNORECASE)
 _RE_NUMBERED = re.compile(r"^(\d+)\.\s+\*\*", re.MULTILINE)
 
 
 def _merge_briefing_parts(ds, parts: list[tuple[str, list]]) -> tuple[str, list]:
     """Merge multiple briefing parts into one cohesive document.
 
-    Strips per-batch headers, renumbers articles sequentially, and
-    collects highlight sections at the end.
+    Strips per-batch headers and renumbers articles sequentially.  The
+    parts arrive in final form: the batch-level highlight section this
+    merge used to collect (and move to the end) is gone from the prompts
+    and from here -- text outside the numbered list is kept where the
+    model put it.
 
     Returns (merged_content, all_items).
     """
@@ -601,23 +601,12 @@ def _merge_briefing_parts(ds, parts: list[tuple[str, list]]) -> tuple[str, list]
 
     all_items: list = []
     article_blocks: list[str] = []
-    highlight_blocks: list[str] = []
 
     for content, items in parts:
         all_items.extend(items)
 
-        # Split content at the highlight section
-        hl_match = _RE_HIGHLIGHT.search(content)
-        if hl_match:
-            article_part = content[: hl_match.start()]
-            highlight_part = content[hl_match.start() :].strip()
-            highlight_blocks.append(highlight_part)
-        else:
-            article_part = content
-            # Also check for placeholder-style content (no highlight)
-
         # Remove per-batch header line (## 📚 ...)
-        article_part = _RE_HEADER.sub("", article_part).strip()
+        article_part = _RE_HEADER.sub("", content).strip()
 
         # Renumber articles sequentially
         current_num = len(all_items) - len(items)
@@ -637,14 +626,6 @@ def _merge_briefing_parts(ds, parts: list[tuple[str, list]]) -> tuple[str, list]
     header = f"## 📚 {ds.display_name} 今日简报 ({DATE}) - {total}篇文章"
     merged = header + "\n\n"
     merged += "\n\n".join(article_blocks)
-
-    if highlight_blocks:
-        merged += "\n\n"
-        if len(highlight_blocks) == 1:
-            merged += highlight_blocks[0]
-        else:
-            merged += "🔭 **今日研究亮点汇总**\n\n"
-            merged += "\n\n---\n\n".join(highlight_blocks)
 
     return merged, all_items
 

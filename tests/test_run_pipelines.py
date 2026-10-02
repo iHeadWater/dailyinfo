@@ -407,11 +407,7 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
         rp,
         "call_ai",
         lambda *args, **kwargs: (
-            "## arXiv CS.AI 今日简报\n\n"
-            "1. **Recovered Paper**\n"
-            "   > 中文摘要。\n\n"
-            "🔭 **Today's Highlight**\n"
-            "恢复更新。"
+            "## arXiv CS.AI 今日简报\n\n" "1. **Recovered Paper**\n" "   > 中文摘要。\n"
         ),
     )
 
@@ -825,8 +821,13 @@ def test_merge_briefing_parts_empty_returns_empty():
 
 
 def test_merge_briefing_parts_merges_multiple_parts():
-    """Multiple parts should be merged with one header, sequential numbering,
-    and collected highlights."""
+    """Multiple parts merge under one header with sequential numbering.
+
+    Text outside the numbered list stays where the model put it.  The
+    batch-level highlight section this merge used to collect and relocate
+    under one synthesized heading is gone from the prompts, so a
+    highlight-looking tail is just part of its batch's block now.
+    """
     import run_pipelines as rp
     from datasource import Item, RSSDataSource
 
@@ -844,8 +845,7 @@ def test_merge_briefing_parts_merges_multiple_parts():
     part2_content = (
         "## 📚 Multi Source 今日简报 (2026-05-14) - 2篇文章\n\n"
         "1. **Gamma**\n   > 摘要C\n\n"
-        "2. **Delta**\n   > 摘要D\n\n"
-        "🔭 **Today's Highlight**\n亮点2"
+        "2. **Delta**\n   > 摘要D"
     )
     items1 = [
         Item(title="Alpha", date="2026-05-14"),
@@ -873,30 +873,32 @@ def test_merge_briefing_parts_merges_multiple_parts():
     # Should NOT have duplicate "1." entries
     assert merged.count("1. **") == 1
 
-    # Highlights should be collected
-    assert "亮点1" in merged
-    assert "亮点2" in merged
+    # No relocation and no synthesized highlight heading: part1's tail stays
+    # ahead of part2's articles, exactly once.
+    assert "🔭 **今日研究亮点汇总**" not in merged
+    assert merged.count("🔭 **Today's Highlight**") == 1
+    assert merged.index("亮点1") < merged.index("3. **Gamma**")
 
     # All items returned
     assert len(all_items) == 4
 
 
-def test_merge_briefing_parts_without_highlights():
-    """Parts without highlights (e.g. placeholder content) should still merge."""
+def test_merge_briefing_parts_joins_plain_parts():
+    """Single-article parts (placeholder-style content) still merge."""
     import run_pipelines as rp
     from datasource import Item, RSSDataSource
 
     ds = RSSDataSource(
-        {"name": "no_hl", "display_name": "No Highlight", "category": "papers"},
+        {"name": "plain", "display_name": "Plain Source", "category": "papers"},
         {"lookback_hours": 24},
     )
 
     part1 = (
-        "## 📚 No Highlight 今日简报 (2026-05-14) - 1篇文章\n\n"
+        "## 📚 Plain Source 今日简报 (2026-05-14) - 1篇文章\n\n"
         "1. **Paper A**\n   > 摘要"
     )
     part2 = (
-        "## 📚 No Highlight 今日简报 (2026-05-14) - 1篇文章\n\n"
+        "## 📚 Plain Source 今日简报 (2026-05-14) - 1篇文章\n\n"
         "1. **Paper B**\n   > 摘要"
     )
     items1 = [Item(title="Paper A", date="2026-05-14")]

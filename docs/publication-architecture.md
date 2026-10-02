@@ -98,7 +98,11 @@ describe, so the rendered briefing body differs from the pre-canonical one:
   `tags`) and has no slot for a batch-level paragraph, so the section cannot be
   rendered from it.  The instruction was removed from the template instead of
   being left as a request the contract forbids -- this is a deliberate
-  decision, not an omission.
+  decision, not an omission.  The merge logic that used to collect and
+  relocate such sections (and the cut-off heuristic keyed on them) was
+  removed as well, so nothing in the pipeline special-cases the section any
+  more; old source material that still contains it ages out of the Web site
+  with the retention window.
 - `code` and `resource` keep their per-project lines and section headings:
   those are rendered from structured fields (`title`, `section`), not from
   model-written Markdown.
