@@ -13,6 +13,7 @@ Run with a clean working tree: it edits files and restores them.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -154,15 +155,868 @@ PROBES: tuple[Probe, ...] = (
         new="",
         test="tests/test_freshrss_admin.py::test_ensure_subscription_inserts_missing_feed",
     ),
+    Probe(
+        # The original silent-loss bug: one failed source raised out of
+        # finalization, so the whole category went missing from both sinks.
+        label="a failed source does not take its category down",
+        path="scripts/run_pipelines.py",
+        old='        action = "partial" if collector.results else "failed"',
+        new=(
+            "        raise PublicationIntegrationError(\n"
+            '            f"{category} publication not finalized: "\n'
+            '            + "; ".join(collector.failures)\n'
+            "        )"
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_source_failure_publishes_the_successful_part"
+        ),
+    ),
+    Probe(
+        # A repeat the collector keeps makes validate_bundle reject the whole
+        # bundle, which costs the category both sinks at once.
+        label="a repeated item is dropped before the bundle is validated",
+        path="scripts/publication/pipeline.py",
+        old="            if identity.item_id in seen:",
+        new="            if False:",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_repeated_item_is_dropped_before_it_reaches_the_bundle"
+        ),
+    ),
+    Probe(
+        # Seen state never expires: committing a failed item drops it for good
+        # instead of leaving it for the next run to retry.
+        label="a failed item is not marked seen",
+        path="scripts/run_pipelines.py",
+        old="    collector.defer_seen(ds, [result.raw_item for result in published])",
+        new="    collector.defer_seen(ds, items)",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_failed_item_is_not_marked_seen"
+        ),
+    ),
+    Probe(
+        # A source that could not be fetched is absent from the bundle, so
+        # without this the gap is invisible and the run still exits 0.
+        label="a fetch failure is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old=(
+            '        collector.add_failure(f"{name}: fetch failed: {exc}")\n'
+            "        _save_placeholder(\n"
+            "            category,"
+        ),
+        new=("        _save_placeholder(\n" "            category,"),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_fetch_failure_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        # An unguarded fetch in the deep-content path aborts the category run
+        # instead of recording one source's failure.
+        label="a deep-content fetch failure is recorded, not raised",
+        path="scripts/run_pipelines.py",
+        old=(
+            '        collector.add_failure(f"{name}: fetch failed: {exc}")\n'
+            "        return 1"
+        ),
+        new="        raise",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_deep_content_fetch_failure_does_not_kill_the_category"
+        ),
+    ),
+    Probe(
+        # Without the per-run reset a gap from an earlier run in the same
+        # process keeps the exit code non-zero forever.
+        label="gaps are reset at the start of a run",
+        path="scripts/run_pipelines.py",
+        old="    PUBLICATION_GAPS = []",
+        new="    pass",
+        test=("tests/test_publication_unified.py::test_main_resets_gaps_between_runs"),
+    ),
+    Probe(
+        label="a code fetch failure is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old='            collector.add_failure(f"{ds.name}: fetch failed")',
+        new="            pass",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_code_source_fetch_failure_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        label="a resource news fetch failure is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old=(
+            '                collector.add_failure(f"{ds.name}: fetch failed: {exc}")\n'
+            "                continue"
+        ),
+        new="                continue",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_resource_news_source_fetch_failure_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        # The resume command only knows what it recovered through its own
+        # collector; without the wiring it reports success and posts nothing.
+        label="resume collects the run's own output",
+        path="scripts/resume_publication.py",
+        old="            collector=collector,",
+        new="            collector=None,",
+        test=("tests/test_resume_publication.py::test_resume_drives_the_real_dispatch"),
+    ),
+    Probe(
+        # A chunk has to be judged by the items it rendered, not by its source
+        # name: a re-run of a covered source still brings new prose.
+        label="a chunk whose own items are new reaches the merged body",
+        path="scripts/run_pipelines.py",
+        old="        if set(part.item_ids) - bundle_ids",
+        new="        if False",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_new_items_of_a_covered_source_reach_the_body"
+        ),
+    ),
+    Probe(
+        # The delta is the recovered source's chunk, not everything the run
+        # happened to render.
+        label="the resume delta carries only the resumed source",
+        path="scripts/resume_publication.py",
+        old=("        if part.source_name == source and set(part.item_ids) & added"),
+        new="        if set(part.item_ids) & added",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_posts_only_the_requested_source_chunk"
+        ),
+    ),
+    Probe(
+        # A failed write that still marks the item seen loses it for good.
+        label="a failed write does not mark the item seen",
+        path="scripts/run_pipelines.py",
+        old="    collector.defer_seen(ds, [result.raw_item for result in published])",
+        new="    collector.defer_seen(ds, [result.raw_item for result in structured_results])",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_write_failure_leaves_that_source_fetchable"
+        ),
+    ),
+    Probe(
+        # Resuming must not re-run (and re-bill) the sources it was not asked
+        # about.
+        label="a resume dispatches only the source it was given",
+        path="scripts/run_pipelines.py",
+        old=(
+            '    for source_cfg in _filter_sources(cfg, category, "scrape", "api"):\n'
+            "        ds = DataSource.create(source_cfg, defaults)\n"
+            "        if only_source is not None and ds.name != only_source:\n"
+            "            continue"
+        ),
+        new=(
+            '    for source_cfg in _filter_sources(cfg, category, "scrape", "api"):\n'
+            "        ds = DataSource.create(source_cfg, defaults)\n"
+            "        if False:\n"
+            "            continue"
+        ),
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_dispatches_only_the_requested_source"
+        ),
+    ),
+    Probe(
+        # The delta is what the merge kept, not what the run rendered.
+        label="the resume delta is what the merge kept",
+        path="scripts/resume_publication.py",
+        old="        if part.source_name == source and set(part.item_ids) & added",
+        new="        if part.source_name == source",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_does_not_post_a_chunk_the_merge_dropped"
+        ),
+    ),
+    Probe(
+        # Without the force override, a low-frequency source is skipped by its
+        # own recent archive and a resume silently does nothing.
+        label="force bypasses the low-frequency skip",
+        path="scripts/run_pipelines.py",
+        old=(
+            "    if _is_forced(name):\n"
+            "        return False\n"
+            "    pushed_dir = PUSHED_DIR / category"
+        ),
+        new=(
+            "    if False:\n"
+            "        return False\n"
+            "    pushed_dir = PUSHED_DIR / category"
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_force_bypasses_the_low_frequency_skip"
+        ),
+    ),
+    Probe(
+        # Without the seed, a chunk mixing an already-published item with a new
+        # one is appended whole and duplicates the old item's prose.
+        label="the run is seeded with what the day already carries",
+        path="scripts/run_pipelines.py",
+        old=(
+            '        log(f"  [publication] cannot read {category}-{DATE} for seeding: {exc}")\n'
+            "        return set()\n"
+            "    return {item.id for item in bundle.items}"
+        ),
+        new=(
+            '        log(f"  [publication] cannot read {category}-{DATE} for seeding: {exc}")\n'
+            "        return set()\n"
+            "    return set()"
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_refetched_published_item_is_not_rendered_again"
+        ),
+    ),
+    Probe(
+        # Conservatively matching any "⚠️" lets a notice replace a real
+        # briefing that happens to mention one.
+        label="a notice does not overwrite a real briefing",
+        path="scripts/run_pipelines.py",
+        old="    if existing and not _is_placeholder_text(existing):",
+        new="    if False:",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_notice_does_not_overwrite_a_real_briefing"
+        ),
+    ),
+    Probe(
+        # An unopenable database used to look exactly like an empty fetch.
+        label="an unopenable FreshRSS DB is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old=(
+            "            publication_collector.add_failure(\n"
+            '                f"{category}: cannot open the FreshRSS DB ({e})"\n'
+            "            )"
+        ),
+        new="            pass",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_an_unopenable_freshrss_db_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        # A source with no type is "known" but never dispatched, so a resume
+        # would report a successful no-op.
+        label="resume rejects a source it cannot dispatch",
+        path="scripts/resume_publication.py",
+        old='        and source.get("type") in ("rss", "scrape", "api")',
+        new="        and True",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_rejects_a_source_it_cannot_dispatch"
+        ),
+    ),
+    Probe(
+        # Returning on the first failure skipped the delivery of the part that
+        # had already merged.
+        label="a partial resume still delivers what merged",
+        path="scripts/resume_publication.py",
+        old="    elif delta:",
+        new="    elif delta and not collector.failures:",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_delivers_the_part_that_merged_before_reporting_failure"
+        ),
+    ),
+    Probe(
+        # Without the lock two writers load the same base and one contribution
+        # is lost.
+        label="the store lock excludes a second writer",
+        path="scripts/run_pipelines.py",
+        old=(
+            "                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "                break"
+        ),
+        new="                pass\n                break",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_the_store_lock_excludes_a_second_writer"
+        ),
+    ),
+    Probe(
+        # Without the void, a briefing that gained content after delivery stays
+        # "success" and neither sink ever sends it.
+        label="a merged briefing is delivered again",
+        path="scripts/run_pipelines.py",
+        old="                for sink in _void_delivery_state(publication_id):",
+        new="                for sink in []:",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_merged_briefing_is_actually_delivered"
+        ),
+    ),
+    Probe(
+        # Voiding an unchanged briefing queues a full repost for nothing.
+        label="an unchanged re-publication is not voided",
+        path="scripts/run_pipelines.py",
+        old="            if existing is not None and _content_changed(existing, bundle):",
+        new="            if existing is not None:",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_an_unchanged_briefing_stays_delivered"
+        ),
+    ),
+    Probe(
+        # Without the attempt check, a send that started before a merge records
+        # its pre-merge outcome and the tombstone is gone.
+        label="an in-flight send cannot overwrite a merge",
+        path="scripts/publication/publishers.py",
+        old="        self.store.record_result(result, expected=pending)",
+        new="        self.store.record_result(result)",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_an_inflight_send_cannot_overwrite_a_merge"
+        ),
+    ),
+    Probe(
+        # A void that failed silently leaves the day marked delivered forever.
+        label="a failed void is recorded as a gap",
+        path="scripts/run_pipelines.py",
+        old='            log(f"  [delivery] could not void {briefing_id}:{sink}: {exc}")\n            failed.append(sink)',
+        new='            log(f"  [delivery] could not void {briefing_id}:{sink}: {exc}")',
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_void_failure_is_recorded_as_a_gap"
+        ),
+    ),
+    Probe(
+        # Resume's own record write is the one sink write that could bypass the
+        # attempt check, so a merge landing mid-send was erased by it.
+        label="the resume delta records its own attempt",
+        path="scripts/resume_publication.py",
+        old="            expected=pending,\n        )",
+        new="        )",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_a_merge_during_the_resume_send_wins"
+        ),
+    ),
+    Probe(
+        # A resume that merged everything but delivered nothing must not report
+        # success: the day still has no Discord content.
+        label="a resume reports a delivery that is still missing",
+        path="scripts/resume_publication.py",
+        old="        if missing:",
+        new="        if False:",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_signals_a_delivery_that_is_still_missing"
+        ),
+    ),
+    Probe(
+        # A delta cannot speak for content another writer merged while the
+        # resume was working; claiming it loses that content.
+        label="a resume does not claim a day another writer extended",
+        path="scripts/resume_publication.py",
+        old="    if delta and carries_the_day and uncovered:",
+        new="    if False:",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_does_not_claim_a_day_another_writer_extended"
+        ),
+    ),
+    Probe(
+        # Counting a transport failure as "skipped" reported the day as
+        # delivered and exited 0.
+        label="a failed send is counted as failed",
+        path="scripts/push_to_discord.py",
+        old=(
+            "                failed += 1\n"
+            '                detail = f": {result.error}" if result.error else ""'
+        ),
+        new=(
+            "                pass\n"
+            '                detail = f": {result.error}" if result.error else ""'
+        ),
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_push_reports_a_failed_send_as_failed"
+        ),
+    ),
+    Probe(
+        # The coverage check ran before the Web render; a co-writer merging in
+        # that window was adopted by begin_attempt and claimed as delivered.
+        label="coverage is re-checked right before the send",
+        path="scripts/resume_publication.py",
+        old="    if current - covered_ids:",
+        new="    if False:",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_rechecks_coverage_right_before_posting"
+        ),
+    ),
+    Probe(
+        # The refusal path refreshes the one sink that can be repaired without
+        # another command; dropping it leaves the site stale and silent.
+        label="a refused resume still refreshes the Web sink",
+        path="scripts/resume_publication.py",
+        old=(
+            "        # The site renders the whole bundle, so refreshing it here "
+            "is safe and\n"
+            "        # useful even though Discord cannot be claimed.\n"
+            "        _publish_web(category)"
+        ),
+        new="        pass",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_resume_does_not_claim_a_day_another_writer_extended"
+        ),
+    ),
+    Probe(
+        # Joining an item's lines with the item separator puts a blank line
+        # between a title and its quote, which Discord renders as two blocks.
+        label="an item's title and quote stay together",
+        path="scripts/run_pipelines.py",
+        old='        blocks.append("\\n".join(lines))',
+        new='        blocks.append("\\n\\n".join(lines))',
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_rendered_items_keep_the_title_and_its_quote_together"
+        ),
+    ),
+    Probe(
+        # An unreadable store used to escape as a traceback from mid-command.
+        label="an unreadable store is reported, not raised",
+        path="scripts/resume_publication.py",
+        old='    except Exception as exc:\n        log(f"cannot read {briefing_id}: {exc}")\n        return None',
+        new="    except Exception as exc:\n        raise",
+        test=(
+            "tests/test_resume_publication.py"
+            "::test_the_helper_reports_an_unreadable_store_instead_of_raising"
+        ),
+    ),
+    Probe(
+        # A gap that does not reach the exit code is a gap cron cannot see.
+        label="a canonical gap keeps the run non-zero",
+        path="scripts/run_pipelines.py",
+        old=(
+            "0 if total_saved > 0 and failed_pipelines == 0 "
+            "and not PUBLICATION_GAPS else 1"
+        ),
+        new="0 if total_saved > 0 and failed_pipelines == 0 else 1",
+        test=(
+            "tests/test_publication_unified.py"
+            "::test_a_canonical_gap_makes_run_exit_nonzero"
+        ),
+    ),
+    Probe(
+        # Folding failed sources into "missing" (or dropping the count) was
+        # the shape of the old summary; the point of this one is that a
+        # source that failed is named as failed, not just absent.
+        label="the summary lists the sources that failed to fetch or summarize",
+        path="scripts/push_to_discord.py",
+        old='                f"⚠️ 抓取或摘要失败 ({len(failed_list)}):",',
+        new='                f"⚠️ 抓取或摘要失败:",',
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_build_push_summary_lists_failed_sources_apart_from_missing"
+        ),
+    ),
+    Probe(
+        # Posting the summary outside the success gate would double it on
+        # every later run of the day (skipped deliveries included).
+        label="the source summary is only posted by the run that delivered",
+        path="scripts/push_to_discord.py",
+        old='            if result.status == "success" and category in SUMMARY_CATEGORIES:',
+        new="            if category in SUMMARY_CATEGORIES:",
+        test=(
+            "tests/test_push_to_discord.py" "::test_no_summary_when_the_delivery_fails"
+        ),
+    ),
+    Probe(
+        # The archive consumes the day's evidence; a forced redelivery that
+        # rescans it reports every bundle-less source as "missing" and
+        # overwrites the good sidecar with that.
+        label="an archived day is not rescanned for the summary",
+        path="scripts/push_to_discord.py",
+        old="                if not already_archived:",
+        new="                if True:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_forced_redelivery_does_not_rescan_an_archived_day"
+        ),
+    ),
+    Probe(
+        # A delivered day must not re-post its summary on every forced
+        # redelivery: the record's posted flag is what keeps it silent.
+        label="an archived day does not re-post a delivered summary",
+        path="scripts/push_to_discord.py",
+        old="                    elif record.summary_posted:",
+        new="                    elif False:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_forced_redelivery_does_not_rescan_an_archived_day"
+        ),
+    ),
+    Probe(
+        # The record also carries the repair path: a summary that never went
+        # out is rebuilt from it instead of staying missing forever.
+        label="a summary that never went out is repaired from the record",
+        path="scripts/push_to_discord.py",
+        old="                    if record is None:",
+        new="                    if True:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_missing_summary_is_repaired_by_a_forced_redelivery"
+        ),
+    ),
+    Probe(
+        # The retry rides the same relaxed contract as the first call; a
+        # digest that only arrived on the retry must not be rejected by a
+        # stricter parse and degrade to a placeholder.
+        label="the deep-content retry keeps the relaxed contract",
+        path="scripts/run_pipelines.py",
+        old="                    allow_literal_newlines=True,",
+        new="                    allow_literal_newlines=False,",
+        test=(
+            "tests/test_run_pipelines.py"
+            "::test_the_deep_content_retry_keeps_markdown_in_the_summary"
+        ),
+    ),
+    Probe(
+        # A repair that cannot render (config broken after delivery) used to
+        # exit 0 with no summary and no record of why.
+        label="a repair without a readable config is reported",
+        path="scripts/push_to_discord.py",
+        old='        errors.append("来源配置不可读，来源总结无法生成")',
+        new="        pass",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_repair_without_a_readable_config_is_reported"
+        ),
+    ),
+    Probe(
+        # The header must count what the list renders: a stored record can
+        # name a source the config no longer has.
+        label="the summary header counts the rendered list",
+        path="scripts/push_to_discord.py",
+        old="    pushed_list = [n for n in configured_names if n in pushed_set]",
+        new="    pushed_list = list(pushed_set)",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_the_summary_count_reflects_the_rendered_list"
+        ),
+    ),
+    Probe(
+        # A record with an unknown status value must be dropped whole; kept,
+        # the row silently disappears from every bucket.
+        label="an untrusted source-status record is dropped",
+        path="scripts/push_to_discord.py",
+        old=(
+            '            or row.get("status")'
+            ' not in ("pushed", "no_update", "failed", "missing")'
+        ),
+        new="            or False",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_malformed_source_status_record_is_not_used"
+        ),
+    ),
+    Probe(
+        # Same defect class as the scan and archive read sites: an unreadable
+        # leftover in the bundleless branch used to raise out of main() and
+        # kill every later category.
+        label="an unreadable leftover counts as a real pending file",
+        path="scripts/push_to_discord.py",
+        old="        except (OSError, UnicodeDecodeError):",
+        new="        except OSError:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_non_utf8_leftover_does_not_crash_a_bundleless_category"
+        ),
+    ),
+    Probe(
+        # The handler itself used to raise (one_line without its secret
+        # argument), turning a reported failure into a mislabelled delivery
+        # failure -- the exact shape this branch's reviews keep finding.
+        label="the sidecar writer reports its own failure",
+        path="scripts/push_to_discord.py",
+        old="源状态文件写入失败: {one_line(str(exc), DISCORD_BOT_TOKEN)}",
+        new="源状态文件写入失败: {one_line(str(exc))}",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_real_sidecar_write_error_is_reported_not_raised"
+        ),
+    ),
+    Probe(
+        # The two marker tuples live in different modules and are kept in
+        # sync by hand; a rename on either side must fail this test rather
+        # than silently reclassify failed sources as missing.
+        label="the failure markers stay in sync with the run notices",
+        path="scripts/push_to_discord.py",
+        old='    ("⚠️ 获取失败", "fetch_failed"),',
+        new='    ("⚠️ 取回失败", "fetch_failed"),',
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_failure_markers_match_the_run_notices"
+        ),
+    ),
+    Probe(
+        # A low-frequency source the run skipped has no file today; without
+        # the lookback check the summary reports it as a missing briefing.
+        label="a low-frequency skip reads as no_update, not missing",
+        path="scripts/push_to_discord.py",
+        old=(
+            "            if lookback > 24 and "
+            "_pushed_within_lookback(category, name, lookback):"
+        ),
+        new="            if False:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_low_frequency_source_skipped_by_the_run_reads_as_no_update"
+        ),
+    ),
+    Probe(
+        # An unreadable config used to vanish the summary silently: no
+        # message, no sidecar, exit 0.
+        label="an unreadable source config is reported",
+        path="scripts/push_to_discord.py",
+        old="    if not statuses:",
+        new="    if False:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_a_sources_config_failure_is_reported"
+        ),
+    ),
+    Probe(
+        # The deep-content contract asks for multi-line Markdown; without
+        # strict=False a literal newline in the JSON string loses the digest
+        # to a retry that produces the same bytes.
+        label="a literal newline inside the summary still parses",
+        path="scripts/publication/pipeline.py",
+        old="json.loads(_strip_json_fence(raw), strict=not allow_literal_newlines)",
+        new="json.loads(_strip_json_fence(raw))",
+        test=(
+            "tests/test_publication_pipeline.py"
+            "::test_a_literal_newline_inside_the_summary_parses"
+        ),
+    ),
+    Probe(
+        # The legacy Markdown files are archived at delivery, so the bundle is
+        # the only surviving record of which sources had content.
+        label="the pushed list comes from the canonical bundle",
+        path="scripts/push_to_discord.py",
+        old="    pushed = {item.source.name for item in bundle.items}",
+        new="    pushed = set()",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_the_summary_counts_a_source_whose_file_was_archived"
+        ),
+    ),
+    Probe(
+        # An empty sidecar still parses; only the row assertion catches a
+        # writer that stopped recording the sources.
+        label="the source-status sidecar records a row per source",
+        path="scripts/push_to_discord.py",
+        old='        "sources": [status.to_dict() for status in statuses],',
+        new='        "sources": [],',
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_the_source_status_sidecar_records_every_source"
+        ),
+    ),
+    Probe(
+        # Relaxing the wrong call site (or all of them) would let model
+        # Markdown leak into papers/code summaries, which the renderers there
+        # do not expect; only the deep-content call may keep it.
+        label="the deep-content prompt keeps Markdown inside the summary",
+        path="scripts/run_pipelines.py",
+        old=(
+            "        prompt = structured_prompt("
+            "base, entries, [ref], markdown_summary=True)"
+        ),
+        new="        prompt = structured_prompt(base, entries, [ref])",
+        test=(
+            "tests/test_run_pipelines.py"
+            "::test_only_the_deep_content_prompt_keeps_markdown_in_the_summary"
+        ),
+    ),
+    Probe(
+        # The site files Items by the date prefix of published_at, and the
+        # production window runs before 08:00 Shanghai, when UTC is still the
+        # previous day; a UTC representation empties the site's latest day.
+        label="Web timestamps are represented in the content timezone",
+        path="scripts/publication/web.py",
+        old=(
+            "    return datetime.fromisoformat(text)"
+            ".astimezone(WEB_CONTENT_TIMEZONE).isoformat()"
+        ),
+        new="    return datetime.fromisoformat(text).isoformat()",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_item_date_prefix_matches_the_briefing_date_in_the_pre_dawn_window"
+        ),
+    ),
+    Probe(
+        # The checkout is the durable membership record; content imported
+        # from an earlier data root lives only there.  Without the merge, a
+        # re-published identity stripped the older Briefing's back-reference
+        # and the site's bidirectional validation failed the category closed.
+        label="a re-published Item keeps the checkout's recorded membership",
+        path="scripts/publication/web.py",
+        old="            membership |= set(self._recorded_briefing_ids(path))",
+        new="            pass",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_republish_viewed_from_a_later_data_root_preserves_membership"
+        ),
+    ),
+    Probe(
+        # The reconciliation path removes the Item from ONE briefing.  Not
+        # discarding that briefing's membership lets it survive into the
+        # file, whose Briefing no longer lists the Item -- the mirror-image
+        # validation failure that blocks the category on every retry.
+        label="a reconciliation removes only its own briefing's membership",
+        path="scripts/publication/web.py",
+        old="            membership.discard(excluding)",
+        new="            pass",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_briefing_update_that_drops_an_item_keeps_other_roots_membership"
+        ),
+    ),
+    Probe(
+        # Without the resolve check, a membership whose Briefing file is gone
+        # is preserved on every re-publish and the site's validator rejects
+        # the pair closed forever; dropping it is the only self-heal.
+        label="an unresolvable recorded membership is dropped",
+        path="scripts/publication/web.py",
+        old="            or self._briefing_still_claims(briefing_id, item.id)",
+        new="            or True",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_union_drops_a_recorded_membership_whose_briefing_file_is_gone"
+        ),
+    ),
+    Probe(
+        # The resolve check has two halves: the Briefing file exists AND it
+        # still lists the Item.  A file that dropped the Item fails the site's
+        # forward check just like a missing file; only the second half of the
+        # condition catches it.
+        label="a Briefing that dropped the Item no longer counts as a claim",
+        path="scripts/publication/web.py",
+        old="        return claims is not None and item_id in claims",
+        new="        return claims is not None",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_union_drops_a_membership_the_briefing_no_longer_lists"
+        ),
+    ),
+    Probe(
+        # A wall-clock anchor slides the window forward over a stale store --
+        # the exact outage that empties a public site.  The cutoff has to
+        # follow the newest content the store holds instead.
+        label="the retention cutoff is anchored to the newest content",
+        path="scripts/publication/web.py",
+        old="        newest = max(briefing.date for briefing in briefings)",
+        new="        newest = datetime.now(WEB_CONTENT_TIMEZONE).date()",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_anchor_follows_the_newest_content_not_the_clock"
+        ),
+    ),
+    Probe(
+        # The cutoff day itself is inside the window; shifting the comparison
+        # by one silently shortens the site by a day.
+        label="the cutoff day itself stays inside the window",
+        path="scripts/publication/web.py",
+        old="                if briefing_date is None or briefing_date >= cutoff:",
+        new="                if briefing_date is None or briefing_date > cutoff:",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_prunes_content_older_than_seven_days"
+        ),
+    ),
+    Probe(
+        # Deleting an expired Item a surviving Briefing still lists fails the
+        # site's forward membership check and blocks every retry.
+        label="an expired item a surviving briefing lists is kept",
+        path="scripts/publication/web.py",
+        old="                if expired and item_id not in claims and path not in reserved:",
+        new="                if expired and path not in reserved:",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_keeps_an_expired_item_a_living_briefing_still_claims"
+        ),
+    ),
+    Probe(
+        # The transaction must not delete what it is writing: a reconciled
+        # Item the sweep also planned to delete breaks rollback (expected
+        # content vs. absent file) and leaves the worktree dirty.
+        label="a path the transaction is writing is never deleted",
+        path="scripts/publication/web.py",
+        old="                if expired and item_id not in claims and path not in reserved:",
+        new="                if expired and item_id not in claims:",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_deletion_rolls_back_with_the_transaction"
+        ),
+    ),
+    Probe(
+        # A rewritten shared Briefing still exists at its path but claims only
+        # the ids it still lists; keeping item references on bare file
+        # existence deadlocks the site's reverse membership check.
+        label="a rewritten shared briefing stops claiming the items it dropped",
+        path="scripts/publication/web.py",
+        old="                    if item_id in claims_by_briefing.get(ref, frozenset())",
+        new="                    if ref in claims_by_briefing",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_strips_a_rewritten_shared_briefing_from_its_items"
+        ),
+    ),
+    Probe(
+        # A shared Briefing file carries the other publisher's fenced
+        # section; deleting the whole file destroys content this publisher
+        # does not own.
+        label="a shared expired briefing is rewritten, not deleted",
+        path="scripts/publication/web.py",
+        old='        return "rewritten", rendered.encode("utf-8"), tuple(foreign_ids)',
+        new='        return "deleted", None, ()',
+        test=(
+            "tests/test_publication_web.py"
+            "::test_expired_briefing_shared_with_the_other_publisher_keeps_their_section"
+        ),
+    ),
+    Probe(
+        # A pruned Briefing leaves a dangling reverse reference in every
+        # surviving Item unless the sweep strips it; the site rejects the
+        # pair closed from the other direction.
+        label="pruned briefings are stripped from surviving items",
+        path="scripts/publication/web.py",
+        old="                if live_refs != briefing_ids:",
+        new="                if False:",
+        test=(
+            "tests/test_publication_web.py"
+            "::test_window_pruning_a_briefing_drops_it_from_surviving_items"
+        ),
+    ),
 )
 
 
-def _run_test(node: str) -> int:
-    return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", node],
+def _run_test(node: str) -> tuple[int, str]:
+    """Run one test under a mutation; return its exit code and output.
+
+    The output matters: pytest exits 4 for a test that no longer exists, and
+    treating any non-zero exit as "the mutation turned it red" would report a
+    probe as working when its test was renamed or deleted.
+    """
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--tb=no", "-rf", node],
         cwd=REPO_ROOT,
         capture_output=True,
-    ).returncode
+        text=True,
+    )
+    return completed.returncode, completed.stdout + completed.stderr
 
 
 def _working_tree_changes() -> str:
@@ -203,14 +1057,15 @@ def main() -> int:
 
         try:
             target.write_text(original.replace(probe.old, probe.new), encoding="utf-8")
-            returncode = _run_test(probe.test)
+            returncode, output = _run_test(probe.test)
         finally:
             target.write_text(original, encoding="utf-8")
 
-        if returncode == 0:
+        if returncode == 0 or not re.search(r"\b\d+ (failed|error)", output):
             failures.append(
-                f"{probe.label}: {probe.test} passed against the broken code, "
-                "so it does not guard this"
+                f"{probe.label}: {probe.test} did not fail under the mutation "
+                f"(exit {returncode}): it either passed, or the test it names is "
+                "gone"
             )
         else:
             print(f"ok    {probe.label}")

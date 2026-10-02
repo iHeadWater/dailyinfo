@@ -31,7 +31,9 @@ def test_find_cache_files_for_url_recurses_nested_cache_dirs(tmp_path):
     spc = nested / "nested.spc"
     spc.write_text("serialized rss.arxiv.org/rss/cs.AI cache", encoding="utf-8")
 
-    assert find_cache_files_for_url(tmp_path / "cache", "https://rss.arxiv.org/rss/cs.AI") == [spc]
+    assert find_cache_files_for_url(
+        tmp_path / "cache", "https://rss.arxiv.org/rss/cs.AI"
+    ) == [spc]
 
 
 def test_delete_cache_files_returns_removed_count(tmp_path):

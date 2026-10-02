@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 import tomllib
 from datetime import datetime
 from pathlib import Path
@@ -219,10 +218,69 @@ def test_push_forwards_date_argument(cli_mod):
     assert push_calls[-1][-2:] == ["--date", "2026-04-22"]
 
 
+def test_push_forwards_force_argument(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["push", "--force"])
+    assert result.exit_code == 0
+
+    calls = cli_mod.__test_calls__
+    push_calls = [c for c in calls if any("push_to_discord.py" in part for part in c)]
+    assert push_calls
+    assert push_calls[-1][-1] == "--force"
+
+
 def test_push_rejects_invalid_date(cli_mod):
     result = CliRunner().invoke(cli_mod.cli, ["push", "--date", "yesterday"])
     assert result.exit_code == 2
     assert "YYYY-MM-DD" in result.output
+
+
+def test_publish_forwards_web_options(cli_mod):
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        [
+            "publish",
+            "--sink",
+            "web",
+            "--date",
+            "2026-04-22",
+            "--categories",
+            "papers,arxiv",
+            "--force",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    calls = cli_mod.__test_calls__
+    web_calls = [c for c in calls if any("publish_to_web.py" in part for part in c)]
+    assert web_calls
+    assert web_calls[-1][-5:] == [
+        "--date",
+        "2026-04-22",
+        "--categories",
+        "papers,arxiv",
+        "--force",
+    ]
+
+
+def test_publish_all_attempts_each_sink_and_returns_failure_if_one_fails(
+    cli_mod, monkeypatch
+):
+    calls = []
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append(list(cmd))
+        failed = any("publish_to_web.py" in part for part in cmd)
+        return _FakeCompleted(returncode=1 if failed else 0)
+
+    monkeypatch.setattr(cli_mod.subprocess, "run", fake_run)
+    result = CliRunner().invoke(cli_mod.cli, ["publish", "--sink", "all"])
+
+    assert result.exit_code == 1
+    assert any(
+        any("push_to_discord.py" in part for part in command) for command in calls
+    )
+    assert any(
+        any("publish_to_web.py" in part for part in command) for command in calls
+    )
 
 
 def test_start_fails_when_compose_missing(cli_mod, tmp_path, monkeypatch):
@@ -383,7 +441,9 @@ def test_cache_clear_refresh_runs_actualize_script(cli_mod, monkeypatch):
 
     cache_dir = FRESHRSS_DATA / "cache"
     cache_dir.mkdir(parents=True)
-    (cache_dir / "arxiv.spc").write_text("https://rss.arxiv.org/rss/cs.AI", encoding="utf-8")
+    (cache_dir / "arxiv.spc").write_text(
+        "https://rss.arxiv.org/rss/cs.AI", encoding="utf-8"
+    )
 
     calls = []
 

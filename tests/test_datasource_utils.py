@@ -124,9 +124,7 @@ def test_beijing_now_ignores_utc_host_timezone(monkeypatch):
 
         assert now == real_datetime(2026, 5, 27, 7, 44)
         assert now.tzinfo is None
-        assert datasource._is_expired_deadline(
-            real_datetime(2026, 5, 26, 0, 0)
-        ) is True
+        assert datasource._is_expired_deadline(real_datetime(2026, 5, 26, 0, 0)) is True
     finally:
         if previous_tz is None:
             monkeypatch.delenv("TZ")
@@ -142,9 +140,7 @@ def test_dlut_recruitment_deadline_expiry_rules(monkeypatch):
     import datasource
     from datasource import _is_expired_deadline
 
-    monkeypatch.setattr(
-        datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0)
-    )
+    monkeypatch.setattr(datasource, "NOW", datetime.datetime(2026, 5, 27, 7, 44, 0))
 
     assert _is_expired_deadline(datetime.datetime(2026, 5, 26, 0, 0, 0)) is True
     assert _is_expired_deadline(datetime.datetime(2026, 5, 27, 0, 0, 0)) is False

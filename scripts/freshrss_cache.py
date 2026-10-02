@@ -140,7 +140,9 @@ def reset_zero_result(state_dir: Path, source_name: str) -> None:
         pass
 
 
-def refresh_freshrss(container: str = "dailyinfo_freshrss") -> subprocess.CompletedProcess:
+def refresh_freshrss(
+    container: str = "dailyinfo_freshrss",
+) -> subprocess.CompletedProcess:
     """Trigger FreshRSS feed refresh inside the container."""
     return subprocess.run(
         [

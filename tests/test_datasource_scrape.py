@@ -39,6 +39,7 @@ def test_github_trending_parses_items(fake_requests):
     assert first.extra["language"] == "Python"
     assert first.extra["stars"] == "1234"
     assert first.extra["stars_today"] == "200"
+    assert "source_published_at" not in first.extra
 
     assert second.extra["full_name"] == "bob/rust-lib"
     assert second.extra["language"] == "Rust"
@@ -82,9 +83,12 @@ def test_github_trending_format_items_renders_expected_line():
 
 def test_dlut_news_parsing_filters_old_entries(fake_requests):
     from conftest import FakeResponse
+    import datasource
     from datasource import DataSource
 
-    now = datetime.now()
+    # The datasource judges recency in its own timezone; a host-local clock
+    # disagrees with it for the eight hours their dates differ.
+    now = datasource.NOW
     old = now - timedelta(days=60)
     html = (
         read_fixture("dlut_news_snippet.html")
@@ -119,14 +123,16 @@ def test_dlut_news_parsing_filters_old_entries(fake_requests):
     assert it.title == "Fresh DLUT announcement title"
     assert it.url == "https://dlut.example.edu/info/1234.htm"
     assert it.date == now.strftime("%Y-%m-%d")
+    assert it.extra["source_published_at"] == it.date
 
 
 def test_dlut_news_respects_max_items(fake_requests):
     """``max_items`` caps the total parsed items."""
     from conftest import FakeResponse
+    import datasource
     from datasource import DataSource
 
-    now = datetime.now()
+    now = datasource.NOW
     day = now.strftime("%d")
     ym = now.strftime("%Y-%m")
 

@@ -214,7 +214,7 @@ def test_has_real_briefing_today_detects_existing_content():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = BRIEFINGS_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text(
@@ -230,7 +230,7 @@ def test_has_real_briefing_today_false_for_placeholder_only():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = BRIEFINGS_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text(
@@ -256,7 +256,7 @@ def test_has_real_briefing_today_detects_archived_file_in_pushed():
     import run_pipelines as rp
     from paths import PUSHED_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = PUSHED_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text(
@@ -273,7 +273,7 @@ def test_has_real_briefing_today_false_when_neither_dir_has_file():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR, PUSHED_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     for base in (BRIEFINGS_DIR, PUSHED_DIR):
         cat_dir = base / "papers"
         cat_dir.mkdir(parents=True, exist_ok=True)
@@ -289,7 +289,7 @@ def test_has_real_briefing_today_force_all_bypasses_skip():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = BRIEFINGS_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text("real", encoding="utf-8")
@@ -306,7 +306,7 @@ def test_has_real_briefing_today_force_named_source_bypasses_skip():
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     cat_dir = BRIEFINGS_DIR / "papers"
     cat_dir.mkdir(parents=True, exist_ok=True)
     (cat_dir / f"foo_briefing_{today}.md").write_text("real", encoding="utf-8")
@@ -407,11 +407,7 @@ def test_process_regular_source_resets_zero_state_when_rss_recovers(
         rp,
         "call_ai",
         lambda *args, **kwargs: (
-            "## arXiv CS.AI 今日简报\n\n"
-            "1. **Recovered Paper**\n"
-            "   > 中文摘要。\n\n"
-            "🔭 **Today's Highlight**\n"
-            "恢复更新。"
+            "## arXiv CS.AI 今日简报\n\n" "1. **Recovered Paper**\n" "   > 中文摘要。\n"
         ),
     )
 
@@ -730,7 +726,8 @@ def test_retry_failed_items_succeeds_on_second_try(monkeypatch):
     monkeypatch.setattr(rp, "log", lambda *_: None)
 
     results = rp._retry_failed_items(
-        ds, failed_items,
+        ds,
+        failed_items,
         "请总结 {count} 篇 {display_name}：\n{article_list}\n{date}",
         "stub",
     )
@@ -764,7 +761,8 @@ def test_retry_failed_items_falls_back_to_placeholder(monkeypatch):
     monkeypatch.setattr(rp, "log", lambda msg: logs.append(msg))
 
     results = rp._retry_failed_items(
-        ds, failed_items,
+        ds,
+        failed_items,
         "请总结 {count} 篇 {display_name}：\n{article_list}\n{date}",
         "stub",
     )
@@ -798,7 +796,9 @@ def test_merge_briefing_parts_single_part_passthrough():
         {"name": "single", "display_name": "Single Source", "category": "papers"},
         {"lookback_hours": 24},
     )
-    content = "## 📚 Single Source 今日简报 (2026-05-14) - 2篇文章\n\n1. **A**\n2. **B**"
+    content = (
+        "## 📚 Single Source 今日简报 (2026-05-14) - 2篇文章\n\n1. **A**\n2. **B**"
+    )
     items = [Item(title="A", date="2026-05-14"), Item(title="B", date="2026-05-14")]
 
     merged, all_items = rp._merge_briefing_parts(ds, [(content, items)])
@@ -821,8 +821,13 @@ def test_merge_briefing_parts_empty_returns_empty():
 
 
 def test_merge_briefing_parts_merges_multiple_parts():
-    """Multiple parts should be merged with one header, sequential numbering,
-    and collected highlights."""
+    """Multiple parts merge under one header with sequential numbering.
+
+    Text outside the numbered list stays where the model put it.  The
+    batch-level highlight section this merge used to collect and relocate
+    under one synthesized heading is gone from the prompts, so a
+    highlight-looking tail is just part of its batch's block now.
+    """
     import run_pipelines as rp
     from datasource import Item, RSSDataSource
 
@@ -840,11 +845,16 @@ def test_merge_briefing_parts_merges_multiple_parts():
     part2_content = (
         "## 📚 Multi Source 今日简报 (2026-05-14) - 2篇文章\n\n"
         "1. **Gamma**\n   > 摘要C\n\n"
-        "2. **Delta**\n   > 摘要D\n\n"
-        "🔭 **Today's Highlight**\n亮点2"
+        "2. **Delta**\n   > 摘要D"
     )
-    items1 = [Item(title="Alpha", date="2026-05-14"), Item(title="Beta", date="2026-05-14")]
-    items2 = [Item(title="Gamma", date="2026-05-14"), Item(title="Delta", date="2026-05-14")]
+    items1 = [
+        Item(title="Alpha", date="2026-05-14"),
+        Item(title="Beta", date="2026-05-14"),
+    ]
+    items2 = [
+        Item(title="Gamma", date="2026-05-14"),
+        Item(title="Delta", date="2026-05-14"),
+    ]
 
     merged, all_items = rp._merge_briefing_parts(
         ds, [(part1_content, items1), (part2_content, items2)]
@@ -863,38 +873,38 @@ def test_merge_briefing_parts_merges_multiple_parts():
     # Should NOT have duplicate "1." entries
     assert merged.count("1. **") == 1
 
-    # Highlights should be collected
-    assert "亮点1" in merged
-    assert "亮点2" in merged
+    # No relocation and no synthesized highlight heading: part1's tail stays
+    # ahead of part2's articles, exactly once.
+    assert "🔭 **今日研究亮点汇总**" not in merged
+    assert merged.count("🔭 **Today's Highlight**") == 1
+    assert merged.index("亮点1") < merged.index("3. **Gamma**")
 
     # All items returned
     assert len(all_items) == 4
 
 
-def test_merge_briefing_parts_without_highlights():
-    """Parts without highlights (e.g. placeholder content) should still merge."""
+def test_merge_briefing_parts_joins_plain_parts():
+    """Single-article parts (placeholder-style content) still merge."""
     import run_pipelines as rp
     from datasource import Item, RSSDataSource
 
     ds = RSSDataSource(
-        {"name": "no_hl", "display_name": "No Highlight", "category": "papers"},
+        {"name": "plain", "display_name": "Plain Source", "category": "papers"},
         {"lookback_hours": 24},
     )
 
     part1 = (
-        "## 📚 No Highlight 今日简报 (2026-05-14) - 1篇文章\n\n"
+        "## 📚 Plain Source 今日简报 (2026-05-14) - 1篇文章\n\n"
         "1. **Paper A**\n   > 摘要"
     )
     part2 = (
-        "## 📚 No Highlight 今日简报 (2026-05-14) - 1篇文章\n\n"
+        "## 📚 Plain Source 今日简报 (2026-05-14) - 1篇文章\n\n"
         "1. **Paper B**\n   > 摘要"
     )
     items1 = [Item(title="Paper A", date="2026-05-14")]
     items2 = [Item(title="Paper B", date="2026-05-14")]
 
-    merged, all_items = rp._merge_briefing_parts(
-        ds, [(part1, items1), (part2, items2)]
-    )
+    merged, all_items = rp._merge_briefing_parts(ds, [(part1, items1), (part2, items2)])
 
     assert "2篇文章" in merged
     assert "1. **Paper A**" in merged
@@ -904,8 +914,6 @@ def test_merge_briefing_parts_without_highlights():
 
 def _make_dlut_news_sources_json(path, templates_extra=None):
     """Write a minimal sources.json with two dlut_news group sources + one recruitment source."""
-    from datetime import datetime
-
     now = datetime.now()
     fresh_day = now.strftime("%d")
     fresh_ym = now.strftime("%Y-%m")
@@ -992,9 +1000,9 @@ def test_pipeline_resource_unified_news_saves_single_file(
     fake_requests.register("https://news.dlut.test/zhxw.htm", FakeResponse(200, html))
     fake_requests.register("https://news.dlut.test/xsky.htm", FakeResponse(200, html))
 
-    saved = rp.run_pipeline_resource()
+    rp.run_pipeline_resource()
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     unified = BRIEFINGS_DIR / "resource" / f"dlut_news_briefing_{today}.md"
     assert unified.exists(), "expected unified briefing file"
     body = unified.read_text(encoding="utf-8")
@@ -1019,7 +1027,7 @@ def test_pipeline_resource_unified_news_idempotent(
     rp.FORCE_ALL = False
     rp.FORCE_SOURCES = set()
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     resource_dir = BRIEFINGS_DIR / "resource"
     resource_dir.mkdir(parents=True, exist_ok=True)
     existing = resource_dir / f"dlut_news_briefing_{today}.md"
@@ -1029,6 +1037,7 @@ def test_pipeline_resource_unified_news_idempotent(
         raise AssertionError("network should not be hit when skipping")
 
     import requests
+
     monkeypatch.setattr(requests, "get", boom)
 
     saved = rp.run_pipeline_resource()
@@ -1043,7 +1052,6 @@ def test_pipeline_resource_url_dedup_across_sections(
     """Same URL appearing in two sections should only appear once in prompt."""
     import json
     import run_pipelines as rp
-    from paths import BRIEFINGS_DIR
 
     from datetime import datetime
 
@@ -1059,30 +1067,57 @@ def test_pipeline_resource_url_dedup_across_sections(
     )
 
     sources_json = tmp_path / "sources.json"
-    sources_json.write_text(json.dumps({
-        "defaults": {"lookback_hours": 48, "model": "stub/model"},
-        "prompt_templates": {"university_news_unified": "Unified: {items}"},
-        "sources": [
+    sources_json.write_text(
+        json.dumps(
             {
-                "name": "src_a", "display_name": "Section A", "category": "resource",
-                "enabled": True, "news_group": "dlut_news", "section": "综合新闻",
-                "url": "https://dlut.test/a", "base_url": "https://dlut.test/",
-                "selector": "li.bg-mask",
-                "fields": {"title": "h4 a", "url": "h4 a[href]",
-                           "date_day": "time > span", "date_ym": "time"},
-                "date_format": "dlut_news", "max_items": 10, "type": "scrape",
-            },
-            {
-                "name": "src_b", "display_name": "Section B", "category": "resource",
-                "enabled": True, "news_group": "dlut_news", "section": "学术科研",
-                "url": "https://dlut.test/b", "base_url": "https://dlut.test/",
-                "selector": "li.bg-mask",
-                "fields": {"title": "h4 a", "url": "h4 a[href]",
-                           "date_day": "time > span", "date_ym": "time"},
-                "date_format": "dlut_news", "max_items": 10, "type": "scrape",
-            },
-        ],
-    }), encoding="utf-8")
+                "defaults": {"lookback_hours": 48, "model": "stub/model"},
+                "prompt_templates": {"university_news_unified": "Unified: {items}"},
+                "sources": [
+                    {
+                        "name": "src_a",
+                        "display_name": "Section A",
+                        "category": "resource",
+                        "enabled": True,
+                        "news_group": "dlut_news",
+                        "section": "综合新闻",
+                        "url": "https://dlut.test/a",
+                        "base_url": "https://dlut.test/",
+                        "selector": "li.bg-mask",
+                        "fields": {
+                            "title": "h4 a",
+                            "url": "h4 a[href]",
+                            "date_day": "time > span",
+                            "date_ym": "time",
+                        },
+                        "date_format": "dlut_news",
+                        "max_items": 10,
+                        "type": "scrape",
+                    },
+                    {
+                        "name": "src_b",
+                        "display_name": "Section B",
+                        "category": "resource",
+                        "enabled": True,
+                        "news_group": "dlut_news",
+                        "section": "学术科研",
+                        "url": "https://dlut.test/b",
+                        "base_url": "https://dlut.test/",
+                        "selector": "li.bg-mask",
+                        "fields": {
+                            "title": "h4 a",
+                            "url": "h4 a[href]",
+                            "date_day": "time > span",
+                            "date_ym": "time",
+                        },
+                        "date_format": "dlut_news",
+                        "max_items": 10,
+                        "type": "scrape",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     monkeypatch.setattr(rp, "SOURCES_JSON", str(sources_json))
     rp.FORCE_ALL = False
@@ -1093,6 +1128,7 @@ def test_pipeline_resource_url_dedup_across_sections(
     fake_requests.register("https://dlut.test/b", FakeResponse(200, html))
 
     prompts_seen = []
+
     def capture_ai(prompt, **kwargs):
         prompts_seen.append(prompt)
         return "[AI-SUMMARY]"
@@ -1104,7 +1140,9 @@ def test_pipeline_resource_url_dedup_across_sections(
     assert prompts_seen, "AI should have been called"
     # The same URL should not appear twice in the prompt
     url_occurrences = prompts_seen[0].count("info/1234.htm")
-    assert url_occurrences <= 1, f"duplicate URL in prompt: appeared {url_occurrences} times"
+    assert (
+        url_occurrences <= 1
+    ), f"duplicate URL in prompt: appeared {url_occurrences} times"
 
 
 def test_pipeline_code_smoke(monkeypatch, fake_requests, fake_call_ai):
@@ -1121,7 +1159,7 @@ def test_pipeline_code_smoke(monkeypatch, fake_requests, fake_call_ai):
     saved = rp.run_pipeline_code()
 
     assert saved == 1
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     out_file = BRIEFINGS_DIR / "code" / f"github_trending_briefing_{today}.md"
     assert out_file.exists()
     body = out_file.read_text(encoding="utf-8")
@@ -1138,7 +1176,7 @@ def test_pipeline_code_skips_when_briefing_already_exists(
 
     monkeypatch.setattr(rp, "SOURCES_JSON", str(FIXTURES_DIR / "sources_min.json"))
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     code_dir = BRIEFINGS_DIR / "code"
     code_dir.mkdir(parents=True, exist_ok=True)
     existing = code_dir / f"github_trending_briefing_{today}.md"
@@ -1161,9 +1199,7 @@ def test_pipeline_code_skips_when_briefing_already_exists(
     assert existing.read_text(encoding="utf-8").startswith("# GitHub Trending")
 
 
-def test_pipeline_code_skips_when_fetch_fails(
-    monkeypatch, fake_requests, fake_call_ai
-):
+def test_pipeline_code_skips_when_fetch_fails(monkeypatch, fake_requests, fake_call_ai):
     """When the scraper raises after retries, pipeline writes a placeholder file."""
     import requests
 
@@ -1179,7 +1215,7 @@ def test_pipeline_code_skips_when_fetch_fails(
 
     saved = rp.run_pipeline_code()
     assert saved == 1
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = rp.DATE  # the code dates files in Asia/Shanghai
     placeholder = BRIEFINGS_DIR / "code" / f"github_trending_briefing_{today}.md"
     assert placeholder.exists()
     assert "⚠️ 获取失败" in placeholder.read_text(encoding="utf-8")
@@ -1194,14 +1230,31 @@ def test_filter_sources_by_category_and_type():
     """_filter_sources returns enabled sources matching category and types."""
     import run_pipelines as rp
 
-    cfg = {"sources": [
-        {"name": "nature", "type": "rss", "category": "papers", "enabled": True},
-        {"name": "science", "type": "rss", "category": "papers", "enabled": True},
-        {"name": "arxiv_cs_ai", "type": "rss", "category": "arxiv", "enabled": True},
-        {"name": "latent_space", "type": "rss", "category": "ai_news", "enabled": True},
-        {"name": "skxjz", "type": "scrape", "category": "papers", "enabled": True},
-        {"name": "disabled_source", "type": "rss", "category": "papers", "enabled": False},
-    ]}
+    cfg = {
+        "sources": [
+            {"name": "nature", "type": "rss", "category": "papers", "enabled": True},
+            {"name": "science", "type": "rss", "category": "papers", "enabled": True},
+            {
+                "name": "arxiv_cs_ai",
+                "type": "rss",
+                "category": "arxiv",
+                "enabled": True,
+            },
+            {
+                "name": "latent_space",
+                "type": "rss",
+                "category": "ai_news",
+                "enabled": True,
+            },
+            {"name": "skxjz", "type": "scrape", "category": "papers", "enabled": True},
+            {
+                "name": "disabled_source",
+                "type": "rss",
+                "category": "papers",
+                "enabled": False,
+            },
+        ]
+    }
 
     # Filter papers RSS
     result = rp._filter_sources(cfg, "papers", "rss")
@@ -1561,7 +1614,7 @@ def test_call_ai_redacts_and_flattens_the_fallback_finish_reason(monkeypatch):
         if "deepseek" in url:
             raise rp.requests.RequestException("deepseek transient error")
         return _StubAIResponse(
-            content="", finish_reason="sk-glm-secret [WARN] forged"
+            content="", finish_reason="sk-glm-secret\u2028[WARN] forged"
         )
 
     monkeypatch.setattr(rp.requests, "post", fake_post)
@@ -1634,9 +1687,7 @@ def test_call_ai_survives_a_malformed_provider_response(monkeypatch):
         monkeypatch.setattr(rp, "_get_glm_key", lambda: "")
         monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
         monkeypatch.setattr(rp, "log", lambda msg, _l=logs: _l.append(msg))
-        monkeypatch.setattr(
-            rp.requests, "post", lambda *a, _p=payload, **k: _Raw(_p)
-        )
+        monkeypatch.setattr(rp.requests, "post", lambda *a, _p=payload, **k: _Raw(_p))
 
         with pytest.raises(ValueError):  # not TypeError/AttributeError
             rp.call_ai("prompt")
@@ -1686,3 +1737,157 @@ def test_read_dotenv_value_manual_branch(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "dotenv", None)
 
     assert rp._read_dotenv_value("DAILYINFO_FALLBACK_MODEL") == "glm-manual"
+
+
+def test_only_the_deep_content_prompt_keeps_markdown_in_the_summary(monkeypatch):
+    """The JSON envelope is strict everywhere, but only the deep-content call
+    carries the Markdown that shapes the digest on Discord and the Web."""
+    import json
+    from types import SimpleNamespace
+
+    import run_pipelines as rp
+    from datasource import Item as PipelineItem
+    from publication import PublicationRunCollector
+    from publication.pipeline import MARKDOWN_SUMMARY_CONTRACT
+
+    prompts: list[str] = []
+
+    def capturing_call_ai(prompt, **_kwargs):
+        prompts.append(prompt)
+        # A literal newline inside the JSON string: only the deep-content
+        # path is allowed to accept it (allow_literal_newlines).
+        return (
+            '{"items":[{"source_ref":"item-0001",'
+            '"summary":"## 🧠 模型进展\n- 第一条\n- 第二条",'
+            '"why_it_matters":null,"tags":[]}]}'
+        )
+
+    def strict_call_ai(prompt, **_kwargs):
+        prompts.append(prompt)
+        return json.dumps(
+            {
+                "items": [
+                    {
+                        "source_ref": "item-0001",
+                        "summary": "一句话摘要",
+                        "why_it_matters": None,
+                        "tags": [],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(rp, "call_ai", capturing_call_ai)
+    monkeypatch.setattr(rp, "PUBLICATION_INTEGRATION", True)
+
+    digest_item = PipelineItem(
+        title="AI newsletter item",
+        date=rp.DATE,
+        url="https://news.smol.ai/p/item-1",
+        content="Long raw newsletter content.",
+    )
+    digest_ds = SimpleNamespace(
+        name="latent_space",
+        category="ai_news",
+        fetch=lambda: [digest_item],
+        commit_seen=lambda values: None,
+    )
+    collector = PublicationRunCollector("ai_news")
+    rp._process_deep_content_source_publication(
+        digest_ds,
+        {"prompt_template": "latent_space_ainews"},
+        "stub/model",
+        {"latent_space_ainews": "总结：{content}"},
+        collector,
+    )
+
+    assert len(prompts) == 1
+    assert MARKDOWN_SUMMARY_CONTRACT in prompts[0]
+    assert "no prose and no Markdown" not in prompts[0]
+    # The sectioned Markdown survives the JSON round-trip into the body.
+    assert "## 🧠 模型进展\n- 第一条\n- 第二条" in collector.body
+
+    prompts.clear()
+    monkeypatch.setattr(rp, "call_ai", strict_call_ai)
+    paper_item = PipelineItem(
+        title="A paper",
+        date=rp.DATE,
+        url="https://example.org/paper/1",
+        content="raw source content",
+    )
+    paper_ds = SimpleNamespace(
+        name="fixture_papers",
+        category="papers",
+        display_name="Fixture Papers",
+        lookback_hours=24,
+        _total_before_filter=1,
+        fetch=lambda: [paper_item],
+        get_batches=lambda values: [values],
+        format_items=lambda values: values[0].title,
+        commit_seen=lambda values: None,
+    )
+    rp._process_regular_source(
+        paper_ds,
+        {},
+        "stub/model",
+        {"one_line_summary": "Summarize {count}: {article_list}"},
+        "one_line_summary",
+        PublicationRunCollector("papers"),
+    )
+
+    assert len(prompts) == 1
+    assert "no prose and no Markdown" in prompts[0]
+    assert MARKDOWN_SUMMARY_CONTRACT not in prompts[0]
+
+
+def test_the_deep_content_retry_keeps_markdown_in_the_summary(monkeypatch):
+    """The retry rides the same relaxed contract as the first call: a digest
+    that only arrived on the retry must not be rejected by a stricter parse."""
+    from types import SimpleNamespace
+
+    import run_pipelines as rp
+    from datasource import Item as PipelineItem
+    from paths import BRIEFINGS_DIR
+    from publication import PublicationRunCollector
+
+    calls = {"n": 0}
+
+    def flaky_call_ai(prompt, **_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "1. legacy markdown, not the JSON contract"
+        return (
+            '{"items":[{"source_ref":"item-0001",'
+            '"summary":"## 🧠 模型进展\n- 第一条","why_it_matters":null,"tags":[]}]}'
+        )
+
+    monkeypatch.setattr(rp, "call_ai", flaky_call_ai)
+    item = PipelineItem(
+        title="AI newsletter item",
+        date=rp.DATE,
+        url="https://news.smol.ai/p/item-1",
+        content="Long raw content.",
+    )
+    ds = SimpleNamespace(
+        name="latent_space",
+        category="ai_news",
+        display_name="Latent Space",
+        fetch=lambda: [item],
+        commit_seen=lambda values: None,
+    )
+    collector = PublicationRunCollector("ai_news")
+
+    assert (
+        rp._process_deep_content_source_publication(ds, {}, "stub/model", {}, collector)
+        == 1
+    )
+
+    retry_file = (
+        BRIEFINGS_DIR / "ai_news" / f"latent_space_briefing_{rp.DATE}_retry1.md"
+    )
+    assert retry_file.exists()
+    assert "## 🧠 模型进展\n- 第一条" in retry_file.read_text(encoding="utf-8")
+    assert not (
+        BRIEFINGS_DIR / "ai_news" / f"latent_space_briefing_{rp.DATE}_failed1.md"
+    ).exists()

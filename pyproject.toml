@@ -47,3 +47,10 @@ dev-dependencies = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.ruff.lint.per-file-ignores]
+# These modules insert `scripts/` into sys.path before importing repo modules
+# (the flat-import convention in CLAUDE.md), so their imports cannot sit at the
+# top of the file.
+"scripts/backfill_push.py" = ["E402"]
+"tests/test_weekly_summary.py" = ["E402"]
