@@ -1000,6 +1000,20 @@ PROBES: tuple[Probe, ...] = (
             "::test_window_pruning_a_briefing_drops_it_from_surviving_items"
         ),
     ),
+    Probe(
+        # The skip check must recognize every failure notice the pipeline
+        # writes, not just the no-content one: a fetch-failure placeholder
+        # counted as a real briefing, so a re-run after a network outage
+        # silently skipped the failed source for the rest of the day.
+        label="every placeholder notice is regenerable on a re-run",
+        path="scripts/run_pipelines.py",
+        old="            if not _is_placeholder_text(text):",
+        new='            if "📭 过去" not in text:',
+        test=(
+            "tests/test_run_pipelines.py"
+            "::test_has_real_briefing_today_false_for_failure_placeholders"
+        ),
+    ),
 )
 
 
