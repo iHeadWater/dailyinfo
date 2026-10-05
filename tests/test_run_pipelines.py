@@ -242,6 +242,33 @@ def test_has_real_briefing_today_false_for_placeholder_only():
     assert rp._has_real_briefing_today("foo", "papers") is False
 
 
+@pytest.mark.parametrize(
+    "marker",
+    ["⚠️ 获取失败", "⚠️ AI 生成失败", "⚠️ 以下文章 AI 摘要生成失败"],
+)
+def test_has_real_briefing_today_false_for_failure_placeholders(marker):
+    """Failure notices are regenerable, exactly like the no-content notice.
+
+    The skip check used to recognize only the 📭 notice, so a fetch-failure
+    placeholder counted as a real briefing: after a network outage a plain
+    re-run skipped every failed source and the category could not be
+    repaired without per-source --force.
+    """
+    import run_pipelines as rp
+    from paths import BRIEFINGS_DIR
+
+    today = rp.DATE  # the code dates files in Asia/Shanghai
+    cat_dir = BRIEFINGS_DIR / "papers"
+    cat_dir.mkdir(parents=True, exist_ok=True)
+    (cat_dir / f"foo_briefing_{today}.md").write_text(
+        f"# Foo - {today}\n\n{marker}\n", encoding="utf-8"
+    )
+
+    rp.FORCE_ALL = False
+    rp.FORCE_SOURCES = set()
+    assert rp._has_real_briefing_today("foo", "papers") is False
+
+
 def test_has_real_briefing_today_false_when_dir_missing():
     import run_pipelines as rp
 

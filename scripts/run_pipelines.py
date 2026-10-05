@@ -685,10 +685,12 @@ def _has_real_briefing_today(name: str, category: str) -> bool:
     Used to skip redundant fetch+AI work when a pipeline is re-run on the same
     day. Scans both ``BRIEFINGS_DIR`` (generated but not yet pushed) and
     ``PUSHED_DIR`` (already pushed and archived today) so the check holds
-    across the full lifecycle. Placeholder files ("no new content" notices)
-    do not count as real briefings so they can be regenerated if fresh items
-    arrive later. ``--force`` (``FORCE_ALL`` / ``FORCE_SOURCES``) overrides
-    this check.
+    across the full lifecycle. Placeholder files -- every notice
+    ``_is_placeholder_text`` recognizes, fetch failures and AI failures
+    included -- do not count as real briefings so they can be regenerated
+    when the failure clears; a real briefing that merely warns about
+    something still counts. ``--force`` (``FORCE_ALL`` / ``FORCE_SOURCES``)
+    overrides this check.
     """
     if _is_forced(name):
         return False
@@ -701,7 +703,7 @@ def _has_real_briefing_today(name: str, category: str) -> bool:
                 text = fpath.read_text(encoding="utf-8")
             except Exception:
                 continue
-            if "📭 过去" not in text:
+            if not _is_placeholder_text(text):
                 return True
     return False
 
