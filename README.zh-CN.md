@@ -149,6 +149,9 @@ DailyInfo 不负责调度。推荐分工如下：
 
 ## 文档
 
+- [只读 MCP 接入与部署](docs/mcp.md)：查询简报和条目；Streamable HTTP、一人一 key，支持已生成/已推送两种可见性。
+- [只采集和生成的部署方式](docs/production.md)：供 MCP 阅读，不发送 Discord。
+
 - [系统架构](architecture.md)
 - [CLI 参考](cli.md)
 - [Agent 配置](agent-config.md)

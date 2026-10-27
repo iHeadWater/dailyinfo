@@ -22,7 +22,12 @@ from .models import (
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SECRET_PATTERNS = (
-    re.compile(r"(?i)\bAuthorization\s*:\s*\S+"),
+    # Generic headers need a line/quoted-header context; a paper title can
+    # legitimately contain "Authorization: Key-Isolated Threshold Signing".
+    re.compile(
+        r"""(?im)(?:^[ \t]*(?:[-*>][ \t]+)*|["'])Authorization[ \t]*:[ \t]*\S+"""
+    ),
+    re.compile(r"(?i)\bAuthorization[ \t]*:[ \t]*(?:Basic|Digest|Negotiate)[ \t]+\S+"),
     re.compile(r"(?i)\bBearer\s+\S+"),
     re.compile(
         r"https?://(?:canary\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9._-]+"

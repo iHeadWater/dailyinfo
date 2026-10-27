@@ -338,7 +338,7 @@
       "name": "github_trending",
       "display_name": "GitHub Trending",
       "category": "code",
-      "enabled": true,
+      "enabled": false,
       "url": "https://github.com/trending?since=daily",
       "method": "GET",
       "headers": {
@@ -358,7 +358,7 @@
       "name": "huggingface_models",
       "display_name": "HuggingFace Trending Models",
       "category": "code",
-      "enabled": true,
+      "enabled": false,
       "url": "https://huggingface.co/api/models",
       "method": "GET",
       "params": {
@@ -381,7 +381,7 @@
       "name": "huggingface_datasets",
       "display_name": "HuggingFace Trending Datasets",
       "category": "code",
-      "enabled": true,
+      "enabled": false,
       "url": "https://huggingface.co/api/datasets",
       "method": "GET",
       "params": {
@@ -403,7 +403,7 @@
       "name": "huggingface_spaces",
       "display_name": "HuggingFace Trending Spaces",
       "category": "code",
-      "enabled": true,
+      "enabled": false,
       "url": "https://huggingface.co/api/spaces",
       "method": "GET",
       "params": {

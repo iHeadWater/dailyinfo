@@ -20,22 +20,22 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --frozen --extra dev --extra mcp
 
       # Three steps rather than three jobs: the suite takes seconds, so the
       # setup would dominate, and the step name already says which check failed.
       - name: Run the suite
-        run: uv run pytest -q
+        run: uv run --frozen --extra mcp pytest -q
 
       # CI has no .env, so CI never noticed that a value there changed test
       # outcomes. This makes it look like a configured machine.
       - name: Run the suite against a decoy .env
         run: |
-          uv run python tests/decoy_env.py .env
-          uv run pytest -q
+          uv run --frozen --extra mcp python tests/decoy_env.py .env
+          uv run --frozen --extra mcp pytest -q
 
       # Every fix on the branch that introduced this file landed with a
       # mutation that turns its test red, and every one of those mutations was
       # applied by hand. This is that discipline, mechanised.
       - name: Check that the guards can fail
-        run: uv run python tests/mutation_probes.py
+        run: uv run --frozen --extra mcp python tests/mutation_probes.py
