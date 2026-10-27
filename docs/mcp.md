@@ -6,7 +6,7 @@ DailyInfo MCP 查询、阅读每日简报，不执行采集、摘要生成、发
 
 81 服务器的部署地址：**`http://10.48.0.81:8768/mcp`**。
 
-81 的当前方案是只采集和生成、供 MCP 阅读，不向 Discord 或网站发布。MCP 使用 `generated` 可见性，返回 `content_state=generated`、`sink=null`、`delivered_at=null`，不创建或伪造成功投递记录。内容数量取决于生成任务是否完成，缺少模型凭据时不会生成简报。原 HTTP 入口和 36 个共用账号不变。初次上线记录见[部署验收记录](deployment-mcp-81-20261026.md)，生产配置见[采集与生成部署](production.md)。
+81 的当前方案是只采集和生成、供 MCP 阅读，不向 Discord 或网站发布。MCP 使用 `generated` 可见性，返回 `content_state=generated`、`sink=null`、`delivered_at=null`，不创建或伪造成功投递记录。内容数量取决于生成任务是否完成，缺少模型凭据时不会生成简报。原 HTTP 入口和既有 36 个账号的同名个人 key 不变；每位用户的 key 不同。初次上线记录见[部署验收记录](deployment-mcp-81-20261026.md)，生产配置见[采集与生成部署](production.md)。
 
 用户只需提供本文和个人 Bearer key。Agent 直接使用上述地址，不再向用户索要 endpoint、模型 API key、Discord token 或服务器账号密码。
 
@@ -20,6 +20,70 @@ DailyInfo MCP 查询、阅读每日简报，不执行采集、摘要生成、发
 | 证书 | HTTP 不需要私有 CA |
 
 Agent 按本机客户端的格式写入 MCP 配置并重新加载，随后验证三个工具。保留 key 的全部字符（包括开头的 `-`），不要在仓库、聊天或日志中回显。HTTP 无 TLS 加密，仅限受控私网使用。
+
+### 个人 Bearer key 应该填在哪里
+
+这里的 key 是管理员为你的用户名分配的 **DailyInfo MCP 个人访问密钥**。服务端通过 key 识别用户，客户端不需要再提交用户名，也不需要网页登录或 OAuth 授权。
+
+- 如果客户端提供专门的 **Bearer token** 认证输入框，只填原始 key，不加 `Bearer ` 前缀。名为 API key 的普通输入框未必会生成 Bearer 请求头，须核对客户端说明；无法确认时使用下面的显式 headers 配置。
+- 如果通过 `headers` / `http_headers` 配置请求头，填写 `Authorization: Bearer <个人 key>`，`Bearer` 后面保留一个空格，只加一次前缀。
+- 保留 key 的全部字符，包括开头的 `-`；不要去掉字符或把用户名当作 key。
+- 它不是 DeepSeek API key、代理订阅 token 或代理密码。读取服务不需要这些生产端凭据。
+
+下面的 `REPLACE_WITH_YOUR_PERSONAL_BEARER_KEY` 都是占位符，需要由 Agent 在用户本机的私有客户端配置中替换；不要把真实 key 写入项目仓库、聊天回复或日志。
+
+### JSON 配置示例（Claude Code）
+
+以下是完整、可解析的 JSON。它使用 Claude Code 的 `mcpServers` 格式；`type` 明确为 `http`，对应 Streamable HTTP：
+
+```json
+{
+  "mcpServers": {
+    "dailyinfo": {
+      "type": "http",
+      "url": "http://10.48.0.81:8768/mcp",
+      "headers": {
+        "Authorization": "Bearer REPLACE_WITH_YOUR_PERSONAL_BEARER_KEY"
+      }
+    }
+  }
+}
+```
+
+Agent 应将 `dailyinfo` 条目合并进客户端已有的 `mcpServers`，保留其他服务配置。Claude Code 项目级配置文件为 `.mcp.json`，用户级配置保存在 `~/.claude.json`；写入用户级文件时同样保留其他设置，不要用上面的整个示例覆盖文件。
+
+如果使用可提交的项目 `.mcp.json`，请求头应改为 `"Authorization": "Bearer ${DAILYINFO_BEARER_KEY}"`，由用户本机环境提供原始 key，避免提交真实密钥。环境变量必须对启动 Claude Code 的进程可见；未设置时不能完成认证。上述环境变量展开是 Claude Code 的能力，不应假定其他客户端也支持。
+
+其他 JSON 客户端的根字段、传输字段和配置位置可能不同；先确认客户端支持 **Streamable HTTP 和自定义 Authorization 请求头**，再按其格式转换。不要将此示例直接当作所有客户端或 Claude Desktop 的通用配置。字段依据见 [Claude Code 官方 MCP 配置说明](https://code.claude.com/docs/en/mcp)。
+
+### Codex 配置示例（TOML）
+
+Codex 的常规 MCP 配置使用 `~/.codex/config.toml`，不是上面的 JSON。可在用户私有配置中合并以下条目；这里只替换 key 占位符：
+
+```toml
+[mcp_servers.dailyinfo]
+url = "http://10.48.0.81:8768/mcp"
+http_headers = { Authorization = "Bearer REPLACE_WITH_YOUR_PERSONAL_BEARER_KEY" }
+```
+
+如果通过环境变量保存密钥，使用下面这一种配置替代上面的 `http_headers`，不要同时保留两种 Authorization 来源：
+
+```toml
+[mcp_servers.dailyinfo]
+url = "http://10.48.0.81:8768/mcp"
+bearer_token_env_var = "DAILYINFO_BEARER_KEY"
+```
+
+`DAILYINFO_BEARER_KEY` 的值只保存原始 key，不加 `Bearer `；Codex 会构造请求头。变量必须对实际运行 Codex 的进程可见，在另一个终端临时设置不会自动传入已运行的桌面客户端。配置后重新加载 MCP，必要时重新启动客户端。字段依据见 [Codex 官方 MCP 配置说明](https://developers.openai.com/codex/mcp)。
+
+### Agent 配置后的验收
+
+1. 完成 MCP 初始化，确认出现下面列出的三个工具。
+2. 调用 `dailyinfo_list_briefings`，参数为 `{}`，查询最近已生成简报；81 的服务不要传入 `sink`。
+3. 使用返回的简报 ID 调用 `dailyinfo_get_briefing`，再使用返回的条目 ID 调用 `dailyinfo_get_item`，确认正文和内容可读。
+
+`GET /mcp` 或浏览器打开地址不能代替上述验收。401 优先检查是否实际传入正确请求头、是否忘记替换占位符或环境变量未对客户端生效；网络超时则先检查私网路由或 VPN，不需要额外安装私有 CA。空列表只表示当前没有符合筛选条件的内容。
+
 
 ## 工具与内容范围
 
@@ -56,7 +120,7 @@ Agent 按本机客户端的格式写入 MCP 配置并重新加载，随后验证
 
 `GET /mcp` 返回 405 是预期行为，验证应使用 MCP 客户端的 JSON-RPC POST。旧 `/sse` 地址不提供服务。
 
-## 本地运行
+## 管理员：本地运行
 
 ```bash
 uv sync --frozen --extra mcp
@@ -71,7 +135,7 @@ dailyinfo-mcp
 
 数据目录包含 `publications/`、`deliveries/`。不需要 FreshRSS 数据库和生产 `.env`。没有内容时列表为空，不创建数据或启动采集。
 
-认证文件结构为 key → 用户名：
+下面的 JSON 是服务端认证文件 `keys.json`，结构为 key → 用户名，仅供管理员维护。它不是客户端的 `mcpServers` 配置；接入已有服务的 Agent 不需要创建或索要这个文件：
 
 ```json
 {
@@ -83,7 +147,7 @@ dailyinfo-mcp
 
 每次请求重新读取认证文件，使用恒定时间比较；原子替换文件后新增、撤销立即生效。挂载认证目录，避免单文件挂载继续指向旧 inode。不会自动同步其他服务后续的账号变动。
 
-## Docker 部署
+## 管理员：Docker 部署
 
 `compose.mcp.yml` 独立于原有 FreshRSS Compose：
 

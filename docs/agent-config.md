@@ -1,6 +1,6 @@
 # 与外部调度 / 备份集成（可选）
 
-如果只需要 Agent 查询、阅读简报内容，请使用[只读 MCP 接入说明](mcp.md)，其中已提供 endpoint 和认证方式。81 采用已生成内容的只读模式；内容生产由[独立采集任务](production.md)负责，不需要 Agent 配置采集或发布。
+如果只需要 Agent 查询、阅读简报内容，请使用[只读 MCP 接入说明](mcp.md)，其中提供固定 endpoint、个人 Bearer key 填写规则、Claude Code 的完整 JSON 示例和 Codex 的 TOML 示例。81 采用已生成内容的只读模式；内容生产由[独立采集任务](production.md)负责，不需要 Agent 配置采集或发布。
 
 dailyinfo 自身**不依赖任何外部 agent 框架**。本文是给已经在用 [myopenclaw](https://github.com/OuyangWenyu/myopenclaw) 之类生态的用户的一份"开箱即用"说明。
 
