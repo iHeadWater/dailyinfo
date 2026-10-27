@@ -2,7 +2,7 @@
 
 此部署模式运行 FreshRSS 和 DailyInfo 生成任务，不发送 Discord、不发布网站。MCP 只读挂载相同内容目录，使用 `generated` 可见性，明确返回已生成状态；不以伪造投递记录的方式放行。
 
-2026-10-27 起按用户要求暂时停用 `code` 分类的四个来源：`github_trending`、`huggingface_models`、`huggingface_datasets`、`huggingface_spaces`，在 `config/sources.json` 中均为 `enabled=false`。其他分类和每日调度继续运行。待网络方案确定并验收后，将这四项恢复为 `true` 并更新生产镜像即可重新启用；保留已有内容，不删除失败记录或历史归档。部署及验收见[暂停记录](code-category-paused-81-20261027.md)。
+仓库默认启用 `code` 分类的四个来源：`github_trending`、`huggingface_models`、`huggingface_datasets`、`huggingface_spaces`，均为 `enabled=true`。2026-10-27 曾仅在 81 服务器暂停这四项；同日完成独立 Mihomo 代理部署后已恢复，并成功生成 54 条代码趋势内容、通过 MCP 全部条目及正文读取验收。代理配置和凭据由服务器独立管理，不写入仓库；每日 06:00 调度继续运行。暂停及恢复过程见[历史记录](code-category-paused-81-20261027.md)。
 
 81 的已部署组件、真实采集量和验收状态见[部署记录](deployment-production-81-20261026.md)。
 
