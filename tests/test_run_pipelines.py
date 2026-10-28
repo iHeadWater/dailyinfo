@@ -158,6 +158,35 @@ def test_one_line_summary_forbids_title_translation():
     assert "原始标题" in tmpl
 
 
+def test_issue_sources_are_configured():
+    """Sources requested in GitHub issues must land in the live catalog."""
+    import json
+    from pathlib import Path
+
+    cfg_path = Path(__file__).parent.parent / "config" / "sources.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    by_name = {source["name"]: source for source in cfg["sources"]}
+
+    comms = by_name["comms_earth_env"]
+    assert comms["category"] == "papers"
+    assert comms["url"] == "https://www.nature.com/commsenv.rss"
+    assert comms["type"] == "rss"
+
+    agu = by_name["agu_advances"]
+    assert agu["category"] == "papers"
+    assert agu["url"] == (
+        "https://agupubs.onlinelibrary.wiley.com/feed/2576604x/most-recent"
+    )
+
+    weekly = by_name["ruanyf_weekly"]
+    assert weekly["category"] == "code"
+    assert weekly["type"] == "rss"
+    assert weekly["use_content"] is True
+    assert weekly["prompt_template"] == "ruanyf_weekly"
+    assert weekly["title_contains"] == "科技爱好者周刊"
+    assert "ruanyf_weekly" in cfg["prompt_templates"]
+
+
 def test_get_freshrss_user_falls_back_to_env_user(tmp_path, monkeypatch):
     import run_pipelines as rp
 

@@ -138,6 +138,34 @@ PROBES: tuple[Probe, ...] = (
         "::test_one_line_summary_forbids_title_translation",
     ),
     Probe(
+        # Mixed blog feeds would otherwise fill the use_content LIMIT 3
+        # window with non-weekly posts.
+        label="title_contains is applied in SQL before the item limit",
+        path="scripts/datasource.py",
+        old='            clause += " AND instr(title, ?) > 0"',
+        new="            pass",
+        test=(
+            "tests/test_datasource_rss.py"
+            "::test_title_contains_keeps_only_matching_entries"
+        ),
+    ),
+    Probe(
+        # Pipeline 4 constructs datasources without FreshRSS, so RSS in the
+        # code category fetches nothing unless this helper runs first.
+        label="code RSS sources are read through FreshRSS",
+        path="scripts/run_pipelines.py",
+        old=(
+            "    saved += _process_code_rss_sources(\n"
+            "        cfg, defaults, templates, model_default, collector\n"
+            "    )"
+        ),
+        new="    saved += 0",
+        test=(
+            "tests/test_freshrss_admin.py"
+            "::test_code_pipeline_subscribes_rss_and_uses_deep_content"
+        ),
+    ),
+    Probe(
         # Tolerant matching would treat the query-stripped base URL as the
         # same feed; a section feed must be matched exactly.
         label="subscription matching is exact, not query-stripped",

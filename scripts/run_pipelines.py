@@ -1806,6 +1806,74 @@ def run_pipeline_arxiv() -> int:
 # =====================================================================
 # PIPELINE 4: Code Trending (GitHub + HuggingFace)
 # =====================================================================
+def _process_code_rss_sources(
+    cfg: dict,
+    defaults: dict,
+    templates: dict,
+    model_default: str,
+    collector: PublicationRunCollector | None = None,
+) -> int:
+    """Process RSS sources in the code category through FreshRSS.
+
+    Pipeline 4's scrape/API loop constructs datasources without a FreshRSS
+    connection, so RSS feeds would always fetch zero items. Subscribe and
+    read them here instead, using the deep-content path when configured.
+    """
+    rss_sources = _filter_sources(cfg, "code", "rss")
+    if not rss_sources:
+        return 0
+    try:
+        db = sqlite3.connect(FRESHRSS_DB, timeout=30)
+    except Exception as exc:
+        log(f"  [WARN] code RSS skipped: cannot open FreshRSS DB ({exc})")
+        if collector is not None:
+            for source in rss_sources:
+                collector.add_failure(
+                    f"{source['name']}: cannot open the FreshRSS DB ({exc})"
+                )
+        return 0
+    db.row_factory = sqlite3.Row
+    saved = 0
+    default_tmpl_key = defaults.get("prompt_template", "one_line_summary")
+    try:
+        for name in _ensure_rss_subscriptions(cfg, db, "code"):
+            log(f"  subscribed {name} -> FreshRSS")
+        full_map, base_map = build_feed_url_map(db)
+        for feed_cfg in rss_sources:
+            ds = DataSource.create(
+                feed_cfg, defaults, db=db, full_map=full_map, base_map=base_map
+            )
+            assert isinstance(ds, RSSDataSource)
+            if _has_real_briefing_today(ds.name, "code"):
+                log(
+                    f"  {ds.name}: briefing already exists for {DATE}, skip "
+                    f"(use --force {ds.name} to regenerate)"
+                )
+                continue
+            log(f"  {ds.name}...")
+            if feed_cfg.get("use_content"):
+                if collector is not None:
+                    saved += _process_deep_content_source_publication(
+                        ds, feed_cfg, model_default, templates, collector
+                    )
+                else:
+                    saved += _process_deep_content_source(
+                        ds, feed_cfg, model_default, templates
+                    )
+            else:
+                saved += _process_regular_source(
+                    ds,
+                    feed_cfg,
+                    model_default,
+                    templates,
+                    default_tmpl_key,
+                    collector,
+                )
+    finally:
+        db.close()
+    return saved
+
+
 def _run_pipeline_code_publication() -> int:
     """Run code sources and finalize one canonical code briefing."""
 
@@ -1817,9 +1885,14 @@ def _run_pipeline_code_publication() -> int:
         "code", known_item_ids=_published_item_ids("code")
     )
     saved = 0
+    saved += _process_code_rss_sources(
+        cfg, defaults, templates, model_default, collector
+    )
 
     for source_cfg in cfg["sources"]:
         if source_cfg.get("category") != "code" or source_cfg.get("enabled") is False:
+            continue
+        if source_cfg.get("type") == "rss":
             continue
         ds = DataSource.create(source_cfg, defaults)
         log(f"  {ds.name}...")
@@ -1905,9 +1978,12 @@ def run_pipeline_code() -> int:
     model_default = defaults.get("model", "deepseek-flash")
     code_tmpl = templates.get("code_trending", "")
     saved = 0
+    saved += _process_code_rss_sources(cfg, defaults, templates, model_default)
 
     for source_cfg in cfg["sources"]:
         if source_cfg.get("category") != "code" or source_cfg.get("enabled") is False:
+            continue
+        if source_cfg.get("type") == "rss":
             continue
 
         ds = DataSource.create(source_cfg, defaults)
