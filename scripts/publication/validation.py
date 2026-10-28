@@ -22,14 +22,24 @@ from .models import (
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SECRET_PATTERNS = (
-    re.compile(r"(?i)\bAuthorization\s*:\s*\S+"),
-    re.compile(r"(?i)\bBearer\s+\S+"),
+    # Require a real auth scheme so prose such as paper titles
+    # ("From Review to Authorization: Key-Isolated ...") is not blocked.
+    re.compile(
+        r"(?i)\bAuthorization\s*:\s*"
+        r"(?:Bearer|Basic|Digest|Negotiate|Token|ApiKey|Signature)\b"
+    ),
+    # Credential-shaped values only: prose such as "Bearer token rotation"
+    # must not be treated as a leaked token (2026-10-28 hardening).
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b"),
     re.compile(
         r"https?://(?:canary\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9._-]+"
     ),
     re.compile(r"https?://hooks\.slack\.com/services/[A-Za-z0-9/_-]+"),
+    # Require a credential-shaped value so prose like "API key: see the
+    # console" is not blocked (2026-10-28 hardening).
     re.compile(
-        r"(?i)\b(?:api[_ -]?key|secret[_ -]?key|access[_ -]?token)\s*[:=]\s*[^\s,;]+"
+        r"(?i)\b(?:api[_ -]?key|secret[_ -]?key|access[_ -]?token)\s*[:=]\s*"
+        r"[A-Za-z0-9._~+/=-]{12,}\b"
     ),
     re.compile(r"\b(?:sk|rk|ghp|github_pat|xox[baprs])-[-_A-Za-z0-9]{10,}\b"),
     re.compile(r"(?i)Traceback \(most recent call last\)"),

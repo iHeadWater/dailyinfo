@@ -302,6 +302,37 @@ def test_security_guard_blocks_secrets_and_debug_paths():
         validate_item(item)
 
 
+def test_security_guard_allows_prose_authorization_titles():
+    # Regression: 2026-10-27/28 arxiv briefings were blocked because paper
+    # titles containing "Authorization:" were mistaken for HTTP auth headers.
+    title = (
+        "From Review to Authorization: Key-Isolated Threshold Signing for LLM Agents"
+    )
+    bundle = _bundle()
+    bundle.briefing.body = f"## {title}\n\n1. structured item"
+    validate_bundle(bundle)
+    bundle.items[0].title = title
+    validate_item(bundle.items[0])
+
+
+def test_security_guard_token_patterns_require_credential_shapes():
+    # Hardening 2026-10-28: prose must not trip the credential patterns, while
+    # real token-shaped values still must.
+    item = _bundle().items[0]
+    item.summary = "Bearer token rotation is described in the API key: see the console."
+    validate_item(item)
+
+    item = _bundle().items[0]
+    item.summary = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig"
+    with pytest.raises(PublicationValidationError):
+        validate_item(item)
+
+    item = _bundle().items[0]
+    item.summary = "api_key=AbCdEf0123456789xyz"
+    with pytest.raises(PublicationValidationError):
+        validate_item(item)
+
+
 def test_serialization_round_trip_and_deterministic_hash():
     bundle = _bundle()
     payload = serialize_bundle(bundle)
