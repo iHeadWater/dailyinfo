@@ -378,12 +378,13 @@ class RSSDataSource(DataSource):
         guid_select = (
             "guid AS feed_guid" if "guid" in entry_columns else "NULL AS feed_guid"
         )
+        where_sql, where_params = self._entry_filters(fid)
 
         if self.use_content:
             rows = self._db.execute(
                 f"SELECT title, content, link, date, {guid_select} FROM entry "
-                "WHERE id_feed=? AND lastSeen>? ORDER BY date DESC LIMIT 3",
-                [fid, self._cutoff_ts],
+                f"{where_sql} ORDER BY date DESC LIMIT 3",
+                where_params,
             ).fetchall()
             items = []
             for row in rows:
@@ -417,8 +418,8 @@ class RSSDataSource(DataSource):
 
         rows = self._db.execute(
             f"SELECT title, link, date, {guid_select} FROM entry "
-            "WHERE id_feed=? AND lastSeen>? ORDER BY date DESC",
-            [fid, self._cutoff_ts],
+            f"{where_sql} ORDER BY date DESC",
+            where_params,
         ).fetchall()
         entries = list(rows)
         if self.max_articles and len(entries) > self.max_articles:
@@ -438,6 +439,21 @@ class RSSDataSource(DataSource):
                 )
             )
         return self._filter_seen(items)
+
+    def _entry_filters(self, fid: int) -> tuple[str, list]:
+        """Build the shared SQL WHERE clause for FreshRSS entry fetches.
+
+        ``title_contains`` is a literal substring match (``instr``), so a
+        weekly mixed into a broader blog feed can drop non-matching posts
+        before the lookback/limit window is applied.
+        """
+        clause = "WHERE id_feed=? AND lastSeen>?"
+        params: list = [fid, self._cutoff_ts]
+        needle = (self.config.get("title_contains") or "").strip()
+        if needle:
+            clause += " AND instr(title, ?) > 0"
+            params.append(needle)
+        return clause, params
 
     @staticmethod
     def _rss_source_time(value) -> datetime.datetime:

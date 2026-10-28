@@ -16,6 +16,7 @@ This page is generated from [`config/sources.json`](https://github.com/iHeadWate
 | nature_sustainability | Nature Sustainability | papers | rss | True | 24 | https://www.nature.com/natsustain.rss |
 | nature_geoscience | Nature Geoscience | papers | rss | True | 24 | https://www.nature.com/ngeo.rss |
 | nature_reviews_earth_environ | Nature Reviews Earth & Environment | papers | rss | True | 24 | https://www.nature.com/natrevearthenviron.rss |
+| comms_earth_env | Communications Earth & Environment | papers | rss | True | 24 | https://www.nature.com/commsenv.rss |
 | nature_climate_change | Nature Climate Change | papers | rss | True | 24 | https://www.nature.com/nclimate.rss |
 | aies | AI in Earth Sciences (AIES) | papers | rss | True | 24 | https://journals.ametsoc.org/journalissuetocrss/journals/aies/aies-overview.xml |
 | bams | Bulletin of the American Meteorological Society | papers | rss | True | 24 | https://journals.ametsoc.org/journalissuetocrss/journals/bams/bams-overview.xml |
@@ -23,6 +24,7 @@ This page is generated from [`config/sources.json`](https://github.com/iHeadWate
 | gmd | Geoscientific Model Development (GMD) | papers | rss | True | 24 | https://gmd.copernicus.org/xml/rss2_0.xml |
 | nhess | Natural Hazards and Earth System Sciences (NHESS) | papers | rss | True | 24 | https://nhess.copernicus.org/articles/xml/rss2_0.xml |
 | james | Journal of Advances in Modeling Earth Systems (JAMES) | papers | rss | True | 24 | https://agupubs.onlinelibrary.wiley.com/feed/19422466/most-recent |
+| agu_advances | AGU Advances | papers | rss | True | 24 | https://agupubs.onlinelibrary.wiley.com/feed/2576604x/most-recent |
 | earth_space_science | Earth and Space Science | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=23335084&type=etoc&feed=rss |
 | grl | Geophysical Research Letters (GRL) | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=19448007&type=etoc&feed=rss |
 | reviews_geophysics | Reviews of Geophysics | papers | rss | True | 24 | https://onlinelibrary.wiley.com/action/showFeed?jc=19449208&type=etoc&feed=rss |
@@ -39,6 +41,7 @@ This page is generated from [`config/sources.json`](https://github.com/iHeadWate
 | journal_hydrology | Journal of Hydrology | papers | rss | True | 24 | https://rss.sciencedirect.com/publication/science/00221694 |
 | skxjz | 水科学进展 | papers | scrape | True | 48 | http://skxjz.nhri.cn/article/current |
 | shuili_xuebao | 水利学报 | papers | api | True | 720 | https://api.crossref.org/works?filter=issn:0559-9350&sort=updated&order=desc&rows=20 |
+| jwrmd | Journal of Water Resources Planning and Management (JWRPM) | papers | api | True | 720 | https://api.crossref.org/works?filter=issn:0733-9496,type:journal-article&sort=updated&order=desc&rows=20 |
 | chinawater | 中国水利 | papers | scrape | True | 48 | https://slzg.cbpt.cnki.net/portal/journal/portal/client/index |
 | latent_space | Latent Space AINews | ai_news | rss | True | 48 | https://www.latent.space/feed?section=ainews |
 | arxiv_cs_ai | arXiv CS.AI | arxiv | rss | True | 24 | https://rss.arxiv.org/rss/cs.AI |
@@ -46,6 +49,7 @@ This page is generated from [`config/sources.json`](https://github.com/iHeadWate
 | huggingface_models | HuggingFace Trending Models | code | api | True | 24 | https://huggingface.co/api/models |
 | huggingface_datasets | HuggingFace Trending Datasets | code | api | True | 24 | https://huggingface.co/api/datasets |
 | huggingface_spaces | HuggingFace Trending Spaces | code | api | True | 24 | https://huggingface.co/api/spaces |
+| ruanyf_weekly | 阮一峰科技爱好者周刊 | code | rss | True | 168 | https://feeds.feedburner.com/ruanyifeng |
 | dlut_zhxw | 大连理工大学 - 综合新闻 | resource | scrape | True | 24 | https://news.dlut.edu.cn/zhxw.htm |
 | dlut_rcpy | 大连理工大学 - 人才培养 | resource | scrape | True | 24 | https://news.dlut.edu.cn/rcpy.htm |
 | dlut_xsky | 大连理工大学 - 学术科研 | resource | scrape | True | 24 | https://news.dlut.edu.cn/xsky.htm |
