@@ -6,6 +6,8 @@
 
 81 的已部署组件、真实采集量和验收状态见[部署记录](deployment-production-81-20261026.md)。
 
+2026-10-28 已修复 AI 新闻因 www 永久重定向而重复创建空订阅的问题，生产镜像更新为 `dailyinfo-producer:rss-redirect-dd95cb0`；单独补跑 AI 新闻后生成 3 条内容，并通过 MCP 全文与条目读取验收。现有国内来源直连规则保留，其他常驻服务和个人 key 不变，详见[AI 新闻修复记录](ai-news-subscription-redirect-81-20261028.md)。
+
 ## 组件与数据流
 
 ```text
