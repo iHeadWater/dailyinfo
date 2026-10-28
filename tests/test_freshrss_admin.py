@@ -356,3 +356,127 @@ def test_a_category_run_subscribes_and_resolves_in_the_same_run(tmp_path, monkey
     }
     saved = list((BRIEFINGS_DIR / "ai_news").glob("latent_space_briefing_*.md"))
     assert len(saved) == 1
+
+
+@pytest.mark.parametrize("status", [301, 308])
+def test_pipeline_reuses_cached_feed_after_verified_permanent_redirect(
+    monkeypatch, status
+):
+    import time
+    from types import SimpleNamespace
+    import requests
+    import run_pipelines as rp
+    from datasource import DataSource, build_feed_url_map
+
+    db = _fresh_db()
+    original = "https://www.latent.space/feed?section=ainews"
+    canonical = "https://latent.space/feed?section=ainews"
+    db.execute(
+        "INSERT INTO feed (id,url,name) VALUES (7,?,?)",
+        [canonical, "Latent Space AINews"],
+    )
+    db.execute(
+        "INSERT INTO entry (id_feed,title,link,content,date,lastSeen) VALUES (7,?,?,?,?,?)",
+        [
+            "AI update",
+            "https://example.com/story",
+            "Article body. " * 20,
+            int(time.time()),
+            int(time.time()),
+        ],
+    )
+    db.commit()
+    calls = []
+
+    def redirect(url, **kwargs):
+        calls.append(url)
+        assert kwargs["allow_redirects"] is False
+        assert kwargs["stream"] is True
+        return SimpleNamespace(
+            status_code=status, headers={"Location": canonical}, close=lambda: None
+        )
+
+    monkeypatch.setattr(requests, "get", redirect)
+    source = {
+        "name": "latent_space",
+        "display_name": "Latent Space AINews",
+        "type": "rss",
+        "category": "ai_news",
+        "use_content": True,
+        "url": original,
+    }
+    cfg = {"sources": [source]}
+
+    assert rp._ensure_rss_subscriptions(cfg, db, "ai_news") == []
+    assert source["url"] == canonical
+    assert db.execute("SELECT COUNT(*) FROM feed").fetchone()[0] == 1
+    full, base = build_feed_url_map(db)
+    items = DataSource.create(source, {}, db=db, full_map=full, base_map=base).fetch()
+    assert len(items) == 1 and items[0].title == "AI update"
+    assert calls == [original]
+
+
+@pytest.mark.parametrize(
+    "status,target",
+    [
+        (200, "https://latent.space/feed?section=ainews"),
+        (302, "https://latent.space/feed?section=ainews"),
+        (301, "https://latent.space/feed"),
+        (301, "https://latent.space/feed?section=other"),
+        (301, "http://latent.space/feed?section=ainews"),
+    ],
+)
+def test_subscription_redirect_does_not_conflate_unverified_or_different_feeds(
+    monkeypatch, status, target
+):
+    from types import SimpleNamespace
+    import requests
+    from freshrss_admin import resolve_existing_subscription_url
+
+    db = _fresh_db()
+    original = "https://www.latent.space/feed?section=ainews"
+    db.execute("INSERT INTO feed (url,name) VALUES (?,?)", [target, "AI News"])
+    monkeypatch.setattr(
+        requests,
+        "get",
+        lambda *a, **k: SimpleNamespace(
+            status_code=status, headers={"Location": target}, close=lambda: None
+        ),
+    )
+    assert (
+        resolve_existing_subscription_url(db, url=original, name="AI News") == original
+    )
+
+
+def test_subscription_redirect_no_network_for_new_or_exact_feed(monkeypatch):
+    import requests
+    from freshrss_admin import resolve_existing_subscription_url
+
+    db = _fresh_db()
+
+    def blocked(*args, **kwargs):
+        raise AssertionError("Unnecessary network request")
+
+    monkeypatch.setattr(requests, "get", blocked)
+    url = "https://example.com/feed?section=new"
+    assert resolve_existing_subscription_url(db, url=url, name="New") == url
+    db.execute("INSERT INTO feed (url,name) VALUES (?,?)", [url, "New"])
+    assert resolve_existing_subscription_url(db, url=url, name="New") == url
+
+
+def test_subscription_redirect_failure_preserves_configured_url(monkeypatch):
+    import requests
+    from freshrss_admin import resolve_existing_subscription_url
+
+    db = _fresh_db()
+    db.execute(
+        "INSERT INTO feed (url,name) VALUES (?,?)",
+        ["https://latent.space/feed?section=ainews", "AI News"],
+    )
+
+    def unavailable(*args, **kwargs):
+        raise requests.ConnectionError("offline")
+
+    monkeypatch.setattr(requests, "get", unavailable)
+    url = "https://www.latent.space/feed?section=ainews"
+    assert resolve_existing_subscription_url(db, url=url, name="AI News") == url
