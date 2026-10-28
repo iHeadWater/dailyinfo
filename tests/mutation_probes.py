@@ -127,6 +127,17 @@ PROBES: tuple[Probe, ...] = (
         "::test_every_source_prompt_template_resolves",
     ),
     Probe(
+        # Without this clause the model occasionally translates English paper
+        # titles into Chinese; the briefing then loses the string readers use
+        # to find the paper.
+        label="paper titles stay in the original language",
+        path="config/sources.json",
+        old="不要翻译标题",
+        new="可以翻译标题",
+        test="tests/test_run_pipelines.py"
+        "::test_one_line_summary_forbids_title_translation",
+    ),
+    Probe(
         # Tolerant matching would treat the query-stripped base URL as the
         # same feed; a section feed must be matched exactly.
         label="subscription matching is exact, not query-stripped",

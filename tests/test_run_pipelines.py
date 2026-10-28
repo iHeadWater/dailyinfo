@@ -141,6 +141,23 @@ def test_every_source_prompt_template_resolves():
     assert {ph for _, ph in used} <= {"content", "date"}, used
 
 
+def test_one_line_summary_forbids_title_translation():
+    """Paper titles must stay in the source language; only summaries are Chinese.
+
+    The model occasionally translates English titles when the template asks
+    for a Chinese briefing without an explicit keep-original-title rule.
+    """
+    import json
+    from pathlib import Path
+
+    cfg_path = Path(__file__).parent.parent / "config" / "sources.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    tmpl = cfg["prompt_templates"]["one_line_summary"]
+
+    assert "不要翻译标题" in tmpl
+    assert "原始标题" in tmpl
+
+
 def test_get_freshrss_user_falls_back_to_env_user(tmp_path, monkeypatch):
     import run_pipelines as rp
 
