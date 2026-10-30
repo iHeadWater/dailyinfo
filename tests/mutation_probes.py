@@ -131,8 +131,13 @@ PROBES: tuple[Probe, ...] = (
         # same feed; a section feed must be matched exactly.
         label="subscription matching is exact, not query-stripped",
         path="scripts/freshrss_admin.py",
-        old='"SELECT 1 FROM feed WHERE url = ?", [url]',
-        new='"SELECT 1 FROM feed WHERE url = ?", [url.split("?")[0]]',
+        old=(
+            'present = db.execute("SELECT 1 FROM feed WHERE url = ?", [url]).fetchone()'
+        ),
+        new=(
+            'present = db.execute("SELECT 1 FROM feed WHERE url = ?", '
+            '[url.split("?")[0]]).fetchone()'
+        ),
         test="tests/test_freshrss_admin.py"
         "::test_ensure_subscription_ignores_query_stripped_variants",
     ),
