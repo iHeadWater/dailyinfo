@@ -302,6 +302,56 @@ def test_security_guard_blocks_secrets_and_debug_paths():
         validate_item(item)
 
 
+def test_authorization_in_paper_title_survives_canonical_round_trip(tmp_path):
+    title = (
+        "From Review to Authorization: Key-Isolated Threshold Signing for LLM Agents"
+    )
+    bundle = _bundle("arxiv")
+    bundle.items[0].title = title
+    bundle.items[0].summary = f"The paper {title} describes secure agent signing."
+    bundle.briefing.body = f"25. **{title}**\n   > A paper about secure agent signing."
+    validate_bundle(bundle)
+    store = PublicationStore(tmp_path)
+    store.save(bundle)
+    restored = store.load_bundle(bundle.briefing.id)
+    assert restored.items[0].title == title
+    assert restored.briefing.body == bundle.briefing.body
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "Authorization: opaque-demo-credential",
+        "Heading\n\tAUTHORIZATION:\tCustom opaque-demo-credential",
+        "> Authorization: Custom opaque-demo-credential",
+        "- Authorization: Custom opaque-demo-credential",
+        "curl -H 'Authorization: Custom opaque-demo-credential'",
+        'headers = "Authorization: Custom opaque-demo-credential"',
+        "Request used Authorization: Basic ZGVtbzpkZW1v",
+        'Request used Authorization: Digest username="demo", response="example"',
+        "Request used Authorization: Negotiate ZGVtby10b2tlbg==",
+        "Request used Authorization: Bearer demo-credential",
+        "Request used Bearer demo-credential",
+        "API_KEY=demo-credential",
+        "sk-demo-not-a-real-credential-1234567890",
+        "Debug file at /home/demo/token.json",
+        "Traceback (most recent call last)",
+        "Internal endpoint http://127.0.0.1:8080",
+        "https://hooks.slack.com/services/demo/example/credential",
+        "https://discord.com/api/webhooks/123456789/demo-credential",
+    ],
+)
+def test_security_guard_still_rejects_headers_and_other_secrets(content):
+    bundle = _bundle("arxiv")
+    bundle.briefing.body = content
+    with pytest.raises(PublicationValidationError):
+        validate_bundle(bundle)
+    bundle = _bundle("arxiv")
+    bundle.items[0].summary = content
+    with pytest.raises(PublicationValidationError):
+        validate_bundle(bundle)
+
+
 def test_security_guard_allows_prose_authorization_titles():
     # Regression: 2026-10-27/28 arxiv briefings were blocked because paper
     # titles containing "Authorization:" were mistaken for HTTP auth headers.

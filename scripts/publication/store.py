@@ -450,6 +450,10 @@ class PublicationStore:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(content)
                 handle.flush()
+                # Opt-in sharing is limited to content; group ownership is
+                # configured on the publication directory by the deployer.
+                if os.environ.get("DAILYINFO_PUBLICATION_GROUP_READ") == "1":
+                    os.fchmod(handle.fileno(), 0o640)
                 os.fsync(handle.fileno())
             os.replace(temp_name, path)
             try:

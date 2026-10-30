@@ -16,6 +16,8 @@ nav:
   - System Architecture: architecture.md
   - CLI Reference: cli.md
   - Agent Config: agent-config.md
+  - Read-only MCP: mcp.md
+  - Collection-only deployment: production.md
   - Information Sources: sources.md
 
 markdown_extensions:

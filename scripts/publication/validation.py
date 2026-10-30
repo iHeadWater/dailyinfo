@@ -22,15 +22,21 @@ from .models import (
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _SECRET_PATTERNS = (
-    # Require a real auth scheme so prose such as paper titles
-    # ("From Review to Authorization: Key-Isolated ...") is not blocked.
+    # Generic headers require line/quoted-header context so prose titles
+    # containing "Authorization: Key-Isolated ..." remain publishable.
+    re.compile(
+        r"""(?im)(?:^[ \t]*(?:[-*>][ \t]+)*|["'])Authorization[ \t]*:[ \t]*\S+"""
+    ),
     re.compile(
         r"(?i)\bAuthorization\s*:\s*"
         r"(?:Bearer|Basic|Digest|Negotiate|Token|ApiKey|Signature)\b"
     ),
-    # Credential-shaped values only: prose such as "Bearer token rotation"
-    # must not be treated as a leaked token (2026-10-28 hardening).
-    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b"),
+    # Keep short structured credentials blocked without rejecting prose
+    # such as "Bearer token rotation".
+    re.compile(
+        r"(?i)\bBearer\s+(?:[A-Za-z0-9._~+/=-]{16,}\b|"
+        r"[A-Za-z0-9]+[-_.~+/=][A-Za-z0-9._~+/=-]+)"
+    ),
     re.compile(
         r"https?://(?:canary\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9._-]+"
     ),

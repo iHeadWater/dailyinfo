@@ -1,0 +1,15 @@
+[Unit]
+Description=Collect and generate DailyInfo content (no publishing)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@SERVICE_ROOT@
+EnvironmentFile=@SERVICE_ROOT@/secrets/producer.env
+# Missing credentials skip the job; do not generate fake or placeholder content.
+ExecCondition=/bin/sh -c 'test -n "$$DEEPSEEK_API_KEY"'
+ExecStart=/usr/bin/flock -n /run/lock/dailyinfo-collect.lock /usr/bin/docker compose --env-file @SERVICE_ROOT@/deploy.env -p dailyinfo-production -f @SERVICE_ROOT@/compose.production.yml run --rm --no-deps collector
+TimeoutStartSec=2h
+UMask=0022
