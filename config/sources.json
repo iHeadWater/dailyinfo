@@ -734,7 +734,12 @@
       "url": "https://openreview.net/group?id=ICLR.cc%2F2027%2FConference",
       "enabled": true,
       "reviews": {
-        "rating_options": ["1", "2", "3", "4"]
+        "rating_options": [
+          "1",
+          "2",
+          "3",
+          "4"
+        ]
       }
     },
     {
@@ -745,7 +750,17 @@
       "provider": "openreview",
       "venue_id": "ICML.cc/2027/Conference",
       "url": "https://openreview.net/group?id=ICML.cc%2F2027%2FConference",
-      "enabled": true
+      "enabled": true,
+      "reviews": {
+        "rating_options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6"
+        ]
+      }
     },
     {
       "name": "openreview_neurips_2026",
@@ -757,7 +772,21 @@
       "url": "https://openreview.net/group?id=NeurIPS.cc%2F2026%2FConference",
       "enabled": true,
       "poll_interval_hours": 168,
-      "full_rescan_interval_days": 30
+      "full_rescan_interval_days": 30,
+      "reviews": {
+        "rating_options": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10"
+        ]
+      }
     }
   ],
   "discord_channels": {

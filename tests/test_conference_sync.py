@@ -412,7 +412,7 @@ def _sample(store, tmp_path, *, now_ms=20_000, defaults=None):
     provider = FakeProvider(
         [
             _page_with_replies(
-                [_paper(1, 11_000)],
+                [_paper(1, 30_000)],
                 [_reply(1, "forum-1"), _reply(2, "forum-1")],
                 "forum-1",
                 total=1,
@@ -447,6 +447,7 @@ def test_review_sample_uses_latest_n_and_marks_completed(tmp_path):
     assert call["include_replies"] is True
     state = store.venue_state("iclr")
     assert state.reviews_sample_completed_ms == 20_000
+    assert state.watermark_ms == 11_000
     assert store.conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 2
     store.close()
 

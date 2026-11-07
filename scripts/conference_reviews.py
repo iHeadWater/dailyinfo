@@ -218,8 +218,13 @@ def _record(
         "reply_mdate": int(reply.get("mdate") or 0),
     }
     if kind == "official_review":
+        rating = content_value(content, "rating", "")
+        if rating in (None, ""):
+            rating = content_value(content, "recommendation", "")
+        if rating in (None, ""):
+            rating = content_value(content, "overall_recommendation", "")
         record.update(
-            rating=str(content_value(content, "rating", "") or ""),
+            rating=str(rating or ""),
             confidence=str(content_value(content, "confidence", "") or ""),
             soundness=str(content_value(content, "soundness", "") or ""),
             presentation=str(content_value(content, "presentation", "") or ""),

@@ -56,3 +56,9 @@ def test_conference_defaults_are_present():
     assert reviews["page_size"] <= 1000
     assert reviews["request_interval_seconds"] > 0
     assert reviews["max_pages_per_run"] > 0
+
+
+def test_each_enabled_conference_source_has_a_rating_scale():
+    for source in _conference_sources():
+        options = source.get("reviews", {}).get("rating_options", [])
+        assert len(options) >= 2, source["name"]

@@ -1091,6 +1091,19 @@ PROBES: tuple[Probe, ...] = (
             "::test_incremental_reviews_never_reach_before_watch_from"
         ),
     ),
+    Probe(
+        # A sample reads the latest N submissions; advancing the streaming
+        # watermark from it would skip everything between the real cursor and
+        # the sample window.
+        label="a review sample does not advance the streaming watermark",
+        path="scripts/conference_store.py",
+        old='            if run["mode"] != "review_sample" and candidate is not None:',
+        new="            if candidate is not None:",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_review_sample_uses_latest_n_and_marks_completed"
+        ),
+    ),
 )
 
 

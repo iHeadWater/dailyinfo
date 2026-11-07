@@ -93,6 +93,8 @@ Pipeline 6 is deliberately different: it ingests **submission metadata and publi
 
 Reviews use `details=replies` on the same submission page (no per-forum requests). Only replies whose `readers` contain `everyone` are stored, in the `reviews` table plus a derived `paper_review_summary`. The first review run stores a one-time sample of the latest `reviews.sample_limit` submissions (default 50) and then sets `reviews_watch_from_ms`; subsequent incremental and weekly rescan passes use that cutoff, so historical reviews before it are never backfilled. `reviews.max_pages_per_run` pauses a run with a resumable cursor, and `reviews.request_interval_seconds` spaces page requests.
 
+Each source must declare `reviews.rating_options`: ICLR 2027 is `1..4` (observed), ICML 2027 is `1..6` and NeurIPS 2026 is `1..10` (provisional, from the published review forms; verify against the live invitation when the venue opens). Without a scale, raw ratings are still stored but `paper_review_summary.rating_count` stays 0 and the derived signals are disabled. The review extractor also accepts `recommendation` and `overall_recommendation` when a venue names its score field that way.
+
 ### Data Flow
 
 1. **Collection**: FreshRSS for RSS; `datasource.py` handles scraping/API; `openreview_provider.py` + `conference_sync.py` handle conference submissions

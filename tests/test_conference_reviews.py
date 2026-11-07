@@ -158,3 +158,21 @@ def test_private_field_is_stripped_from_raw_json():
     review = next(row for row in rows if row["reply_id"] == "review-1")
     assert "hidden reviewer identity" not in review["raw_json"]
     assert "private_note" not in review["raw_json"]
+
+
+@pytest.mark.parametrize("field", ["recommendation", "overall_recommendation"])
+def test_recommendation_field_is_used_when_rating_is_absent(field):
+    from conference_reviews import build_page_review_data
+
+    data = _fixture()
+    review = data["replies"][0]
+    review["content"].pop("rating")
+    review["content"][field] = {"value": "8: accept"}
+
+    rows, summaries = build_page_review_data(
+        data["replies"], _capabilities(), _config()
+    )
+
+    stored = next(row for row in rows if row["reply_id"] == "review-1")
+    assert stored["rating"] == "8: accept"
+    assert summaries[0]["rating_mean"] == 0.8
