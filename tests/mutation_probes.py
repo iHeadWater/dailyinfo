@@ -1058,6 +1058,78 @@ PROBES: tuple[Probe, ...] = (
             "::test_has_real_briefing_today_false_for_failure_placeholders"
         ),
     ),
+    Probe(
+        # Without the success marker, catch-up retries a job that already
+        # finished and the daily state never settles.
+        label="a successful job is recorded for its scheduled day",
+        path="scripts/scheduler.py",
+        old="        job.success_date = today",
+        new='        job.success_date = ""',
+        test="tests/test_scheduler.py::test_success_clears_retry_state",
+    ),
+    Probe(
+        # Cron lines are the schedule; catch-up must replay them in order.
+        label="catch-up replays jobs in schedule order",
+        path="scripts/scheduler.py",
+        old="    jobs.sort(key=lambda job: (job.hour, job.minute))",
+        new="    jobs.sort(key=lambda job: (job.hour, job.minute), reverse=True)",
+        test="tests/test_scheduler.py::test_catch_up_runs_only_jobs_due_today_in_order",
+    ),
+    Probe(
+        # A healthcheck that cannot go red is the silent-failure mode this
+        # whole wrapper exists to prevent.
+        label="healthcheck reports an overdue job",
+        path="scripts/scheduler.py",
+        old=(
+            "    if failures:\n"
+            '        print("unhealthy: overdue jobs without a success today", flush=True)\n'
+            "        for failure in failures:\n"
+            '            print(f"  {failure}", flush=True)\n'
+            "        return 1\n"
+            "    return 0"
+        ),
+        new=("    if failures:\n" "        return 0\n" "    return 0"),
+        test="tests/test_scheduler.py::test_healthcheck_turns_red_for_an_overdue_job",
+    ),
+    Probe(
+        # Two jobs writing the same data root is the corruption risk the lock
+        # exists for; a busy lock must skip, not proceed.
+        label="a busy lock makes run-job skip",
+        path="scripts/scheduler.py",
+        old=(
+            "    lock = try_acquire_lock()\n"
+            "    if lock is None:\n"
+            '        log(f"job {name}: skipped, another job holds the lock", now=now)\n'
+            "        return 0"
+        ),
+        new=(
+            "    lock = try_acquire_lock()\n"
+            "    if False:\n"
+            '        log(f"job {name}: skipped, another job holds the lock", now=now)\n'
+            "        return 0"
+        ),
+        test="tests/test_scheduler.py::test_run_job_lock_busy_skips_without_running",
+    ),
+    Probe(
+        # A container whose local clock disagrees with the crontab timezone
+        # runs every job eight hours early or late, and nothing else notices.
+        label="verify-env rejects a local timezone mismatch",
+        path="scripts/scheduler.py",
+        old="    if local_offset != expected_offset:",
+        new="    if False:",
+        test="tests/test_scheduler.py::test_verify_env_rejects_a_timezone_mismatch",
+    ),
+    Probe(
+        # Collection-only mode must never quietly schedule a Discord push.
+        label="the collect crontab contains no push job",
+        path="deploy/crontab.collect",
+        old="30 4 * * * python -m scripts.scheduler run-job ai_news",
+        new=(
+            "30 4 * * * python -m scripts.scheduler run-job ai_news\n"
+            "30 5 * * * python -m scripts.scheduler run-job push_early"
+        ),
+        test="tests/test_scheduler.py::test_collect_crontab_is_full_minus_push_jobs",
+    ),
 )
 
 
