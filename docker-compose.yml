@@ -1,14 +1,13 @@
-# DailyInfo Docker Compose
+# DEV ONLY.
 #
-# Environment separation is controlled by DAILYINFO_ENV (dev / staging / prod).
-# Each environment uses a different data directory under ~/.myagentdata/.
+# Production runs the self-contained stack:
+#   docker compose up -d            # compose.yml -> production + MCP
 #
-# Usage:
-#   DAILYINFO_ENV=prod  docker compose up -d     # production (default)
-#   DAILYINFO_ENV=dev   docker compose up -d     # development
-#   DAILYINFO_ENV=staging docker compose up -d   # staging
-#
-# The container name and data path are derived from DAILYINFO_ENV automatically.
+# This file exists for `dailyinfo start/stop/restart` during development. It
+# publishes a host port and uses a separate container name and data directory.
+# Do not point it at the production data root: a second FreshRSS writer on the
+# same SQLite database corrupts it.
+name: dailyinfo-dev
 
 x-env-common: &env-common
   TZ: Asia/Shanghai
@@ -17,18 +16,20 @@ x-env-common: &env-common
 services:
   freshrss:
     image: freshrss/freshrss:latest
-    container_name: dailyinfo_freshrss
+    container_name: dailyinfo-freshrss-dev
     ports:
       # dev: 8082, staging: 8083, prod: 8081 (default)
       - "${FRESHRSS_PORT:-8081}:80"
     volumes:
-      - ${DAILYINFO_DATA_ROOT:-~/.myagentdata/dailyinfo}/freshrss/data:/var/www/FreshRSS/data
+      # Deliberately a dev-only variable: the production docs put
+      # DAILYINFO_DATA_ROOT in .env, and Compose loads .env even with -f.
+      - ${DAILYINFO_DEV_DATA_ROOT:-~/.myagentdata/dailyinfo-dev}/freshrss/data:/var/www/FreshRSS/data
     environment:
       <<: *env-common
     restart: always
     networks:
-      - dailyinfo_net
+      - dailyinfo_dev_net
 
 networks:
-  dailyinfo_net:
+  dailyinfo_dev_net:
     driver: bridge

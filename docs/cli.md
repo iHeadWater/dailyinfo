@@ -35,16 +35,20 @@ This command:
 2. Creates the workspace under `~/.myagentdata/dailyinfo/` (`freshrss/data`, `briefings/*`, `pushed/*`).
 3. Installs Python dependencies via `uv sync` (falls back to `pip install -e .`).
 
-**It does NOT write to the host crontab.** Scheduling is expected to be driven by any external cron-like trigger (system crontab, systemd timer, container scheduler, or an agent runtime such as myopenclaw's hermes cron — see [Agent Config](agent-config.md)).
+**It does NOT write to the host crontab.** Production scheduling runs inside the dailyinfo container stack (`compose.yml`, supercronic + `deploy/crontab.*`) — see [Production Deployment](production.md). External cron, systemd timers, or agent runtimes remain supported for custom setups (see [Agent Config](agent-config.md)).
 
 ## Commands
 
-### Service Management
+### Service Management (development)
+
+These commands manage the dev-only `docker-compose.yml` (container
+`dailyinfo-freshrss-dev`, data root `DAILYINFO_DEV_DATA_ROOT`). Production uses
+`docker compose up -d` — see [Production Deployment](production.md).
 
 ```bash
-dailyinfo start      # Start FreshRSS (Docker)
-dailyinfo stop       # Stop services
-dailyinfo restart    # Restart FreshRSS
+dailyinfo start      # Start the development FreshRSS
+dailyinfo stop       # Stop the development services
+dailyinfo restart    # Restart the development FreshRSS
 ```
 
 ### Pipeline Execution

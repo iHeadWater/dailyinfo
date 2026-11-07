@@ -1015,7 +1015,7 @@ def _make_dlut_news_sources_json(path, templates_extra=None):
                 "display_name": "大连理工大学 - 综合新闻",
                 "category": "resource",
                 "enabled": True,
-                "news_group": "dlut_news",
+                "news_group": "dlut_notices",
                 "section": "综合新闻",
                 "url": "https://news.dlut.test/zhxw.htm",
                 "base_url": "https://news.dlut.test/",
@@ -1035,7 +1035,7 @@ def _make_dlut_news_sources_json(path, templates_extra=None):
                 "display_name": "大连理工大学 - 学术科研",
                 "category": "resource",
                 "enabled": True,
-                "news_group": "dlut_news",
+                "news_group": "dlut_notices",
                 "section": "学术科研",
                 "url": "https://news.dlut.test/xsky.htm",
                 "base_url": "https://news.dlut.test/",
@@ -1059,7 +1059,7 @@ def _make_dlut_news_sources_json(path, templates_extra=None):
 def test_pipeline_resource_unified_news_saves_single_file(
     monkeypatch, tmp_path, fake_requests, fake_call_ai
 ):
-    """8 news sources → 1 dlut_news_briefing file, recruitment untouched."""
+    """8 news sources → 1 dlut_notices_briefing file, recruitment untouched."""
     import run_pipelines as rp
     from paths import BRIEFINGS_DIR
 
@@ -1076,10 +1076,10 @@ def test_pipeline_resource_unified_news_saves_single_file(
     rp.run_pipeline_resource()
 
     today = rp.DATE  # the code dates files in Asia/Shanghai
-    unified = BRIEFINGS_DIR / "resource" / f"dlut_news_briefing_{today}.md"
+    unified = BRIEFINGS_DIR / "resource" / f"dlut_notices_briefing_{today}.md"
     assert unified.exists(), "expected unified briefing file"
     body = unified.read_text(encoding="utf-8")
-    assert "大连理工大学校园动态" in body
+    assert "大连理工大学通知与资源" in body
     assert "[AI-SUMMARY]" in body
 
     # Individual source files must NOT exist
@@ -1103,8 +1103,8 @@ def test_pipeline_resource_unified_news_idempotent(
     today = rp.DATE  # the code dates files in Asia/Shanghai
     resource_dir = BRIEFINGS_DIR / "resource"
     resource_dir.mkdir(parents=True, exist_ok=True)
-    existing = resource_dir / f"dlut_news_briefing_{today}.md"
-    existing.write_text("# 大连理工大学校园动态\n\nReal content.\n", encoding="utf-8")
+    existing = resource_dir / f"dlut_notices_briefing_{today}.md"
+    existing.write_text("# 大连理工大学通知与资源\n\nReal content.\n", encoding="utf-8")
 
     def boom(*_args, **_kwargs):
         raise AssertionError("network should not be hit when skipping")
@@ -1116,7 +1116,7 @@ def test_pipeline_resource_unified_news_idempotent(
     saved = rp.run_pipeline_resource()
 
     assert saved == 0
-    assert existing.read_text(encoding="utf-8").startswith("# 大连理工大学校园动态")
+    assert existing.read_text(encoding="utf-8").startswith("# 大连理工大学通知与资源")
 
 
 def test_pipeline_resource_url_dedup_across_sections(
@@ -1151,7 +1151,7 @@ def test_pipeline_resource_url_dedup_across_sections(
                         "display_name": "Section A",
                         "category": "resource",
                         "enabled": True,
-                        "news_group": "dlut_news",
+                        "news_group": "dlut_notices",
                         "section": "综合新闻",
                         "url": "https://dlut.test/a",
                         "base_url": "https://dlut.test/",
@@ -1171,7 +1171,7 @@ def test_pipeline_resource_url_dedup_across_sections(
                         "display_name": "Section B",
                         "category": "resource",
                         "enabled": True,
-                        "news_group": "dlut_news",
+                        "news_group": "dlut_notices",
                         "section": "学术科研",
                         "url": "https://dlut.test/b",
                         "base_url": "https://dlut.test/",

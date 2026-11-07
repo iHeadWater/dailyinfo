@@ -422,7 +422,7 @@ def test_a_resource_news_source_fetch_failure_is_recorded_as_a_gap(monkeypatch):
                         "type": "scrape",
                         "url": "https://example.org",
                         "display_name": "DLUT",
-                        "news_group": rp._DLUT_NEWS_GROUP,
+                        "news_group": rp._DLUT_NOTICES_GROUP,
                     }
                 ]
             },

@@ -2090,23 +2090,20 @@ def run_pipeline_code() -> int:
 
 
 # =====================================================================
-# PIPELINE 5: University News (DLUT HTML + API)
+# PIPELINE 5: DLUT Notices & Recruitment (HTML + API)
 # =====================================================================
-_DLUT_NEWS_GROUP = "dlut_news"
-_DLUT_NEWS_SECTION_ORDER = [
-    "综合新闻",
-    "人才培养",
-    "学术科研",
-    "合作交流",
-    "一线风采",
-    "学院动态",
+_DLUT_NOTICES_GROUP = "dlut_notices"
+_DLUT_NOTICES_SECTION_ORDER = [
+    "科研项目申报",
+    "研究生通知",
+    "教学通知",
 ]
 
 
 def _run_pipeline_resource_publication() -> int:
-    """Run DLUT news/recruitment adapters and finalize canonical resource data."""
+    """Run DLUT notices/recruitment adapters and finalize canonical resource data."""
 
-    log("=== Pipeline 5: University News & Recruitment ===")
+    log("=== Pipeline 5: DLUT Notices & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
     model_default = defaults.get("model", "deepseek-v4-flash")
     collector = PublicationRunCollector(
@@ -2114,17 +2111,17 @@ def _run_pipeline_resource_publication() -> int:
     )
     saved = 0
 
-    news_sources = [
+    notice_sources = [
         s
         for s in cfg["sources"]
         if s.get("category") == "resource"
-        and s.get("news_group") == _DLUT_NEWS_GROUP
+        and s.get("news_group") == _DLUT_NOTICES_GROUP
         and s.get("enabled", True) is not False
     ]
-    if news_sources and not _has_real_briefing_today(_DLUT_NEWS_GROUP, "resource"):
+    if notice_sources and not _has_real_briefing_today(_DLUT_NOTICES_GROUP, "resource"):
         records: list[tuple[dict, str, object, datetime.datetime]] = []
         seen_urls: set[str] = set()
-        for source_cfg in news_sources:
+        for source_cfg in notice_sources:
             ds = DataSource.create(source_cfg, defaults)
             section = source_cfg.get("section", ds.display_name)
             try:
@@ -2133,6 +2130,12 @@ def _run_pipeline_resource_publication() -> int:
             except Exception as exc:
                 collector.add_failure(f"{ds.name}: fetch failed: {exc}")
                 continue
+            filtered_out = getattr(ds, "filtered_out", [])
+            if filtered_out:
+                log(
+                    f"    {ds.name}: filtered {len(filtered_out)}/"
+                    f"{getattr(ds, '_total_before_filter', 0)} item(s) by keywords"
+                )
             for item in raw_items:
                 if item.url and item.url in seen_urls:
                     continue
@@ -2157,7 +2160,9 @@ def _run_pipeline_resource_publication() -> int:
                     f"{item.title}\n{item.url}"
                 )
             items_text = "\n".join(entries)
-            tmpl = prompt_templates.get("university_news_unified", "")
+            tmpl = prompt_templates.get(
+                "resource_notices_unified"
+            ) or prompt_templates.get("university_news_unified", "")
             base = tmpl.replace("{items}", items_text).replace("{date}", DATE)
             prompt = structured_prompt(base, items_text, refs)
             try:
@@ -2175,25 +2180,27 @@ def _run_pipeline_resource_publication() -> int:
                 if results:
                     content = _render_resource_publication(
                         results,
-                        title="大连理工大学校园动态",
+                        title="大连理工大学通知与资源",
                         footer=(
-                            f"---\n*共 {len(results)} 条动态，来自 "
-                            f"{len(news_sources)} 个信源汇总*"
+                            f"---\n*共 {len(results)} 条通知，来自 "
+                            f"{len(notice_sources)} 个信源汇总*"
                         ),
                     )
-                    save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", content)
+                    save(
+                        "resource", f"{_DLUT_NOTICES_GROUP}_briefing_{DATE}.md", content
+                    )
                     collector.add(results)
-                    collector.add_body(content, source_name=_DLUT_NEWS_GROUP)
+                    collector.add_body(content, source_name=_DLUT_NOTICES_GROUP)
                     saved += 1
-                    log(f"    -> saved {_DLUT_NEWS_GROUP}_briefing_{DATE}.md")
+                    log(f"    -> saved {_DLUT_NOTICES_GROUP}_briefing_{DATE}.md")
             except Exception as exc:
                 collector.add_failure(
-                    f"{_DLUT_NEWS_GROUP}: invalid structured AI output: {exc}"
+                    f"{_DLUT_NOTICES_GROUP}: invalid structured AI output: {exc}"
                 )
                 _save_placeholder(
                     "resource",
-                    f"{_DLUT_NEWS_GROUP}_briefing_{DATE}_failed.md",
-                    f"# 大连理工大学校园动态 - {DATE}\n\n⚠️ AI 生成失败\n",
+                    f"{_DLUT_NOTICES_GROUP}_briefing_{DATE}_failed.md",
+                    f"# 大连理工大学通知与资源 - {DATE}\n\n⚠️ AI 生成失败\n",
                 )
         else:
             log("    no updates -> no canonical publication")
@@ -2202,7 +2209,7 @@ def _run_pipeline_resource_publication() -> int:
         if (
             source_cfg.get("category") != "resource"
             or source_cfg.get("enabled") is False
-            or source_cfg.get("news_group") == _DLUT_NEWS_GROUP
+            or source_cfg.get("news_group") == _DLUT_NOTICES_GROUP
         ):
             continue
         ds = DataSource.create(source_cfg, defaults)
@@ -2217,6 +2224,12 @@ def _run_pipeline_resource_publication() -> int:
             collector.add_failure(f"{ds.name}: fetch failed: {exc}")
             log(f"    FETCH ERR: {exc}")
             continue
+        filtered_out = getattr(ds, "filtered_out", [])
+        if filtered_out:
+            log(
+                f"    {ds.name}: filtered {len(filtered_out)}/"
+                f"{getattr(ds, '_total_before_filter', 0)} item(s) by keywords"
+            )
         if not items:
             _save_placeholder(
                 "resource",
@@ -2268,17 +2281,17 @@ def _run_pipeline_resource_publication() -> int:
     return saved
 
 
-def _generate_unified_news(
-    news_sources: list,
+def _generate_unified_notices(
+    notice_sources: list,
     defaults: dict,
     prompt_templates: dict,
     model_default: str,
 ) -> int:
-    """Batch-fetch all news-group sources, merge by section, URL-dedup, one AI call."""
+    """Batch-fetch all notice-group sources, merge by section, URL-dedup, one AI call."""
     sections: dict = {}  # section_name -> list[Item]
     seen_urls: set = set()
 
-    for src in news_sources:
+    for src in notice_sources:
         ds = DataSource.create(src, defaults)
         section = src.get("section", ds.display_name)
         log(f"  {ds.name} [{section}]...")
@@ -2302,15 +2315,13 @@ def _generate_unified_news(
     total = sum(len(v) for v in sections.values())
 
     if total == 0:
-        placeholder = (
-            f"# 大连理工大学校园动态 - {DATE}\n\n" f"\U0001f4ed 过去 48 小时无新内容\n"
-        )
-        save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", placeholder)
-        log("    no updates -> placeholder")
-        return 1
+        # An empty day is not worth a Discord message: the old school-news
+        # placeholder was exactly the noise this digest replaced.
+        log("    no updates -> nothing to publish")
+        return 0
 
     section_parts = []
-    for section_name in _DLUT_NEWS_SECTION_ORDER:
+    for section_name in _DLUT_NOTICES_SECTION_ORDER:
         items = sections.get(section_name, [])
         if not items:
             continue
@@ -2318,18 +2329,20 @@ def _generate_unified_news(
         section_parts.append(f"### {section_name}\n" + "\n".join(lines))
 
     items_text = "\n\n".join(section_parts)
-    tmpl = prompt_templates.get("university_news_unified", "")
+    tmpl = prompt_templates.get("resource_notices_unified") or prompt_templates.get(
+        "university_news_unified", ""
+    )
     prompt = tmpl.replace("{items}", items_text).replace("{date}", DATE)
 
     try:
         content_text = call_ai(prompt, model=model_default, max_tokens=3000)
         full_content = (
-            f"# 大连理工大学校园动态 - {DATE}\n\n"
+            f"# 大连理工大学通知与资源 - {DATE}\n\n"
             f"{content_text}\n\n"
-            f"---\n*共 {total} 条动态，来自 {len(news_sources)} 个信源汇总*\n"
+            f"---\n*共 {total} 条通知，来自 {len(notice_sources)} 个信源汇总*\n"
         )
-        save("resource", f"{_DLUT_NEWS_GROUP}_briefing_{DATE}.md", full_content)
-        log(f"    -> saved {_DLUT_NEWS_GROUP}_briefing_{DATE}.md")
+        save("resource", f"{_DLUT_NOTICES_GROUP}_briefing_{DATE}.md", full_content)
+        log(f"    -> saved {_DLUT_NOTICES_GROUP}_briefing_{DATE}.md")
         return 1
     except Exception as e:
         log(f"    AI ERR: {e}")
@@ -2340,28 +2353,28 @@ def run_pipeline_resource() -> int:
     if PUBLICATION_INTEGRATION:
         return _run_pipeline_resource_publication()
 
-    log("=== Pipeline 5: University News & Recruitment ===")
+    log("=== Pipeline 5: DLUT Notices & Recruitment ===")
     cfg, defaults, prompt_templates = _load_sources()
     model_default = defaults.get("model", "deepseek-flash")
     saved = 0
 
-    # --- Part A: unified news briefing (8 news sources -> 1 file) ---
-    news_sources = [
+    # --- Part A: unified notices briefing (research/grad/teaching -> 1 file) ---
+    notice_sources = [
         s
         for s in cfg["sources"]
         if s.get("category") == "resource"
-        and s.get("news_group") == _DLUT_NEWS_GROUP
+        and s.get("news_group") == _DLUT_NOTICES_GROUP
         and s.get("enabled", True) is not False
     ]
-    if news_sources:
-        if _has_real_briefing_today(_DLUT_NEWS_GROUP, "resource"):
+    if notice_sources:
+        if _has_real_briefing_today(_DLUT_NOTICES_GROUP, "resource"):
             log(
-                f"  unified news briefing already exists for {DATE}, skip "
-                f"(use --force {_DLUT_NEWS_GROUP} to regenerate)"
+                f"  unified notices briefing already exists for {DATE}, skip "
+                f"(use --force {_DLUT_NOTICES_GROUP} to regenerate)"
             )
         else:
-            saved += _generate_unified_news(
-                news_sources, defaults, prompt_templates, model_default
+            saved += _generate_unified_notices(
+                notice_sources, defaults, prompt_templates, model_default
             )
 
     # --- Part B: recruitment sources (per-source, logic unchanged) ---
@@ -2369,7 +2382,7 @@ def run_pipeline_resource() -> int:
         if (
             source_cfg.get("category") != "resource"
             or source_cfg.get("enabled") is False
-            or source_cfg.get("news_group") == _DLUT_NEWS_GROUP
+            or source_cfg.get("news_group") == _DLUT_NOTICES_GROUP
         ):
             continue
 

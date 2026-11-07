@@ -61,8 +61,9 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
                           ▲
                           │ triggers (e.g. 06:00 run, 07:00 push)
 ┌─────────────────────────────────────────────────────────────────────┐
-│                Scheduling Layer (external cron, optional)           │
-│  • any cron / systemd timer / agent invokes `dailyinfo run / push`  │
+│              Scheduling Layer (self-hosted container)               │
+│  • scheduler container runs `deploy/crontab.*` via supercronic      │
+│  • catch-up replays missed jobs; healthcheck turns red on staleness │
 │  • backup is handled by whatever tool watches the data root         │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -111,9 +112,9 @@ Publication 依据独立 delivery state 实现正常重跑 no-op；`pushed/` 仍
 - **Input**: GitHub Trending HTML + HuggingFace API
 - **Output**: `briefings/code/`
 
-### Pipeline 5: University News
-- **Input**: DLUT 网站（HTML + API）
-- **Output**: `briefings/resource/`
+### Pipeline 5: DLUT Notices & Recruitment
+- **Input**: 科研院 / 研究生院 / 教务处通知（HTML）+ 招聘/实习/选调（API）
+- **Output**: `briefings/resource/`（通知合并为 `dlut_notices_briefing_*.md`，招聘类按源分文件）
 
 ## Discord Channel Mapping
 

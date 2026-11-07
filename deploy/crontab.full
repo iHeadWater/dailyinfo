@@ -1,0 +1,15 @@
+# DailyInfo schedule, interpreted in the container's local time (TZ=Asia/Shanghai).
+# supercronic runs this file; scripts/scheduler.py only records outcomes.
+#
+# The recovery sweep is a no-op when every job due today has succeeded. It
+# exists because cron has no Persistent=true: a suspended container or a
+# missed minute is repaired by the next sweep.
+*/15 * * * * python -m scripts.scheduler catch-up
+0 3 * * * python -m scripts.scheduler run-job arxiv
+30 3 * * * python -m scripts.scheduler run-job resource
+45 3 * * * python -m scripts.scheduler run-job code
+0 4 * * * python -m scripts.scheduler run-job papers
+30 4 * * * python -m scripts.scheduler run-job ai_news
+30 5 * * * python -m scripts.scheduler run-job push_early
+0 6 * * * python -m scripts.scheduler run-job push_papers
+0 7 * * * python -m scripts.scheduler run-job push_arxiv

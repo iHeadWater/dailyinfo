@@ -50,6 +50,8 @@ docker compose ps                                       # backup-cron 是否在�
 
 ## 调度（如果你用 myopenclaw 的 hermes cron）
 
+> 2026-11-07 起，生产调度已收回 dailyinfo 自己的容器栈（见[生产部署](production.md)）。本节只适用于仍然外置调度的自定义部署；迁移步骤见[切换记录](migration-selfhosted-scheduler-20261107.md)。
+
 把下面这几条命令注册到 hermes cron（或你自己的等价机制）即可：
 
 | Cron | Command | Purpose |

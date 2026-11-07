@@ -204,30 +204,37 @@ def install():
 
 @cli.command()
 def start():
-    """Start Docker services (FreshRSS)."""
+    """Start the development FreshRSS container."""
     click.echo("==> Starting Docker services...")
     compose_file = PROJECT_ROOT / "docker-compose.yml"
     if not compose_file.exists():
         click.echo("  ERROR: docker-compose.yml not found")
         sys.exit(1)
 
+    # Pin the file: compose.yml is the production stack, and ``docker compose``
+    # picks it over docker-compose.yml when invoked without -f.
     result = subprocess.run(
-        ["docker", "compose", "up", "-d", "freshrss"],
+        ["docker", "compose", "-f", str(compose_file), "up", "-d", "freshrss"],
         cwd=PROJECT_ROOT,
     )
     if result.returncode != 0:
         click.echo("  ERROR: Failed to start services")
         sys.exit(1)
 
-    click.echo("  FreshRSS started")
+    click.echo("  Development FreshRSS started")
     click.echo("  URL: http://localhost:8081")
+    click.echo("  Production uses: docker compose up -d")
 
 
 @cli.command()
 def stop():
-    """Stop Docker services."""
+    """Stop the development Docker services."""
     click.echo("==> Stopping Docker services...")
-    result = subprocess.run(["docker", "compose", "down"], cwd=PROJECT_ROOT)
+    compose_file = PROJECT_ROOT / "docker-compose.yml"
+    result = subprocess.run(
+        ["docker", "compose", "-f", str(compose_file), "down"],
+        cwd=PROJECT_ROOT,
+    )
     if result.returncode != 0:
         click.echo("  ERROR: Failed to stop services")
         sys.exit(1)
@@ -236,10 +243,12 @@ def stop():
 
 @cli.command()
 def restart():
-    """Restart Docker services."""
+    """Restart the development FreshRSS container."""
     click.echo("==> Restarting Docker services...")
+    compose_file = PROJECT_ROOT / "docker-compose.yml"
     result = subprocess.run(
-        ["docker", "compose", "restart", "freshrss"], cwd=PROJECT_ROOT
+        ["docker", "compose", "-f", str(compose_file), "restart", "freshrss"],
+        cwd=PROJECT_ROOT,
     )
     if result.returncode != 0:
         click.echo("  ERROR: Failed to restart services")
