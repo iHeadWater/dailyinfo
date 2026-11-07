@@ -109,6 +109,31 @@ def test_unknown_job_name_is_rejected(tmp_path: Path) -> None:
         scheduler.parse_crontab(path)
 
 
+def test_crontab_path_prefers_the_installed_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Docker healthchecks and `compose exec` do not inherit the entrypoint's
+    # exports, so the image path must resolve without the env var.
+    installed = tmp_path / "etc"
+    installed.mkdir()
+    (installed / "crontab.collect").write_text("", encoding="utf-8")
+    monkeypatch.setattr(scheduler, "INSTALLED_CRONTAB_DIR", installed)
+    monkeypatch.delenv("DAILYINFO_SCHEDULER_CRONTAB", raising=False)
+    monkeypatch.setenv("DAILYINFO_SCHEDULER_JOBS", "collect")
+
+    assert scheduler.crontab_path() == installed / "crontab.collect"
+
+
+def test_crontab_path_falls_back_to_the_repository(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(scheduler, "INSTALLED_CRONTAB_DIR", tmp_path / "missing")
+    monkeypatch.delenv("DAILYINFO_SCHEDULER_CRONTAB", raising=False)
+    monkeypatch.setenv("DAILYINFO_SCHEDULER_JOBS", "collect")
+
+    assert scheduler.crontab_path() == REPO_ROOT / "deploy" / "crontab.collect"
+
+
 # ---------------------------------------------------------------------------
 # Catch-up
 # ---------------------------------------------------------------------------

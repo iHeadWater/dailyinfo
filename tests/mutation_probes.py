@@ -1140,6 +1140,24 @@ PROBES: tuple[Probe, ...] = (
         test="tests/test_cli.py::test_service_commands_pin_the_dev_compose_file",
     ),
     Probe(
+        # Docker healthchecks and `compose exec` do not inherit the
+        # entrypoint's exports; without the installed-path lookup they read a
+        # file that exists only in the repository, and every check fails.
+        label="the crontab resolves from the installed image path",
+        path="scripts/scheduler.py",
+        old=(
+            '    installed = INSTALLED_CRONTAB_DIR / f"crontab.{selected}"\n'
+            "    if installed.is_file():\n"
+            "        return installed"
+        ),
+        new=(
+            '    installed = INSTALLED_CRONTAB_DIR / f"crontab.{selected}"\n'
+            "    if False:\n"
+            "        return installed"
+        ),
+        test="tests/test_scheduler.py::test_crontab_path_prefers_the_installed_copy",
+    ),
+    Probe(
         # The scheduler writes as UID 33; without the group-read policy the
         # MCP process (UID 10001) cannot read the new briefings.
         label="the scheduler inherits the publication group-read policy",

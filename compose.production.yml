@@ -61,6 +61,9 @@ services:
       USER: collector
       DAILYINFO_PUBLICATION_GROUP_READ: "1"
       DAILYINFO_SCHEDULER_JOBS: ${DAILYINFO_SCHEDULER_JOBS:-full}
+      # Static so the Docker healthcheck and `compose exec` see it too; the
+      # entrypoint's export does not reach those processes.
+      DAILYINFO_SCHEDULER_CRONTAB: /etc/dailyinfo/crontab.${DAILYINFO_SCHEDULER_JOBS:-full}
     volumes:
       - type: bind
         source: ${DAILYINFO_DATA_ROOT:?Set the shared content root}

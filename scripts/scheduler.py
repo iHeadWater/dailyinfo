@@ -46,6 +46,7 @@ if _SCRIPTS_DIR not in sys.path:
 import paths  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+INSTALLED_CRONTAB_DIR = Path("/etc/dailyinfo")
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_JOBS_MODE = "full"
@@ -234,7 +235,14 @@ def crontab_path(mode: str | None = None) -> Path:
     explicit = os.environ.get("DAILYINFO_SCHEDULER_CRONTAB", "")
     if explicit:
         return Path(explicit)
-    return PROJECT_ROOT / "deploy" / f"crontab.{mode or jobs_mode()}"
+    selected = mode or jobs_mode()
+    # The image installs the crontabs under /etc.  Docker healthchecks and
+    # `docker compose exec` do NOT inherit exports made by the entrypoint, so
+    # this lookup must work without DAILYINFO_SCHEDULER_CRONTAB being set.
+    installed = INSTALLED_CRONTAB_DIR / f"crontab.{selected}"
+    if installed.is_file():
+        return installed
+    return PROJECT_ROOT / "deploy" / f"crontab.{selected}"
 
 
 def timezone() -> ZoneInfo:

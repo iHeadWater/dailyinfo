@@ -69,6 +69,14 @@ def test_scheduler_inherits_the_collector_permission_environment(
         assert scheduler_env[key] == collector_env[key], key
 
 
+def test_scheduler_crontab_path_is_visible_to_healthchecks(production: dict) -> None:
+    env = production["services"]["scheduler"]["environment"]
+
+    # Docker healthchecks and `compose exec` do not inherit the entrypoint's
+    # exports, so this must be part of the static environment.
+    assert env["DAILYINFO_SCHEDULER_CRONTAB"].startswith("/etc/dailyinfo/crontab.")
+
+
 def test_scheduler_waits_for_a_healthy_freshrss(production: dict) -> None:
     scheduler = production["services"]["scheduler"]
     freshrss = production["services"]["freshrss"]
