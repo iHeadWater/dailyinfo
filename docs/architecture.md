@@ -61,8 +61,9 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合与精读系
                           ▲
                           │ triggers (e.g. 06:00 run, 07:00 push)
 ┌─────────────────────────────────────────────────────────────────────┐
-│                Scheduling Layer (external cron, optional)           │
-│  • any cron / systemd timer / agent invokes `dailyinfo run / push`  │
+│              Scheduling Layer (self-hosted container)               │
+│  • scheduler container runs `deploy/crontab.*` via supercronic      │
+│  • catch-up replays missed jobs; healthcheck turns red on staleness │
 │  • backup is handled by whatever tool watches the data root         │
 └─────────────────────────────────────────────────────────────────────┘
 ```

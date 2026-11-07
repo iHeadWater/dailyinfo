@@ -31,7 +31,7 @@ You wake up to a curated digest of everything relevant to your field — no feed
 | **Configuration-driven** | Add RSS, scrape, or API sources in `config/sources.json` — no code changes required |
 | **Idempotent & safe to rerun** | Sources with today's briefing are skipped; pushed files are never re-sent |
 | **Resilient** | Retries with exponential backoff, batch splitting on partial AI responses, per-source isolation |
-| **Scheduler-agnostic** | Bring your own cron, systemd timer, or agent runtime — DailyInfo owns the pipeline, not the clock |
+| **Self-hosted scheduler** | The compose stack runs daily collection, generation and push on its own; external cron or agent runtimes remain optional |
 
 ## Screenshots
 

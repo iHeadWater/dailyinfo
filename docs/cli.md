@@ -35,7 +35,7 @@ This command:
 2. Creates the workspace under `~/.myagentdata/dailyinfo/` (`freshrss/data`, `briefings/*`, `pushed/*`).
 3. Installs Python dependencies via `uv sync` (falls back to `pip install -e .`).
 
-**It does NOT write to the host crontab.** Scheduling is expected to be driven by any external cron-like trigger (system crontab, systemd timer, container scheduler, or an agent runtime such as myopenclaw's hermes cron — see [Agent Config](agent-config.md)).
+**It does NOT write to the host crontab.** Production scheduling runs inside the dailyinfo container stack (`compose.yml`, supercronic + `deploy/crontab.*`) — see [Production Deployment](production.md). External cron, systemd timers, or agent runtimes remain supported for custom setups (see [Agent Config](agent-config.md)).
 
 ## Commands
 

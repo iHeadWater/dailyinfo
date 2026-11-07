@@ -1,5 +1,7 @@
 # 81 服务器 DailyInfo 采集与生成部署记录
 
+> 2026-11-07 更新：调度已迁移到 dailyinfo 自己的容器栈，systemd timer 在本机停用。切换步骤与回滚见[迁移记录](migration-selfhosted-scheduler-20261107.md)。下文保留上线时的原始记录。
+
 日期：2026-10-26。此次按“只采集和生成、供 MCP 阅读”部署，不发送 Discord，也不发布网站。
 
 本文保留首次上线验收数据。后续已修复 arXiv 的 Authorization 标题误判并补入 321 条目，MCP 共 3 份简报、1,571 条目，完整分页和条目读取通过。最新校验模块、镜像来源及验收见[arXiv 修复记录](arxiv-authorization-fix-81-20261026.md)。

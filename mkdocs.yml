@@ -17,7 +17,8 @@ nav:
   - CLI Reference: cli.md
   - Agent Config: agent-config.md
   - Read-only MCP: mcp.md
-  - Collection-only deployment: production.md
+  - Production Deployment: production.md
+  - Self-hosted Scheduler Migration: migration-selfhosted-scheduler-20261107.md
   - Information Sources: sources.md
 
 markdown_extensions:

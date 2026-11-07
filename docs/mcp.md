@@ -149,7 +149,7 @@ dailyinfo-mcp
 
 ## 管理员：Docker 部署
 
-`compose.mcp.yml` 独立于原有 FreshRSS Compose：
+完整自托管栈使用仓库根目录的 `compose.yml`，它同时 include 生产与 MCP；只部署 MCP 时继续使用 `compose.mcp.yml`：
 
 ```bash
 export DAILYINFO_DATA_ROOT=<正式内容数据根目录>

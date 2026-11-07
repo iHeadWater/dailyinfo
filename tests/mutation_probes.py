@@ -1130,6 +1130,30 @@ PROBES: tuple[Probe, ...] = (
         ),
         test="tests/test_scheduler.py::test_collect_crontab_is_full_minus_push_jobs",
     ),
+    Probe(
+        # compose.yml takes precedence over docker-compose.yml, so an implicit
+        # `docker compose down` in the dev CLI would stop the production stack.
+        label="the dev CLI pins docker-compose.yml",
+        path="scripts/cli.py",
+        old='["docker", "compose", "-f", str(compose_file), "up", "-d", "freshrss"]',
+        new='["docker", "compose", "up", "-d", "freshrss"]',
+        test="tests/test_cli.py::test_service_commands_pin_the_dev_compose_file",
+    ),
+    Probe(
+        # The scheduler writes as UID 33; without the group-read policy the
+        # MCP process (UID 10001) cannot read the new briefings.
+        label="the scheduler inherits the publication group-read policy",
+        path="compose.production.yml",
+        old=(
+            '      DAILYINFO_PUBLICATION_GROUP_READ: "1"\n'
+            "      DAILYINFO_SCHEDULER_JOBS: ${DAILYINFO_SCHEDULER_JOBS:-full}"
+        ),
+        new="      DAILYINFO_SCHEDULER_JOBS: ${DAILYINFO_SCHEDULER_JOBS:-full}",
+        test=(
+            "tests/test_deployment_config.py"
+            "::test_scheduler_inherits_the_collector_permission_environment"
+        ),
+    ),
 )
 
 
