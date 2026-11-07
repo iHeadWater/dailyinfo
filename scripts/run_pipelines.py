@@ -2353,13 +2353,16 @@ def _conference_sources(cfg: dict) -> list[dict]:
 
 
 def _conference_credentials_present() -> bool:
-    username = os.environ.get("OPENREVIEW_USERNAME") or _read_env_value(
-        "OPENREVIEW_USERNAME"
+    email = (
+        os.environ.get("OPENREVIEW_EMAIL")
+        or os.environ.get("OPENREVIEW_USERNAME")
+        or _read_env_value("OPENREVIEW_EMAIL")
+        or _read_env_value("OPENREVIEW_USERNAME")
     )
     password = os.environ.get("OPENREVIEW_PASSWORD") or _read_env_value(
         "OPENREVIEW_PASSWORD"
     )
-    return bool(username.strip() and password.strip())
+    return bool(email.strip() and password.strip())
 
 
 def run_pipeline_conference() -> int:
@@ -2385,7 +2388,7 @@ def run_pipeline_conference() -> int:
         # was never configured would take pipelines 1-5 down with it.  Once
         # the credentials exist, a rejected login is still fatal.
         log(
-            "  [SKIP] OPENREVIEW_USERNAME/OPENREVIEW_PASSWORD not set; "
+            "  [SKIP] OPENREVIEW_EMAIL/OPENREVIEW_PASSWORD not set; "
             "conference sources are disabled"
         )
         return 0

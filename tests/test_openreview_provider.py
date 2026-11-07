@@ -162,7 +162,8 @@ def test_partial_credentials_are_rejected(monkeypatch):
     from openreview_provider import OpenReviewConfigError, OpenReviewProvider
 
     monkeypatch.setattr(paths, "ENV_FILE", pathlib.Path("/missing"))
-    monkeypatch.setenv("OPENREVIEW_USERNAME", "user@example.com")
+    monkeypatch.setenv("OPENREVIEW_EMAIL", "user@example.com")
+    monkeypatch.delenv("OPENREVIEW_USERNAME", raising=False)
     monkeypatch.delenv("OPENREVIEW_PASSWORD", raising=False)
     with pytest.raises(OpenReviewConfigError, match="must be set together"):
         OpenReviewProvider({"venue_id": "Venue/2027/Conference"})
@@ -174,15 +175,34 @@ def test_credentials_can_be_loaded_from_dailyinfo_env_file(tmp_path, monkeypatch
 
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "OPENREVIEW_USERNAME=user@example.com\nOPENREVIEW_PASSWORD=secret\n",
+        "OPENREVIEW_EMAIL=user@example.com\nOPENREVIEW_PASSWORD=secret\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(paths, "ENV_FILE", env_file)
+    monkeypatch.delenv("OPENREVIEW_EMAIL", raising=False)
     monkeypatch.delenv("OPENREVIEW_USERNAME", raising=False)
     monkeypatch.delenv("OPENREVIEW_PASSWORD", raising=False)
 
-    assert _load_env_value("OPENREVIEW_USERNAME") == "user@example.com"
+    assert _load_env_value("OPENREVIEW_EMAIL") == "user@example.com"
     assert _load_env_value("OPENREVIEW_PASSWORD") == "secret"
+
+
+def test_legacy_username_is_still_read(tmp_path, monkeypatch):
+    import pathlib
+    import paths
+    from openreview_provider import _load_credentials
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "OPENREVIEW_USERNAME=legacy@example.com\nOPENREVIEW_PASSWORD=secret\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(paths, "ENV_FILE", pathlib.Path(env_file))
+    monkeypatch.delenv("OPENREVIEW_EMAIL", raising=False)
+    monkeypatch.delenv("OPENREVIEW_USERNAME", raising=False)
+    monkeypatch.delenv("OPENREVIEW_PASSWORD", raising=False)
+
+    assert _load_credentials() == ("legacy@example.com", "secret")
 
 
 def test_api_timeout_wraps_login_and_followup_requests(monkeypatch):
@@ -215,7 +235,8 @@ def test_api_timeout_wraps_login_and_followup_requests(monkeypatch):
     fake_openreview = SimpleNamespace(api=SimpleNamespace(OpenReviewClient=FakeClient))
     monkeypatch.setitem(sys.modules, "openreview", fake_openreview)
     monkeypatch.setattr(paths, "ENV_FILE", pathlib.Path("/missing"))
-    monkeypatch.setenv("OPENREVIEW_USERNAME", "user@example.com")
+    monkeypatch.setenv("OPENREVIEW_EMAIL", "user@example.com")
+    monkeypatch.delenv("OPENREVIEW_USERNAME", raising=False)
     monkeypatch.setenv("OPENREVIEW_PASSWORD", "secret")
 
     provider = OpenReviewProvider(

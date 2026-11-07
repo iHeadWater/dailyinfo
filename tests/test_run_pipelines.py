@@ -2037,3 +2037,26 @@ def test_run_pipeline_conference_skips_without_credentials(monkeypatch):
     monkeypatch.setattr(rp, "_conference_credentials_present", lambda: False)
 
     assert rp.run_pipeline_conference() == 0
+
+
+def test_conference_credentials_accept_email_or_legacy_username(monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "_read_env_value", lambda _key: "")
+    for key in (
+        "OPENREVIEW_EMAIL",
+        "OPENREVIEW_USERNAME",
+        "OPENREVIEW_PASSWORD",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv("OPENREVIEW_EMAIL", "user@example.com")
+    monkeypatch.setenv("OPENREVIEW_PASSWORD", "secret")
+    assert rp._conference_credentials_present() is True
+
+    monkeypatch.delenv("OPENREVIEW_EMAIL")
+    monkeypatch.setenv("OPENREVIEW_USERNAME", "legacy@example.com")
+    assert rp._conference_credentials_present() is True
+
+    monkeypatch.delenv("OPENREVIEW_PASSWORD")
+    assert rp._conference_credentials_present() is False

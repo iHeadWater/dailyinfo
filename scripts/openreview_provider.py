@@ -121,6 +121,21 @@ def _load_env_value(key: str) -> str:
     return os.environ.get(key, "").strip() or _read_env_value(key)
 
 
+def _load_credentials() -> tuple[str, str]:
+    """Return ``(login_email, password)``.
+
+    OpenReview authenticates by email; ``openreview-py`` only calls the
+    parameter ``username``.  ``OPENREVIEW_EMAIL`` is the primary name, with
+    ``OPENREVIEW_USERNAME`` kept as a fallback for existing installs and the
+    original PR's configuration.
+    """
+
+    email = _load_env_value("OPENREVIEW_EMAIL") or _load_env_value(
+        "OPENREVIEW_USERNAME"
+    )
+    return email, _load_env_value("OPENREVIEW_PASSWORD")
+
+
 def note_is_public(note: Any) -> bool:
     """Return whether a note is explicitly readable by everyone."""
 
@@ -321,11 +336,11 @@ class OpenReviewProvider:
         session._dailyinfo_timeout = True
 
     def _build_client(self):
-        username = _load_env_value("OPENREVIEW_USERNAME")
-        password = _load_env_value("OPENREVIEW_PASSWORD")
-        if bool(username) != bool(password):
+        email, password = _load_credentials()
+        if bool(email) != bool(password):
             raise OpenReviewConfigError(
-                "OPENREVIEW_USERNAME and OPENREVIEW_PASSWORD must be set together"
+                "OPENREVIEW_EMAIL (or legacy OPENREVIEW_USERNAME) and "
+                "OPENREVIEW_PASSWORD must be set together"
             )
         try:
             import openreview
@@ -338,8 +353,8 @@ class OpenReviewProvider:
         # covers the login request made by openreview-py.
         client = openreview.api.OpenReviewClient(baseurl=self.baseurl)
         self._install_api_timeout(client)
-        if username and password:
-            client.login_user(username, password)
+        if email and password:
+            client.login_user(email, password)
             self._authenticated = True
         client._dailyinfo_authenticated = self._authenticated
         return client

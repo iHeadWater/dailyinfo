@@ -78,10 +78,12 @@ without credentials.
 Pipeline 6 is ingestion-only for now: it stores OpenReview submission metadata in
 `$DAILYINFO_DATA_ROOT/conference/conference.sqlite3` and writes a deterministic
 markdown listing to `briefings/conference/`. It does not call a model, rank
-relevance, fetch reviews, or push. Set `OPENREVIEW_USERNAME` and
-`OPENREVIEW_PASSWORD` in `.env`; anonymous note queries are rejected by
-OpenReview's browser challenge. A source that is not open yet (`NOT_OPEN`) or
-not due for a poll (`NOT_DUE`) is a clean outcome, not a failure.
+relevance, fetch reviews, or push. Set `OPENREVIEW_EMAIL` and
+`OPENREVIEW_PASSWORD` in `.env`; OpenReview authenticates by **email**, and
+anonymous note queries are rejected by its browser challenge. The legacy
+`OPENREVIEW_USERNAME` key is still read as a fallback. A source that is not
+open yet (`NOT_OPEN`) or not due for a poll (`NOT_DUE`) is a clean outcome, not
+a failure.
 
 ### Push to Discord
 
