@@ -713,6 +713,19 @@ def verify_env(
                 "full mode requires DISCORD_BOT_TOKEN (set DAILYINFO_PUSH_ENV), "
                 "or use DAILYINFO_SCHEDULER_JOBS=collect"
             )
+        # A missing channel makes push_to_discord skip that category and still
+        # exit 0, which would mark the push job successful with nothing sent.
+        missing = [
+            category
+            for category in ("papers", "ai_news", "code", "resource")
+            if not paths.get_channel_id(category)
+        ]
+        if not paths.get_channel_id("arxiv") and not paths.get_channel_id("ai_news"):
+            missing.append("arxiv")
+        if missing:
+            raise SchedulerConfigError(
+                "full mode is missing Discord channel ids: " + ", ".join(missing)
+            )
 
     log(f"verify-env: tz={tz.key} mode={mode} crontab={path}", now=now)
     for job in parsed.jobs:

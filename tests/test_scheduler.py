@@ -60,6 +60,8 @@ def crontab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
     monkeypatch.setenv("DAILYINFO_SCHEDULER_CRONTAB", str(path))
     monkeypatch.setenv("DAILYINFO_SCHEDULER_JOBS", "full")
+    for category in ("PAPERS", "AI_NEWS", "CODE", "RESOURCE", "ARXIV"):
+        monkeypatch.setenv(f"DISCORD_CHANNEL_{category}", "123456789")
     return path
 
 
@@ -306,6 +308,16 @@ def test_verify_env_accepts_collect_mode_without_discord_token(
     monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
 
     scheduler.verify_env(now=at(1, 0), local_offset=timedelta(hours=8))
+
+
+def test_verify_env_rejects_a_missing_push_channel(
+    crontab: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", "test-token")
+    monkeypatch.delenv("DISCORD_CHANNEL_PAPERS", raising=False)
+
+    with pytest.raises(scheduler.SchedulerConfigError):
+        scheduler.verify_env(now=at(1, 0), local_offset=timedelta(hours=8))
 
 
 def test_verify_env_rejects_a_timezone_mismatch(
