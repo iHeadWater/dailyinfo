@@ -1172,6 +1172,68 @@ PROBES: tuple[Probe, ...] = (
             "::test_scheduler_inherits_the_collector_permission_environment"
         ),
     ),
+    Probe(
+        # Collection jobs are fed by network parsers; they must not inherit
+        # the bot token that the push jobs need.
+        label="collection children lose the Discord credentials",
+        path="scripts/scheduler.py",
+        old="    if not spec.push_only:",
+        new="    if False:",
+        test=(
+            "tests/test_scheduler.py"
+            "::test_collection_children_do_not_see_discord_credentials"
+        ),
+    ),
+    Probe(
+        # An unwritable data root must not turn every 15-minute sweep into
+        # another execution attempt.
+        label="run-job refuses to execute when state cannot be written",
+        path="scripts/scheduler.py",
+        old=(
+            "        except SchedulerConfigError as exc:\n"
+            '            log(f"job {name}: refusing to run, state is not writable: {exc}", now=now)\n'
+            "            return EXIT_STATE_UNWRITABLE"
+        ),
+        new=(
+            "        except SchedulerConfigError as exc:\n"
+            '            log(f"job {name}: refusing to run, state is not writable: {exc}", now=now)'
+        ),
+        test="tests/test_scheduler.py::test_run_job_refuses_when_state_cannot_be_written",
+    ),
+    Probe(
+        # A long sweep must not stamp later jobs with the sweep start time.
+        label="catch-up records each job's actual start time",
+        path="scripts/scheduler.py",
+        old="        run_job(job.name, now=clock(), runner=runner)",
+        new="        run_job(job.name, now=sweep_now, runner=runner)",
+        test="tests/test_scheduler.py::test_catch_up_records_the_actual_run_time",
+    ),
+    Probe(
+        # Attempts from yesterday must not consume today's budget.
+        label="the attempt budget resets on a new day",
+        path="scripts/scheduler.py",
+        old="        if job.last_attempt_date != today:",
+        new="        if False:",
+        test="tests/test_scheduler.py::test_day_rollover_resets_the_attempt_budget",
+    ),
+    Probe(
+        # A restart must give catch-up a bounded window instead of turning
+        # every pre-restart job red immediately.
+        label="healthcheck grants a bounded restart window",
+        path="scripts/scheduler.py",
+        old="        if is_today and last_started_at is not None:",
+        new="        if False:",
+        test="tests/test_scheduler.py::test_healthcheck_grants_a_bounded_restart_window",
+    ),
+    Probe(
+        # Compose auto-loads .env; the dev file must not read the production
+        # data-root variable.
+        label="the dev compose uses a separate data-root variable",
+        path="docker-compose.yml",
+        old="${DAILYINFO_DEV_DATA_ROOT:-~/.myagentdata/dailyinfo-dev}",
+        new="${DAILYINFO_DATA_ROOT:-~/.myagentdata/dailyinfo-dev}",
+        test="tests/test_deployment_config.py::test_legacy_compose_is_dev_scoped",
+    ),
 )
 
 

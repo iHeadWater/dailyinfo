@@ -39,12 +39,16 @@ This command:
 
 ## Commands
 
-### Service Management
+### Service Management (development)
+
+These commands manage the dev-only `docker-compose.yml` (container
+`dailyinfo-freshrss-dev`, data root `DAILYINFO_DEV_DATA_ROOT`). Production uses
+`docker compose up -d` — see [Production Deployment](production.md).
 
 ```bash
-dailyinfo start      # Start FreshRSS (Docker)
-dailyinfo stop       # Stop services
-dailyinfo restart    # Restart FreshRSS
+dailyinfo start      # Start the development FreshRSS
+dailyinfo stop       # Stop the development services
+dailyinfo restart    # Restart the development FreshRSS
 ```
 
 ### Pipeline Execution

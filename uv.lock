@@ -415,6 +415,8 @@ mcp = [
 dev = [
     { name = "black" },
     { name = "pytest" },
+    { name = "pyyaml" },
+    { name = "ruff" },
 ]
 docs = [
     { name = "mkdocs" },
@@ -440,6 +442,8 @@ provides-extras = ["mcp", "dev"]
 dev = [
     { name = "black", specifier = ">=26.3.1" },
     { name = "pytest", specifier = ">=9.0.3" },
+    { name = "pyyaml", specifier = ">=6" },
+    { name = "ruff", specifier = ">=0.4" },
 ]
 docs = [
     { name = "mkdocs", specifier = ">=1.6" },

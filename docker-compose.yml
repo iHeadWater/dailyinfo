@@ -21,7 +21,9 @@ services:
       # dev: 8082, staging: 8083, prod: 8081 (default)
       - "${FRESHRSS_PORT:-8081}:80"
     volumes:
-      - ${DAILYINFO_DATA_ROOT:-~/.myagentdata/dailyinfo-dev}/freshrss/data:/var/www/FreshRSS/data
+      # Deliberately a dev-only variable: the production docs put
+      # DAILYINFO_DATA_ROOT in .env, and Compose loads .env even with -f.
+      - ${DAILYINFO_DEV_DATA_ROOT:-~/.myagentdata/dailyinfo-dev}/freshrss/data:/var/www/FreshRSS/data
     environment:
       <<: *env-common
     restart: always

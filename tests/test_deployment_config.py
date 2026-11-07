@@ -139,6 +139,15 @@ def test_producer_image_has_no_entrypoint() -> None:
     assert "--no-dev" in text
 
 
+def test_bootstrap_script_prepares_the_bind_mounts() -> None:
+    path = REPO_ROOT / "deploy" / "bootstrap.sh"
+    text = path.read_text(encoding="utf-8")
+
+    assert path.stat().st_mode & 0o111
+    for directory in ("freshrss/data", "publications", "deliveries", "state"):
+        assert directory in text
+
+
 def test_compose_entrypoint_includes_both_stacks() -> None:
     compose = load_compose("compose.yml")
 
@@ -153,6 +162,7 @@ def test_legacy_compose_is_dev_scoped() -> None:
     assert legacy["name"] == "dailyinfo-dev"
     assert freshrss["container_name"] == "dailyinfo-freshrss-dev"
     assert "dailyinfo-dev" in freshrss["volumes"][0]
+    assert "DAILYINFO_DATA_ROOT" not in freshrss["volumes"][0]
     assert "dailyinfo_dev_net" in legacy["networks"]
 
 

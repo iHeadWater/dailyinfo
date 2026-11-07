@@ -26,6 +26,7 @@ import fcntl
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -54,9 +55,13 @@ JOB_MODES = ("full", "collect")
 
 STATE_VERSION = 1
 MAX_ATTEMPTS_PER_DAY = 3
-RETRY_BACKOFF_SECONDS = (5 * 60, 15 * 60, 30 * 60)
+# Three attempts per day means two delays: 5 and 15 minutes.  A third value
+# here would be unreachable and would make the docs promise a 30-minute wait
+# that never happens.
+RETRY_BACKOFF_SECONDS = (5 * 60, 15 * 60)
 JOB_TIMEOUT_SECONDS = 2 * 60 * 60
 EXIT_LOCKED = 75
+EXIT_STATE_UNWRITABLE = 74
 
 _RUN_JOB_PREFIX = ["-m", "scripts.scheduler", "run-job"]
 _CATCH_UP_PREFIX = ["-m", "scripts.scheduler", "catch-up"]
@@ -274,6 +279,11 @@ class JobState:
 @dataclass
 class SchedulerState:
     started_at: str = ""
+    # Updated on every container start (not on every catch-up sweep).  A
+    # restart must get a grace window to replay the day, but the window must
+    # not slide forward every 15 minutes or a persistent failure never turns
+    # the healthcheck red.
+    last_started_at: str = ""
     jobs: dict[str, JobState] = field(default_factory=dict)
 
     def job(self, name: str) -> JobState:
@@ -292,6 +302,7 @@ def _state_to_dict(state: SchedulerState) -> dict:
     return {
         "version": STATE_VERSION,
         "started_at": state.started_at,
+        "last_started_at": state.last_started_at,
         "jobs": {
             name: {
                 "success_date": job.success_date,
@@ -340,11 +351,15 @@ def load_state() -> SchedulerState:
         raw = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise ValueError("state root is not an object")
+        version = raw.get("version")
+        if version is not None and version != STATE_VERSION:
+            raise ValueError(f"unsupported state version {version!r}")
         jobs_raw = raw.get("jobs", {})
         if not isinstance(jobs_raw, dict):
             raise ValueError("jobs is not an object")
         return SchedulerState(
             started_at=str(raw.get("started_at", "") or ""),
+            last_started_at=str(raw.get("last_started_at", "") or ""),
             jobs={
                 name: _job_state_from_dict(value) for name, value in jobs_raw.items()
             },
@@ -394,8 +409,13 @@ def _load_state_for_run() -> SchedulerState:
         return SchedulerState()
 
 
-def mark_started(now: datetime | None = None) -> None:
-    """Record the first time this data root ran the scheduler."""
+def mark_started(now: datetime | None = None, *, restart: bool = False) -> None:
+    """Record first use and, on ``restart=True``, this container start.
+
+    ``catch_up`` calls this without ``restart`` to fill a fresh data root.
+    The entrypoint calls the ``mark-started`` CLI subcommand with ``restart``
+    on every boot so a replay after a restart gets a bounded grace window.
+    """
     tz = timezone()
     now = now or datetime.now(tz)
     lock = try_acquire_lock()
@@ -403,8 +423,14 @@ def mark_started(now: datetime | None = None) -> None:
         return
     try:
         state = _load_state_for_run()
+        changed = False
         if not state.started_at:
             state.started_at = now.isoformat()
+            changed = True
+        if restart or not state.last_started_at:
+            state.last_started_at = now.isoformat()
+            changed = True
+        if changed:
             save_state(state)
     finally:
         release_lock(lock)
@@ -416,8 +442,14 @@ def mark_started(now: datetime | None = None) -> None:
 
 
 def try_acquire_lock() -> IO[str] | None:
-    lock_path().parent.mkdir(parents=True, exist_ok=True)
-    handle = open(lock_path(), "a+", encoding="utf-8")
+    try:
+        lock_path().parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock_path(), "a+", encoding="utf-8")
+    except OSError as exc:
+        raise SchedulerConfigError(
+            f"cannot open scheduler lock {lock_path()}: {exc}; the data root "
+            "must be writable by the container user (see deploy/bootstrap.sh)"
+        ) from exc
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -439,16 +471,51 @@ def release_lock(handle: IO[str]) -> None:
 
 
 def log(message: str, *, now: datetime | None = None) -> None:
-    stamp = (now or datetime.now(timezone())).strftime("%Y-%m-%dT%H:%M:%S%z")
+    if now is None:
+        try:
+            now = datetime.now(timezone())
+        except SchedulerConfigError:
+            # A broken tzdata/timezone must still produce a log line; the
+            # error path in main() would otherwise raise a second time.
+            now = datetime.now().astimezone()
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%S%z")
     print(f"[{stamp}] {message}", flush=True)
+
+
+def _child_env(spec: JobSpec) -> dict[str, str]:
+    """Push jobs keep Discord credentials; collection children never see them."""
+    env = dict(os.environ)
+    if not spec.push_only:
+        for key in list(env):
+            if key.startswith("DISCORD_"):
+                del env[key]
+    return env
+
+
+def _run_with_timeout(
+    command: list[str], timeout: int, *, env: dict[str, str] | None = None
+) -> int:
+    process = subprocess.Popen(command, env=env, start_new_session=True)
+    try:
+        return process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # subprocess.run would kill only the CLI wrapper.  The pipeline is a
+        # grandchild, so kill the whole session; otherwise it keeps writing
+        # after the lock is released and catch-up starts a second writer.
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+        raise
 
 
 def _default_runner(spec: JobSpec, timeout: int) -> int:
     command = [sys.executable, "-m", *spec.argv]
     log(f"job {spec.name}: start {' '.join(command)}")
-    completed = subprocess.run(command, timeout=timeout, check=False)
-    log(f"job {spec.name}: exit {completed.returncode}")
-    return completed.returncode
+    returncode = _run_with_timeout(command, timeout, env=_child_env(spec))
+    log(f"job {spec.name}: exit {returncode}")
+    return returncode
 
 
 JobRunner = Callable[[JobSpec, int], int]
@@ -467,11 +534,16 @@ def _execute(spec: JobSpec, runner: JobRunner | None) -> int:
         return 127
 
 
-def _parse_iso(value: str) -> datetime | None:
+def _parse_iso(value: str, tz: ZoneInfo) -> datetime | None:
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        # Hand-edited or legacy state without an offset must not crash an
+        # aware comparison later.
+        parsed = parsed.replace(tzinfo=tz)
+    return parsed
 
 
 def _record_attempt(
@@ -529,6 +601,8 @@ def run_job(
         state = _load_state_for_run()
         if not state.started_at:
             state.started_at = now.isoformat()
+        if not state.last_started_at:
+            state.last_started_at = now.isoformat()
 
         today = now.date().isoformat()
         job = state.job(name)
@@ -539,6 +613,15 @@ def run_job(
         if job.last_attempt_date != today:
             job.attempts_today = 0
             job.next_attempt_at = ""
+
+        # Refuse to execute when the outcome cannot be recorded.  Otherwise an
+        # unwritable /data makes every 15-minute sweep run the job again,
+        # bypassing the retry cap and the backoff.
+        try:
+            save_state(state)
+        except SchedulerConfigError as exc:
+            log(f"job {name}: refusing to run, state is not writable: {exc}", now=now)
+            return EXIT_STATE_UNWRITABLE
 
         started = time.monotonic()
         exit_code = _execute(spec, runner)
@@ -573,7 +656,7 @@ def _job_due(
     ):
         return False
     next_attempt = (
-        _parse_iso(job_state.next_attempt_at) if job_state.next_attempt_at else None
+        _parse_iso(job_state.next_attempt_at, tz) if job_state.next_attempt_at else None
     )
     if next_attempt is not None and now < next_attempt:
         return False
@@ -584,37 +667,50 @@ def catch_up(
     *,
     now: datetime | None = None,
     runner: JobRunner | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> int:
     """Run every job that is due today and has not succeeded yet.
 
     Invoked once at container start and every 15 minutes by cron.  It is a
     no-op when nothing is due, which is the common case.
+
+    ``now`` freezes the sweep for due selection.  Each job is recorded with
+    ``clock()``, so a sweep that starts at 03:00 and reaches push_papers at
+    03:20 records 03:20, not 03:00.  When a test passes ``now`` without a
+    clock, the clock defaults to that same instant.
     """
     tz = timezone()
-    now = now or datetime.now(tz)
+    if now is not None:
+        clock = clock or (lambda: now)
+    else:
+        clock = clock or (lambda: datetime.now(tz))
+    sweep_now = now or clock()
     crontab = parse_crontab(crontab_path())
 
-    # Record the start before the first sweep so healthcheck does not hold a
-    # fresh data root responsible for runs that predate it.
-    mark_started(now)
+    # Fill a fresh data root.  Restart bookkeeping is done by the entrypoint's
+    # ``mark-started`` call, which sets last_started_at every boot.
+    mark_started(sweep_now)
 
     for job in crontab.jobs:
         try:
             state = _load_state_for_run()
         except SchedulerConfigError as exc:
-            log(f"catch-up: cannot read state: {exc}", now=now)
+            log(f"catch-up: cannot read state: {exc}", now=sweep_now)
             return 1
 
-        if not _job_due(job, state, now, tz):
+        if not _job_due(job, state, sweep_now, tz):
             continue
 
         lock = try_acquire_lock()
         if lock is None:
-            log("catch-up: another job is running; the next sweep will retry", now=now)
+            log(
+                "catch-up: another job is running; the next sweep will retry",
+                now=sweep_now,
+            )
             return 0
         release_lock(lock)
 
-        run_job(job.name, now=now, runner=runner)
+        run_job(job.name, now=clock(), runner=runner)
 
     return 0
 
@@ -637,17 +733,29 @@ def healthcheck(*, now: datetime | None = None) -> int:
         # scheduler always has a state file by the time health matters.
         return 0
 
-    started_at = _parse_iso(state.started_at)
+    started_at = _parse_iso(state.started_at, tz)
+    last_started_at = _parse_iso(state.last_started_at, tz) or started_at
     failures: list[str] = []
 
     for job in crontab.jobs:
         occurrence = job.scheduled_at(now.date(), tz)
         if occurrence > now:
             occurrence -= timedelta(days=1)
-        if started_at is not None and occurrence < started_at:
+        is_today = occurrence.date() == now.date()
+
+        # A container that started today is not responsible for yesterday's
+        # run.  Today's occurrences always count: catch-up replays them, so a
+        # failed replay must turn the check red instead of being excused.
+        if not is_today and started_at is not None and occurrence < started_at:
             continue
 
         deadline = occurrence + timedelta(seconds=JOB_TIMEOUT_SECONDS)
+        if is_today and last_started_at is not None:
+            # Give a fresh boot time to replay the day, but anchor the window
+            # to the boot, not to each sweep.
+            deadline = max(
+                deadline, last_started_at + timedelta(seconds=JOB_TIMEOUT_SECONDS)
+            )
         if now <= deadline:
             continue
 
@@ -684,6 +792,13 @@ def verify_env(
     """Fail fast when the container clock, mode or credentials are wrong."""
     tz = timezone()
     now = now or datetime.now(tz)
+
+    model_key = os.environ.get("DEEPSEEK_API_KEY", "")
+    if not model_key or "your_" in model_key:
+        raise SchedulerConfigError(
+            "DEEPSEEK_API_KEY is missing (set DAILYINFO_PRODUCER_ENV)"
+        )
+
     if local_offset is None:
         local_offset = datetime.now().astimezone().utcoffset()
     expected_offset = now.astimezone(tz).utcoffset()
@@ -692,6 +807,19 @@ def verify_env(
             f"container local offset {local_offset} does not match {tz.key} "
             f"({expected_offset}); supercronic would run jobs at the wrong wall time"
         )
+
+    # The lock and state live under STATE_DIR.  Fail here with an actionable
+    # message instead of a PermissionError in the first job.
+    try:
+        paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        probe = paths.STATE_DIR / f".write-probe-{os.getpid()}"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        raise SchedulerConfigError(
+            f"data root {paths.WORKSPACE_ROOT} is not writable: {exc}; "
+            "run deploy/bootstrap.sh or fix ownership"
+        ) from exc
 
     mode = jobs_mode()
     path = crontab_path(mode)
@@ -747,7 +875,11 @@ def exec_command(argv: list[str]) -> int:
         log("exec: a scheduled job is running; refusing to run concurrently")
         return EXIT_LOCKED
     try:
-        return subprocess.run(argv, check=False).returncode
+        try:
+            return subprocess.run(argv, check=False).returncode
+        except OSError as exc:
+            log(f"exec: cannot start {argv[0]!r}: {exc}")
+            return 2
     finally:
         release_lock(lock)
 
@@ -793,6 +925,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("catch-up")
     subparsers.add_parser("healthcheck")
     subparsers.add_parser("verify-env")
+    subparsers.add_parser("mark-started")
     subparsers.add_parser("status")
     exec_parser = subparsers.add_parser("exec")
     exec_parser.add_argument("argv", nargs=argparse.REMAINDER)
@@ -807,6 +940,9 @@ def main(argv: list[str] | None = None) -> int:
             return healthcheck()
         if args.command == "verify-env":
             verify_env()
+            return 0
+        if args.command == "mark-started":
+            mark_started(restart=True)
             return 0
         if args.command == "status":
             return print_status()

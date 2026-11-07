@@ -33,7 +33,8 @@ myopenclaw         只经 MCP 读取
 - 生产镜像已构建：`docker build -f Dockerfile.producer -t dailyinfo-producer:<tag> .`
 - `DAILYINFO_DATA_ROOT`、`DAILYINFO_PRODUCER_ENV` 已就绪；full 模式还需要
   `DAILYINFO_PUSH_ENV`。
-- Docker Compose ≥ 2.20（`compose.yml` 使用 `include`）。
+- Docker Compose ≥ 2.24（`include` + `env_file` 长语法）。
+- 已执行 `sudo -E ./deploy/bootstrap.sh`，bind mount 源目录存在且所有权正确。
 - 数据目录已备份。
 - **同一个数据根只能有一个 FreshRSS 写者。** 以下步骤必须串行，不能新旧栈并行。
 
@@ -53,13 +54,21 @@ sudo systemctl daemon-reload
 cd /srv/dailyinfo   # 换成实际目录
 docker compose -p dailyinfo-production -f compose.production.yml down
 
-# 3. 单写者检查：不应再有任何 FreshRSS 容器或进程
-docker ps --format '{{.Names}}' | grep -i freshrss || echo "no freshrss container"
+# 3. 单写者检查：不能有任何 dailyinfo 容器（含一次性的 collector run）
+docker ps -a --format '{{.Names}}' | grep -E 'dailyinfo|freshrss' \
+  && { echo "STOP: a DailyInfo container is still present"; exit 1; } \
+  || echo "no dailyinfo container"
 sudo lsof "$DAILYINFO_DATA_ROOT/freshrss/data/users/collector/db.sqlite" 2>/dev/null \
+  && { echo "STOP: a process still holds the FreshRSS DB"; exit 1; } \
   || echo "no process holds the FreshRSS DB"
+sudo lsof "$DAILYINFO_DATA_ROOT/state/scheduler.lock" 2>/dev/null \
+  && { echo "STOP: an old collector is still running"; exit 1; } \
+  || echo "no scheduler lock holder"
 
 # 4. 启动新栈（不含 MCP；81 的 MCP 继续按原方式运行）
-DAILYINFO_SCHEDULER_JOBS=collect \
+#    collect 模式写进项目 .env / deploy.env，否则下次 plain `docker compose up -d`
+#    会按默认 full 模式重建并因缺少 Discord token 反复退出。
+echo 'DAILYINFO_SCHEDULER_JOBS=collect' >> .env
 docker compose -p dailyinfo -f compose.production.yml up -d
 
 # 5. 验收
@@ -88,12 +97,15 @@ for label in run-arxiv run-resource run-code run-papers run-ai_news \
 done
 launchctl list | grep dailyinfo || echo "no dailyinfo launchd job"
 
-# 2. 停掉 myopenclaw compose 里的 freshrss
+# 2. 删除 myopenclaw compose 里的 freshrss（stop 不够：restart: always 会在
+#    Docker/宿主重启后把它拉回来）
 cd ~/code/myopenclaw   # 换成实际目录
-docker compose stop freshrss
+docker compose rm -sf freshrss
 
-# 3. 单写者检查（同上）
-docker ps --format '{{.Names}}' | grep -i freshrss || echo "no freshrss container"
+# 3. 单写者检查（同上，含一次性的 collector run）
+docker ps -a --format '{{.Names}}' | grep -E 'dailyinfo|freshrss' \
+  && { echo "STOP: a DailyInfo container is still present"; exit 1; } \
+  || echo "no dailyinfo container"
 
 # 4. 启动完整栈（production + MCP）
 cd ~/code/dailyinfo
@@ -164,7 +176,9 @@ docker compose -p dailyinfo-production -f compose.production.yml up -d freshrss
 
 注意：旧的 systemd service 使用 `collector` 服务，其 `command` 现在已改为
 `scripts.scheduler exec ...`；回滚前若不需要锁包装，可在旧部署目录保留旧版
-compose 的副本。
+compose 的副本。**旧 collector 不带 scheduler 锁**，回滚后必须确认新栈已经
+完全停止（`docker ps -a` 中没有 `dailyinfo-*`），否则两个 writer 会同时写
+publication store 和 FreshRSS SQLite。
 
 ## myopenclaw 交接清单
 

@@ -79,7 +79,8 @@ services:
       test: ["CMD", "python", "-m", "scripts.scheduler", "healthcheck"]
       interval: 60s
       timeout: 20s
-      start_period: 5m
+      # A cold start replays the day's jobs before supercronic starts.
+      start_period: 30m
       retries: 3
     # A run killed at stop is replayed by catch-up on the next start.
     stop_grace_period: 30s

@@ -23,6 +23,9 @@ export DAILYINFO_SCHEDULER_JOBS="$mode"
 export DAILYINFO_SCHEDULER_CRONTAB="$crontab"
 
 python -m scripts.scheduler verify-env
+# Every boot records a restart so healthcheck grants a bounded replay window;
+# catch-up runs every 15 minutes and must not slide that window forward.
+python -m scripts.scheduler mark-started
 python -m scripts.scheduler catch-up
 
 exec supercronic -passthrough-logs "$crontab"

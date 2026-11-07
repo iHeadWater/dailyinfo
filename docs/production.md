@@ -44,11 +44,13 @@ full 模式启动时校验 `DISCORD_BOT_TOKEN`；缺失则容器退出并提示�
 - **启动校验**：`verify-env` 检查本地时区偏移与 `Asia/Shanghai` 一致、crontab
   与 job 表完全对应、full 模式凭据齐全。任一不符容器直接退出。
 - **补跑**：`catch-up` 在启动时和每 15 分钟运行一次，补“当天已到期但未成功”
-  的 job。失败按 5 / 15 / 30 分钟退避，每日最多 3 次。
+  的 job。失败按 5 / 15 分钟退避，每日最多 3 次。每次尝试的时间按实际执行时刻
+  记录，不按 sweep 开始时刻。
 - **单写者**：所有 job 与手工 `collector` 共用 `state/scheduler.lock`。锁被占时
   本次跳过并记日志，由下一轮 catch-up 补上；不会有两个进程同时写 SQLite。
 - **健康检查**：对每个 job 取最近一次已到期的计划时刻，超过 2 小时仍无当日成功
-  记录则容器 unhealthy。
+  记录则容器 unhealthy。容器每次重启会把补跑宽限重新锚定到启动时刻（最多 2 小时），
+  但 15 分钟一次的 sweep 不会延长它，持续失败仍会变红。
 - **状态**：`state/scheduler_state.json`，原子写入。文件损坏时隔离为
   `.corrupt-<时间戳>`，按“今天未成功”重放，并把健康检查置红。
 
@@ -67,7 +69,8 @@ DAILYINFO_PUSH_ENV=/srv/dailyinfo/secrets/push.env
 DAILYINFO_SCHEDULER_JOBS=full
 ```
 
-`compose.yml` 使用 `include`，需要 Docker Compose ≥ 2.20。
+`compose.yml` 使用 `include`，scheduler 的 `env_file` 使用 `path` + `required`
+长语法，需要 Docker Compose ≥ 2.24。
 
 ### producer.env
 
@@ -101,6 +104,27 @@ docker build -f Dockerfile.producer -t dailyinfo-producer:$(git rev-parse --shor
 镜像基于 `python:3.12-slim`，安装 `tzdata` 和校验过 SHA256 的 supercronic，
 **不设置 ENTRYPOINT**。collector 的 `command` 与 scheduler 的 `entrypoint`
 都由 compose 指定，避免镜像入口把命令变成 supercronic 的参数。
+
+### 凭据边界
+
+- collector 不挂载 `DAILYINFO_PUSH_ENV`，不持有 Discord token。
+- scheduler 必须持有 token 才能推送；collection job 的子进程会被剥离
+  `DISCORD_*` 环境变量，但同容器同 UID 的 PID 1 仍可读到 token。彻底隔离
+  需要把 push 放到独立容器 / UID，当前以“剥离子进程环境”作为折中。
+
+## 首次部署
+
+```bash
+export DAILYINFO_DATA_ROOT=/srv/dailyinfo
+export DAILYINFO_MCP_SECRETS_DIR=/srv/dailyinfo/secrets/mcp
+sudo -E ./deploy/bootstrap.sh     # 创建 bind mount 源并设置所有权
+docker compose up -d
+```
+
+所有 bind mount 都使用 `create_host_path: false`，因此上述目录必须事先存在，
+否则 `docker compose up -d` 会在创建容器时失败。脚本还会给 scheduler/collector
+以 UID 33 写权限，并把 `publications`、`deliveries` 设为 GID 10001 的 setgid
+目录供 MCP 只读。macOS 上 Docker Desktop 自行映射所有权，脚本只创建目录。
 
 ## 运行与排障
 
