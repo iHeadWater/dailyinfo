@@ -76,7 +76,8 @@ jobs:
             -e DAILYINFO_SCHEDULER_CRONTAB=/etc/dailyinfo/crontab.collect \
             -e DEEPSEEK_API_KEY=test \
             --entrypoint python dailyinfo-producer:ci -m scripts.scheduler verify-env
-          docker run --rm --entrypoint supercronic dailyinfo-producer:ci -help | grep -q passthrough-logs
+          # Go's flag package writes usage to stderr.
+          docker run --rm --entrypoint supercronic dailyinfo-producer:ci -help 2>&1 | grep -q passthrough-logs
           # No entrypoint exports here: this is what the Docker healthcheck
           # and `compose exec` actually see.
           docker run --rm \
