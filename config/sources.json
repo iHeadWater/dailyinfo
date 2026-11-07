@@ -7,12 +7,13 @@
     "freshrss_user": ""
   },
   "prompt_templates": {
-    "one_line_summary": "请为以下 {count} 篇 {display_name} 最新文章各生成一句话中文摘要，突出核心发现或贡献：\n\n{article_list}\n\n请严格按以下 Markdown 格式返回：\n\n## 📚 {display_name} 今日简报 ({date}) - {count}篇文章\n\n1. **文章标题**\n   > 一句话中文摘要\n\n2. **文章标题**\n   > 一句话中文摘要\n\n...\n\n不要在列表之外添加总结、注释或补充说明。",
+    "one_line_summary": "请为以下 {count} 篇 {display_name} 最新文章各生成一句话中文摘要，突出核心发现或贡献：\n\n{article_list}\n\n请严格按以下 Markdown 格式返回：\n\n## 📚 {display_name} 今日简报 ({date}) - {count}篇文章\n\n1. **原文标题（请原样复制，勿翻译）**\n   > 一句话中文摘要\n\n2. **原文标题（请原样复制，勿翻译）**\n   > 一句话中文摘要\n\n...\n\n注意：请严格保留每篇文章的原始标题（英文标题保持英文，中文标题保持中文），不要翻译标题。仅对摘要内容使用中文。\n不要在列表之外添加总结、注释或补充说明。",
     "latent_space_ainews": "你是一位资深AI行业分析师。以下是今天的AI新闻汇总（来自 Latent Space 的 AINews 日报）。请按以下4个类别整理关键信息，每个类别列出3-5条最重要的进展，每条一句话中文概述：\n\n## 🧠 模型进展\n（新模型发布、基准测试、训练突破等）\n\n## 🤖 Agent/产品进展\n（编程Agent、产品发布、工具更新等）\n\n## 🔬 AI for Science\n（AI在科学研究中的应用）\n\n## 🏭 产业新闻\n（融资、收购、政策、商业动态等）\n\n如果某个类别没有相关内容，写\"暂无重要进展\"。每条进展单独一行，用 \"- \" 项目符号开头；不要把所有内容压缩成一段。\n\n---\n以下是今天的新闻内容：\n\n{content}",
     "code_trending": "你是一位资深技术编辑。请为以下技术趋势项目各生成一句话中文摘要（突出核心功能/亮点）：\n\n{items}\n\n返回格式：按原始分组，每个项目一行，格式为：\n**项目名** — 一句话描述\n\n要求：简洁精准，突出技术价值和创新点。",
     "university_news": "你是一位高校信息助理。请对以下大连理工大学相关网站的最新通知/新闻进行简洁汇总：\n\n{items}\n\n返回格式：每条一行，格式为：\n**[日期] 标题** — 一句话说明（如无摘要则概括标题含义）\n\n要求：突出与科研、项目申报、学术活动相关的重要信息；如有申报截止日期请着重标注。",
     "university_news_unified": "你是一位高校信息助理。以下是大连理工大学各栏目的最新动态，请整理为一篇统一的校园新闻简报。\n\n{items}\n\n要求：\n1. 严格保留原有栏目分节结构，无内容的栏目省略不写\n2. 跨栏目去重：同一事件若在多个栏目出现，只在最相关的栏目保留一条，行末加括注「（另见：XX）」\n3. 每条格式：**[日期] 标题** — 一句话摘要\n4. 重点标注科研项目申报截止日期等时效性信息（如有请加 ⚠️）\n5. 结尾加一行：「**本期信源：**」后列出本次有内容的栏目名称",
-    "recruitment": "你是一位招聘信息助理。请对以下招聘/实习/选调信息进行整理，每条突出关键信息：\n\n{items}\n\n返回格式：每条一行，格式为：\n🏢 **公司/单位名** — 岗位方向 | ⚠️ 特别要求（如有户籍/学历/专业限制等则注明，否则省略）\n\n要求：从标题中提取公司或单位名称；尽量识别并标注截止日期和特殊限制条件；简洁精准。不要在列表之外添加任何总结、注释或补充说明。"
+    "recruitment": "你是一位招聘信息助理。请对以下招聘/实习/选调信息进行整理，每条突出关键信息：\n\n{items}\n\n返回格式：每条一行，格式为：\n🏢 **公司/单位名** — 岗位方向 | ⚠️ 特别要求（如有户籍/学历/专业限制等则注明，否则省略）\n\n要求：从标题中提取公司或单位名称；尽量识别并标注截止日期和特殊限制条件；简洁精准。不要在列表之外添加任何总结、注释或补充说明。",
+    "ruanyf_weekly": "你是一位科技编辑。以下是一期《科技爱好者周刊》的正文，请提炼成中文简报：\n\n{content}\n\n要求：\n1. 先一行概述本期主题\n2. 按周刊原有栏目（封面图/本周话题/科技动态/文摘/言论/工具/资源等）分节\n3. 每节 3-5 条，每条一句话\n4. 保留有价值的原文链接\n5. 无内容的栏目省略"
   },
   "sources": [
     {
@@ -112,6 +113,14 @@
       "type": "rss"
     },
     {
+      "name": "comms_earth_env",
+      "display_name": "Communications Earth & Environment",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://www.nature.com/commsenv.rss",
+      "type": "rss"
+    },
+    {
       "name": "nature_climate_change",
       "display_name": "Nature Climate Change",
       "category": "papers",
@@ -165,6 +174,14 @@
       "category": "papers",
       "enabled": true,
       "url": "https://agupubs.onlinelibrary.wiley.com/feed/19422466/most-recent",
+      "type": "rss"
+    },
+    {
+      "name": "agu_advances",
+      "display_name": "AGU Advances",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://agupubs.onlinelibrary.wiley.com/feed/2576604x/most-recent",
       "type": "rss"
     },
     {
@@ -302,6 +319,17 @@
       "chinese_title_url": "https://www.sciengine.com/JHE/doi/{doi}"
     },
     {
+      "name": "jwrmd",
+      "display_name": "Journal of Water Resources Planning and Management (JWRPM)",
+      "category": "papers",
+      "enabled": true,
+      "url": "https://api.crossref.org/works?filter=issn:0733-9496,type:journal-article&sort=updated&order=desc&rows=20",
+      "type": "api",
+      "parser": "crossref",
+      "lookback_hours": 720,
+      "max_items": 20
+    },
+    {
       "name": "chinawater",
       "display_name": "中国水利",
       "category": "papers",
@@ -420,6 +448,19 @@
       },
       "max_items": 10,
       "type": "api"
+    },
+    {
+      "name": "ruanyf_weekly",
+      "display_name": "阮一峰科技爱好者周刊",
+      "category": "code",
+      "enabled": true,
+      "prompt_template": "ruanyf_weekly",
+      "use_content": true,
+      "lookback_hours": 168,
+      "max_content_chars": 60000,
+      "title_contains": "科技爱好者周刊",
+      "url": "https://feeds.feedburner.com/ruanyifeng",
+      "type": "rss"
     },
     {
       "name": "dlut_zhxw",

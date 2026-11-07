@@ -372,6 +372,21 @@ def test_shuili_xuebao_config_sorts_by_updated():
     assert "sort=updated" in source["url"]
 
 
+def test_jwrmd_config_filters_journal_articles():
+    """JWRPM deposits non-article rows; the Crossref filter must drop them."""
+    cfg_path = Path(__file__).parent.parent / "config" / "sources.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    source = next(s for s in cfg["sources"] if s["name"] == "jwrmd")
+
+    assert source["type"] == "api"
+    assert source["parser"] == "crossref"
+    assert "issn:0733-9496" in source["url"]
+    assert "type:journal-article" in source["url"]
+    assert "sort=updated" in source["url"]
+    assert source["lookback_hours"] == 720
+    assert "chinese_title_url" not in source
+
+
 def test_crossref_fetch_filters_seen_articles(fake_requests):
     from conftest import FakeResponse
     from datasource import DataSource

@@ -94,6 +94,89 @@ def test_fetch_base_url_match_ignores_query(rss_db):
     assert items == []  # no entries for feed 2 but resolver should still find it
 
 
+def test_title_contains_keeps_only_matching_entries(rss_db):
+    """A literal title substring drops mixed-in posts before the item limit."""
+    now = int(time.time())
+    rss_db.execute(
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen)"
+        " VALUES (?,?,?,?,?,?)",
+        (
+            1,
+            "科技爱好者周刊（第 416 期）：编程已经面目全非",
+            "https://example.com/weekly/416",
+            "",
+            now,
+            now,
+        ),
+    )
+    rss_db.execute(
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen)"
+        " VALUES (?,?,?,?,?,?)",
+        (
+            1,
+            "How to make a PINN",
+            "https://example.com/other",
+            "",
+            now - 30,
+            now - 30,
+        ),
+    )
+    rss_db.commit()
+
+    ds = _make_rss(
+        {
+            "name": "ruanyf_weekly",
+            "type": "rss",
+            "category": "code",
+            "url": "https://example.com/feed.xml",
+            "title_contains": "科技爱好者周刊",
+        },
+        rss_db,
+    )
+
+    assert [item.title for item in ds.fetch()] == [
+        "科技爱好者周刊（第 416 期）：编程已经面目全非"
+    ]
+
+
+def test_title_contains_applies_on_the_use_content_path(rss_db):
+    """The deep-content LIMIT 3 window must count matching titles only."""
+    now = int(time.time())
+    body = "<p>" + ("word " * 40) + "</p>"
+    rss_db.execute(
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen)"
+        " VALUES (?,?,?,?,?,?)",
+        (3, "Other tech essay", "https://deep.example.com/essay", body, now, now),
+    )
+    rss_db.execute(
+        "INSERT INTO entry(id_feed, title, link, content, date, lastSeen)"
+        " VALUES (?,?,?,?,?,?)",
+        (
+            3,
+            "科技爱好者周刊（第 415 期）：城市",
+            "https://deep.example.com/weekly",
+            body,
+            now - 10,
+            now - 10,
+        ),
+    )
+    rss_db.commit()
+
+    ds = _make_rss(
+        {
+            "name": "ruanyf_weekly",
+            "type": "rss",
+            "category": "code",
+            "url": "https://deep.example.com/rss",
+            "use_content": True,
+            "title_contains": "科技爱好者周刊",
+        },
+        rss_db,
+    )
+
+    assert [item.title for item in ds.fetch()] == ["科技爱好者周刊（第 415 期）：城市"]
+
+
 def test_fetch_returns_empty_for_unknown_url(rss_db):
     ds = _make_rss(
         {
