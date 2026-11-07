@@ -155,6 +155,9 @@ scheduler 与 collector 以 UID 33 写入数据；MCP 以 UID 10001 只读挂载
 以 0640 写入 setgid、GID 10001 的目录。管理员仍需把 `publications/` 的组设为
 10001 并启用 setgid，使新目录和新文件持续可读；这部分与旧部署相同。
 
+生产任务必须写 `freshrss/data`（首次运行会自动注册 RSS 订阅），因此整个数据根
+以读写方式挂载，而不是把 FreshRSS 数据库单独设为只读。
+
 ## 验收与撤回
 
 - `docker compose ps`：`freshrss` 与 `scheduler` 均为 healthy。

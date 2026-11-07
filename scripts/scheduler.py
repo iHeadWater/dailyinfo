@@ -504,8 +504,9 @@ def _run_with_timeout(
         # after the lock is released and catch-up starts a second writer.
         try:
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        except (AttributeError, OSError):
+            # Windows has no killpg/SIGKILL; the process group is the fallback.
+            process.kill()
         process.wait()
         raise
 
