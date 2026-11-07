@@ -804,6 +804,7 @@
   ],
   "discord_channels": {
     "papers": "#paper",
-    "ai_news": "#deeplearning"
+    "ai_news": "#deeplearning",
+    "conference": "#deeplearning"
   }
 }

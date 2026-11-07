@@ -79,7 +79,11 @@ Pipeline 6 stores OpenReview submission metadata and public replies in
 `$DAILYINFO_DATA_ROOT/conference/conference.sqlite3`, writes a deterministic
 markdown listing to `briefings/conference/`, and can additionally render an AI
 Chinese briefing for review-bearing events (`{source}_ai_{batch_hash}.md`).
-It does not rank relevance or push. New submissions alone stay in the
+It does not rank relevance. `dailyinfo push` sends a compact one-line-per-paper
+digest to the conference channel (`DISCORD_CHANNEL_CONFERENCE`, falling back to
+`DISCORD_CHANNEL_AI_NEWS`); the detailed AI briefing stays local and is moved to
+`pushed/conference/` after delivery. When no digest is pending, one
+`暂无新增投稿或评审变化` notice is sent. New submissions alone stay in the
 deterministic listing unless `ai_briefing.include_new_submissions` is enabled;
 `ai_briefing.max_events_per_briefing` and `max_batches_per_run` cap model calls.
 Reviews are fetched in bulk with `details=replies`; only replies readable by
@@ -100,6 +104,7 @@ a failure.
 dailyinfo push                       # Push today's briefings (all categories)
 dailyinfo push -d 2026-04-22         # Backfill a specific day (YYYY-MM-DD)
 dailyinfo push -c papers,ai_news     # Push only selected categories
+dailyinfo push -c conference         # Conference one-line review digest only
 dailyinfo push -c weekly             # Push weekly recap only (noon cron)
 dailyinfo push --force               # Explicitly retry a successful Discord delivery
 ```
@@ -195,7 +200,7 @@ FRESHRSS_PASSWORD=freshrss123
 | `DEEPSEEK_API_KEY` | DeepSeek API key (required — primary model: `deepseek-flash`) |
 | `GLM_API_KEY` | Zhipu GLM API key (optional, only needed for fallback) |
 | `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
-| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` | Per-category channel IDs (missing ones are skipped, not fatal) |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` / `_CONFERENCE` | Per-category channel IDs (missing ones are skipped, not fatal; conference falls back to `_AI_NEWS`) |
 | `DISCORD_CHANNEL_*_DEV` / `_STAGING` | Env-specific channel IDs when `DAILYINFO_ENV=dev` or `staging` |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) — controls data dir and channel suffix |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`; env-suffixed for dev/staging) |

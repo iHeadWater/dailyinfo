@@ -124,6 +124,7 @@ Publication 依据独立 delivery state 实现正常重跑 no-op；`pushed/` 仍
 | papers   | `DISCORD_CHANNEL_PAPERS` | `_PAPERS_DEV` | `_PAPERS_STAGING` |
 | ai_news  | `DISCORD_CHANNEL_AI_NEWS` | `_AI_NEWS_DEV` | `_AI_NEWS_STAGING` |
 | arxiv    | `DISCORD_CHANNEL_ARXIV` (falls back to `DISCORD_CHANNEL_AI_NEWS`) | `_ARXIV_DEV` | `_ARXIV_STAGING` |
+| conference | `DISCORD_CHANNEL_CONFERENCE` (falls back to `DISCORD_CHANNEL_AI_NEWS`) | `_CONFERENCE_DEV` | `_CONFERENCE_STAGING` |
 | code     | `DISCORD_CHANNEL_CODE` | `_CODE_DEV` | `_CODE_STAGING` |
 | resource | `DISCORD_CHANNEL_RESOURCE` | `_RESOURCE_DEV` | `_RESOURCE_STAGING` |
 

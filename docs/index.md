@@ -128,7 +128,7 @@ dailyinfo push
 |----------|---------|
 | `DEEPSEEK_API_KEY` | DeepSeek API key (primary model for `dailyinfo run`) |
 | `DISCORD_BOT_TOKEN` | Discord bot token for `dailyinfo push` |
-| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` | Optional category channel IDs |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` / `_CONFERENCE` | Optional category channel IDs; conference falls back to `_AI_NEWS` |
 | `FRESHRSS_USER` | FreshRSS username |
 | `FRESHRSS_PASSWORD` | FreshRSS initial password |
 | `DAILYINFO_DATA_ROOT` | Override default data root |
