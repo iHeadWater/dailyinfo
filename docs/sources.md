@@ -43,21 +43,23 @@ This page is generated from [`config/sources.json`](https://github.com/iHeadWate
 | shuili_xuebao | 水利学报 | papers | api | True | 720 | https://api.crossref.org/works?filter=issn:0559-9350&sort=updated&order=desc&rows=20 |
 | jwrmd | Journal of Water Resources Planning and Management (JWRPM) | papers | api | True | 720 | https://api.crossref.org/works?filter=issn:0733-9496,type:journal-article&sort=updated&order=desc&rows=20 |
 | chinawater | 中国水利 | papers | scrape | True | 48 | https://slzg.cbpt.cnki.net/portal/journal/portal/client/index |
-| latent_space | Latent Space AINews | ai_news | rss | True | 48 | https://www.latent.space/feed?section=ainews |
+| latent_space | Latent Space AINews | ai_news | rss | True | 48 | https://latent.space/feed?section=ainews |
 | arxiv_cs_ai | arXiv CS.AI | arxiv | rss | True | 24 | https://rss.arxiv.org/rss/cs.AI |
 | github_trending | GitHub Trending | code | scrape | True | 24 | https://github.com/trending?since=daily |
 | huggingface_models | HuggingFace Trending Models | code | api | True | 24 | https://huggingface.co/api/models |
 | huggingface_datasets | HuggingFace Trending Datasets | code | api | True | 24 | https://huggingface.co/api/datasets |
 | huggingface_spaces | HuggingFace Trending Spaces | code | api | True | 24 | https://huggingface.co/api/spaces |
 | ruanyf_weekly | 阮一峰科技爱好者周刊 | code | rss | True | 168 | https://feeds.feedburner.com/ruanyifeng |
-| dlut_zhxw | 大连理工大学 - 综合新闻 | resource | scrape | True | 24 | https://news.dlut.edu.cn/zhxw.htm |
-| dlut_rcpy | 大连理工大学 - 人才培养 | resource | scrape | True | 24 | https://news.dlut.edu.cn/rcpy.htm |
-| dlut_xsky | 大连理工大学 - 学术科研 | resource | scrape | True | 24 | https://news.dlut.edu.cn/xsky.htm |
-| dlut_hzjl | 大连理工大学 - 合作交流 | resource | scrape | True | 24 | https://news.dlut.edu.cn/hzjl.htm |
-| dlut_yxfc | 大连理工大学 - 一线风采 | resource | scrape | True | 24 | https://news.dlut.edu.cn/yxfc.htm |
-| dlut_sche | 大连理工大学 - 建设工程学院 | resource | scrape | True | 24 | http://sche.dlut.edu.cn |
-| dlut_futureschool | 大连理工大学 - 未来技术学院 | resource | scrape | True | 24 | http://futureschool.dlut.edu.cn |
-| dlut_scidep | 大连理工大学 - 科学技术研究院 | resource | scrape | True | 24 | http://scidep.dlut.edu.cn/zytz.htm |
+| dlut_zhxw | 大连理工大学 - 综合新闻 | resource | scrape | False | 24 | https://news.dlut.edu.cn/zhxw.htm |
+| dlut_rcpy | 大连理工大学 - 人才培养 | resource | scrape | False | 24 | https://news.dlut.edu.cn/rcpy.htm |
+| dlut_xsky | 大连理工大学 - 学术科研 | resource | scrape | False | 24 | https://news.dlut.edu.cn/xsky.htm |
+| dlut_hzjl | 大连理工大学 - 合作交流 | resource | scrape | False | 24 | https://news.dlut.edu.cn/hzjl.htm |
+| dlut_yxfc | 大连理工大学 - 一线风采 | resource | scrape | False | 24 | https://news.dlut.edu.cn/yxfc.htm |
+| dlut_sche | 大连理工大学 - 建设工程学院 | resource | scrape | False | 24 | http://sche.dlut.edu.cn |
+| dlut_futureschool | 大连理工大学 - 未来技术学院 | resource | scrape | False | 24 | http://futureschool.dlut.edu.cn |
+| dlut_scidep | 大连理工大学 - 科学技术研究院 | resource | scrape | True | 720 | http://scidep.dlut.edu.cn/zytz.htm |
+| dlut_gs | 大连理工大学 - 研究生院通知 | resource | scrape | True | 720 | http://gs.dlut.edu.cn/yjspy/pygcguan_li/zytz.htm |
+| dlut_teach | 大连理工大学 - 教务处通知 | resource | scrape | True | 720 | https://teach.dlut.edu.cn/zhongyaotonggao/list.jsp?urltype=tree.TreeTempUrl&wbtreeid=1016 |
 | dlut_recruitment | 大连理工大学 - 招聘信息 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
 | dlut_internship | 大连理工大学 - 实习信息 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |
 | dlut_transfer_recruitment | 大连理工大学 - 选调生 | resource | api | True | 24 | https://job.dlut.edu.cn/f/recruitmentinfo/ajax_frontRecruitinfo |

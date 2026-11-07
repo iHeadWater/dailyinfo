@@ -10,6 +10,7 @@ import pathlib
 import re
 import requests
 import time
+import unicodedata
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -71,6 +72,26 @@ def strip_html(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]+", " ", text)
     return text.strip()
+
+
+def _normalise_filter_text(value: str) -> str:
+    """Normalise a title for keyword matching (NFKC, casefold, whitespace)."""
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _keyword_matches(text: str, keyword: str) -> bool:
+    """Return True when *keyword* occurs in an already-normalised *text*.
+
+    Chinese keywords are matched as substrings; pure-ASCII keywords get word
+    boundaries so ``ai`` does not match ``said``.
+    """
+    kw = _normalise_filter_text(keyword)
+    if not kw:
+        return False
+    if kw.isascii() and re.fullmatch(r"[a-z0-9 ._+-]+", kw):
+        return re.search(rf"(?<!\w){re.escape(kw)}(?:s|es)?(?!\w)", text) is not None
+    return kw in text
 
 
 def _normalise_url(url: str) -> str:
@@ -244,6 +265,7 @@ class DataSource(ABC):
         self._cutoff_ts = int(time.time()) - self.lookback_hours * 3600
         self._seen: dict[str, str] = self._load_seen()
         self._total_before_filter: int = 0
+        self.filtered_out: list[Item] = []
 
     # --- seen-links dedup ---
     def _seen_path(self) -> pathlib.Path:
@@ -268,6 +290,39 @@ class DataSource(ABC):
     def _filter_seen(self, items: list[Item]) -> list[Item]:
         self._total_before_filter = len(items)
         return [it for it in items if it.url not in self._seen]
+
+    def _apply_keyword_filter(self, items: list[Item]) -> list[Item]:
+        """Drop items that fail the configured include/exclude keyword rules.
+
+        Filtering before ``_filter_seen`` means a dropped item is not committed
+        as seen: editing the keyword lists can bring it back on a later run.
+        """
+        include = self.config.get("include_keywords") or []
+        exclude = self.config.get("exclude_keywords") or []
+        self.filtered_out = []
+        if not include and not exclude:
+            return items
+        kept: list[Item] = []
+        for item in items:
+            text = _normalise_filter_text(item.title)
+            if include and not any(_keyword_matches(text, kw) for kw in include):
+                self.filtered_out.append(item)
+                continue
+            if exclude and any(_keyword_matches(text, kw) for kw in exclude):
+                self.filtered_out.append(item)
+                continue
+            kept.append(item)
+        return kept
+
+    def _finish_fetch(self, items: list[Item]) -> list[Item]:
+        """Apply keyword filters, then the seen-link dedup."""
+        total = len(items)
+        items = self._apply_keyword_filter(items)
+        items = self._filter_seen(items)
+        # Keep the pre-filter count so the pipeline can report how many items
+        # the source returned, not just how many survived both filters.
+        self._total_before_filter = total
+        return items
 
     def commit_seen(self, items: list[Item]) -> None:
         """Record item URLs as processed. Called after briefing is saved."""
@@ -489,11 +544,11 @@ class RSSDataSource(DataSource):
 class ScrapeDataSource(DataSource):
     def fetch(self) -> list[Item]:
         if self.name == "github_trending":
-            return self._filter_seen(self._fetch_github())
+            return self._finish_fetch(self._fetch_github())
         if self.name == "chinawater":
-            return self._filter_seen(self._fetch_chinawater_journal())
+            return self._finish_fetch(self._fetch_chinawater_journal())
         if self.name == "skxjz":
-            return self._filter_seen(self._fetch_skxjz_journal())
+            return self._finish_fetch(self._fetch_skxjz_journal())
         resp = requests.get(
             self.config["url"],
             timeout=20,
@@ -503,8 +558,8 @@ class ScrapeDataSource(DataSource):
         )
         resp.encoding = resp.apparent_encoding or "utf-8"
         if self.name == "skxjz":
-            return self._filter_seen(self._parse_skxjz(resp.text))
-        return self._filter_seen(self._parse_dlut_html(resp.text))
+            return self._finish_fetch(self._parse_skxjz(resp.text))
+        return self._finish_fetch(self._parse_dlut_html(resp.text))
 
     # --- GitHub Trending ---
     def _fetch_github(self) -> list[Item]:
@@ -860,6 +915,73 @@ class ScrapeDataSource(DataSource):
                 if len(items) >= max_items:
                     break
 
+        elif name == "dlut_gs":
+            # 研究生院“重要通知”：
+            # <LI><A href="...">标题</A><SPAN class="date">[日期]</SPAN><DIV class="cb"></DIV></LI>
+            # The list page has unclosed <LI> elements in its navigation, so the
+            # match is bounded by the notice's own </LI> and a tag-free title.
+            rgx = re.compile(
+                r"<li[^>]*>\s*<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>([^<]+)</a>"
+                r"\s*<span[^>]*class=[\"'][^\"']*date[^\"']*[\"'][^>]*>\s*"
+                r"\[?(\d{4}-\d{2}-\d{2})\]?\s*</span>[\s\S]*?</li>",
+                re.I,
+            )
+            for m in rgx.finditer(page_html):
+                href, title_raw, date_raw = m.group(1), m.group(2), m.group(3)
+                title = html_lib.unescape(re.sub(r"<[^>]+>", "", title_raw)).strip()
+                if not title:
+                    continue
+                dt = date_parser(date_raw)
+                if dt and dt < cutoff:
+                    continue
+                url = href if href.startswith("http") else base_url + href.lstrip("./")
+                items.append(
+                    Item(
+                        title=title,
+                        date=dt.strftime("%Y-%m-%d") if dt else date_raw,
+                        url=url,
+                        extra=(
+                            {"source_published_at": dt.strftime("%Y-%m-%d")}
+                            if dt
+                            else {}
+                        ),
+                    )
+                )
+                if len(items) >= max_items:
+                    break
+
+        elif name == "dlut_teach":
+            # 教务处“通知公告”：列表里的可见文本会被截断，完整标题在 title 属性。
+            rgx = re.compile(
+                r"<li[^>]*>\s*<a[^>]+href=[\"']([^\"']+)[\"'][^>]*"
+                r"\btitle=[\"']([^\"']+)[\"'][^>]*>[\s\S]*?</a>"
+                r"\s*<span[^>]*>\s*(\d{4}-\d{2}-\d{2})\s*</span>[\s\S]*?</li>",
+                re.I,
+            )
+            for m in rgx.finditer(page_html):
+                href, title_raw, date_raw = m.group(1), m.group(2), m.group(3)
+                title = html_lib.unescape(title_raw).strip()
+                if not title:
+                    continue
+                dt = date_parser(date_raw)
+                if dt and dt < cutoff:
+                    continue
+                url = href if href.startswith("http") else base_url + href.lstrip("./")
+                items.append(
+                    Item(
+                        title=title,
+                        date=dt.strftime("%Y-%m-%d") if dt else date_raw,
+                        url=url,
+                        extra=(
+                            {"source_published_at": dt.strftime("%Y-%m-%d")}
+                            if dt
+                            else {}
+                        ),
+                    )
+                )
+                if len(items) >= max_items:
+                    break
+
         return items
 
 
@@ -893,7 +1015,7 @@ class APIDataSource(DataSource):
         params = self.config.get("params", {})
         if method == "POST":
             if self.config.get("paginate"):
-                return self._filter_seen(self._fetch_dlut_paginated(params))
+                return self._finish_fetch(self._fetch_dlut_paginated(params))
             resp = requests.post(self.config["url"], data=params, timeout=20)
         else:
             params_str = {k: str(v) for k, v in params.items()}
@@ -906,10 +1028,10 @@ class APIDataSource(DataSource):
         data = resp.json()
 
         if self.name.startswith("huggingface_"):
-            return self._filter_seen(self._parse_huggingface(data))
+            return self._finish_fetch(self._parse_huggingface(data))
         if self.config.get("parser") == "crossref":
-            return self._filter_seen(self._parse_crossref(data))
-        return self._filter_seen(self._parse_dlut_api(data))
+            return self._finish_fetch(self._parse_crossref(data))
+        return self._finish_fetch(self._parse_dlut_api(data))
 
     def _fetch_dlut_paginated(self, base_params: dict) -> list[Item]:
         """Paginate DLUT POST API.

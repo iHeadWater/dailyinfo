@@ -111,9 +111,9 @@ Publication 依据独立 delivery state 实现正常重跑 no-op；`pushed/` 仍
 - **Input**: GitHub Trending HTML + HuggingFace API
 - **Output**: `briefings/code/`
 
-### Pipeline 5: University News
-- **Input**: DLUT 网站（HTML + API）
-- **Output**: `briefings/resource/`
+### Pipeline 5: DLUT Notices & Recruitment
+- **Input**: 科研院 / 研究生院 / 教务处通知（HTML）+ 招聘/实习/选调（API）
+- **Output**: `briefings/resource/`（通知合并为 `dlut_notices_briefing_*.md`，招聘类按源分文件）
 
 ## Discord Channel Mapping
 

@@ -1058,6 +1058,18 @@ PROBES: tuple[Probe, ...] = (
             "::test_has_real_briefing_today_false_for_failure_placeholders"
         ),
     ),
+    Probe(
+        # A configured filter that is never applied would let the school-news
+        # noise back into the notices digest; the parser test pins the drop.
+        label="configured keyword filters actually drop non-matching items",
+        path="scripts/datasource.py",
+        old="        items = self._apply_keyword_filter(items)",
+        new="        items = items",
+        test=(
+            "tests/test_datasource_scrape.py"
+            "::test_dlut_gs_parses_notices_and_applies_keyword_filter"
+        ),
+    ),
 )
 
 
