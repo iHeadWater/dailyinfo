@@ -198,6 +198,48 @@ def test_run_combines_pipeline_and_force(cli_mod):
     assert last[-2:] == ["--force", "arxiv_cs_ai"]
 
 
+def test_run_accepts_pipeline_6(cli_mod):
+    result = CliRunner().invoke(cli_mod.cli, ["run", "-p", "6"])
+    assert result.exit_code == 0, result.output
+
+    calls = cli_mod.__test_calls__
+    pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
+    assert pipeline_calls
+    assert pipeline_calls[0][-2:] == ["--pipeline", "6"]
+
+
+def test_run_forwards_source_filters(cli_mod):
+    result = CliRunner().invoke(
+        cli_mod.cli,
+        [
+            "run",
+            "-p",
+            "6",
+            "--source",
+            "openreview_iclr_2027",
+            "--source",
+            "openreview_icml_2027",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    calls = cli_mod.__test_calls__
+    pipeline_calls = [c for c in calls if any("run_pipelines.py" in part for part in c)]
+    last = pipeline_calls[-1]
+    assert last.count("--source") == 2
+    assert "openreview_iclr_2027" in last
+    assert "openreview_icml_2027" in last
+
+
+def test_conference_is_status_visible_and_a_daily_push_category(cli_mod):
+    import push_to_discord as pd
+
+    assert "conference" not in cli_mod.CATEGORIES
+    assert "conference" in cli_mod.STATUS_CATEGORIES
+    assert "conference" in pd.DAILY_CATEGORIES
+    assert "conference" in pd.ALL_CATEGORIES
+
+
 def test_push_invokes_push_script(cli_mod):
     result = CliRunner().invoke(cli_mod.cli, ["push"])
     assert result.exit_code == 0

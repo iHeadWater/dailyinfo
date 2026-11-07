@@ -1144,3 +1144,176 @@ def test_the_lookback_mirror_matches_the_run_side(monkeypatch):
             assert pd._pushed_within_lookback("papers", name, lookback) == (
                 rp._already_pushed_within(name, "papers", lookback)
             )
+
+
+def _conference_block(forum_id="abc123", title="Test Paper"):
+    return f"""### {title}
+
+- 会议：ICLR 2027
+- 论文详情页：[OpenReview](https://openreview.net/forum?id={forum_id})
+- 状态：under_review
+
+**研究内容：** 这是测试论文做了什么。第二句。
+
+**公开评审评分**：原始评分（raw_review_ratings）：2、3；原始 confidence：3、3。
+
+**Reviewer 意见：**
+- Reviewer 1：肯定方法，质疑基线。
+"""
+
+
+def _seed_conference(
+    tmp_path, monkeypatch, *, one_line="做了测试工作；评审：肯定，方法清晰。"
+):
+    import push_to_discord as pd
+    import conference_digest as cd
+
+    briefings = tmp_path / "briefings"
+    directory = briefings / "conference"
+    directory.mkdir(parents=True)
+    path = directory / "openreview_iclr_2027_ai_test.md"
+    path.write_text(_conference_block(), encoding="utf-8")
+    sidecar = path.with_name(path.name + ".digest.json")
+    sidecar.write_text(
+        json.dumps(
+            {
+                "version": cd.ONE_LINER_PROMPT_VERSION,
+                "generated_ms": 0,
+                "complete": True,
+                "papers": {
+                    "abc123": {
+                        "title": "Test Paper",
+                        "one_line": one_line,
+                        "fallback": False,
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(pd, "BRIEFINGS_DIR", briefings)
+    monkeypatch.setattr(pd, "PUSHED_DIR", tmp_path / "pushed")
+    monkeypatch.setattr(
+        pd,
+        "_load_sources_by_category",
+        lambda category: [
+            {
+                "name": "openreview_iclr_2027",
+                "display_name": "ICLR 2027",
+                "category": "conference",
+                "enabled": True,
+            }
+        ],
+    )
+    return path, sidecar
+
+
+def test_push_conference_sends_only_the_digest_and_archives(tmp_path, monkeypatch):
+    import push_to_discord as pd
+
+    path, sidecar = _seed_conference(tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, content: (sent.append((channel, content)) or True),
+    )
+
+    count = pd.push_conference_category("deeplearning", "2026-11-07", strict=True)
+
+    assert count == 1
+    assert sent[0][0] == "deeplearning"
+    content = sent[0][1]
+    assert "## 📚 ICLR 2027 会议速览 (2026-11-07) - 1 篇评审更新" in content
+    assert "> 做了测试工作；评审：肯定，方法清晰。" in content
+    assert "Reviewer 意见" not in content
+    assert not path.exists()
+    assert not sidecar.exists()
+    archived = tmp_path / "pushed" / "conference" / path.name
+    assert archived.exists()
+    assert (tmp_path / "pushed" / "conference" / sidecar.name).exists()
+
+
+def test_push_conference_no_files_sends_no_update_notice(tmp_path, monkeypatch):
+    import push_to_discord as pd
+
+    briefings = tmp_path / "briefings"
+    (briefings / "conference").mkdir(parents=True)
+    monkeypatch.setattr(pd, "BRIEFINGS_DIR", briefings)
+    monkeypatch.setattr(pd, "PUSHED_DIR", tmp_path / "pushed")
+    monkeypatch.setattr(pd, "_load_sources_by_category", lambda category: [])
+    sent = []
+    monkeypatch.setattr(
+        pd,
+        "send_to_discord",
+        lambda channel, content: (sent.append((channel, content)) or True),
+    )
+
+    count = pd.push_conference_category("deeplearning", "2026-11-07", strict=True)
+
+    assert count == 0
+    assert len(sent) == 1
+    assert "暂无新增投稿或评审变化" in sent[0][1]
+
+
+def test_push_conference_failure_keeps_files(tmp_path, monkeypatch):
+    import push_to_discord as pd
+
+    path, sidecar = _seed_conference(tmp_path, monkeypatch)
+    monkeypatch.setattr(pd, "send_to_discord", lambda channel, content: False)
+
+    with pytest.raises(RuntimeError):
+        pd.push_conference_category("deeplearning", "2026-11-07", strict=True)
+
+    assert path.exists()
+    assert sidecar.exists()
+
+
+def test_push_category_delegates_conference_to_digest_path(monkeypatch):
+    import push_to_discord as pd
+
+    calls = []
+    monkeypatch.setattr(
+        pd,
+        "push_conference_category",
+        lambda channel, date, strict=False: (
+            calls.append((channel, date, strict)) or 1
+        ),
+    )
+
+    assert (
+        pd.push_category("conference", "deeplearning", "2026-11-07", strict=True) == 1
+    )
+    assert calls == [("deeplearning", "2026-11-07", True)]
+
+
+def test_conference_channel_falls_back_to_ai_news(monkeypatch):
+    import push_to_discord as pd
+
+    monkeypatch.setattr(
+        pd,
+        "get_channel_id",
+        lambda category: "ai-news-channel" if category == "ai_news" else "",
+    )
+
+    channels = pd._build_channel_map()
+
+    assert channels["conference"] == "ai-news-channel"
+
+
+def test_main_routes_conference_without_canonical_bundle(monkeypatch):
+    import push_to_discord as pd
+
+    calls = []
+    monkeypatch.setattr(pd, "DISCORD_CHANNELS", {"conference": "deeplearning"})
+    monkeypatch.setattr(
+        pd,
+        "push_category",
+        lambda category, channel, date, strict=False: (
+            calls.append((category, channel, date, strict)) or 1
+        ),
+    )
+
+    assert pd.main("2026-11-07", categories=["conference"]) == 0
+    assert calls == [("conference", "deeplearning", "2026-11-07", True)]

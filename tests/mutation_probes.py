@@ -1059,6 +1059,281 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # A failed page must not advance the source watermark: the next run
+        # has to resume from the last committed cursor instead of skipping
+        # whatever was never stored.
+        label="a failed page does not advance the watermark",
+        path="scripts/conference_sync.py",
+        old="            store.fail_run(run.run_id, outcome, message, now_ms=now_ms)",
+        new="            store.finish_run(run.run_id, now_ms=now_ms)",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_failed_page_does_not_advance_watermark_and_resumes"
+        ),
+    ),
+    Probe(
+        # A reply without readers must not be stored.  Deleting the gate would
+        # let private reviews into the local record and any later briefing.
+        label="a private review reply is not stored",
+        path="scripts/conference_reviews.py",
+        old="        if not reply_is_public(reply):\n            continue",
+        new="        if False:\n            continue",
+        test=("tests/test_conference_reviews.py::test_private_reply_is_not_stored"),
+    ),
+    Probe(
+        # The streaming watermark can predate the review cutoff; without the
+        # clamp the first incremental run re-reads the historical deadline
+        # week.
+        label="incremental reviews stop at the watch_from cutoff",
+        path="scripts/conference_sync.py",
+        old=(
+            "                max(watch_from_ms, computed) if computed is not None "
+            "else watch_from_ms"
+        ),
+        new="                computed",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_incremental_reviews_never_reach_before_watch_from"
+        ),
+    ),
+    Probe(
+        # A sample reads the latest N submissions; advancing the streaming
+        # watermark from it would skip everything between the real cursor and
+        # the sample window.
+        label="a review sample does not advance the streaming watermark",
+        path="scripts/conference_store.py",
+        old='            if run["mode"] != "review_sample" and candidate is not None:',
+        new="            if candidate is not None:",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_review_sample_uses_latest_n_and_marks_completed"
+        ),
+    ),
+    Probe(
+        # A bootstrap imports tens of thousands of old submissions; without
+        # the baseline cutoff the AI queue would aim at all of them.
+        label="a baseline submission is never queued for AI",
+        path="scripts/conference_sync.py",
+        old="    if baseline_cutoff is not None:\n        # Baseline papers",
+        new="    if False:\n        # Baseline papers",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_baseline_papers_are_not_queued_even_when_new_submissions_are_included"
+        ),
+    ),
+    Probe(
+        # A metadata-only page has no replies.  Treating that as an empty
+        # review set would report a review change and re-render every paper.
+        label="a metadata-only page preserves the stored reviews",
+        path="scripts/conference_sync.py",
+        old=(
+            "            after_reviews = replies_by_forum.get(forum_id)\n"
+            "            if not after_reviews:"
+        ),
+        new=(
+            "            after_reviews = replies_by_forum.get(forum_id) or []\n"
+            "            if False:"
+        ),
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_metadata_only_page_does_not_report_a_review_change"
+        ),
+    ),
+    Probe(
+        # Marking rendered is the queue's acknowledgement.  Without it the
+        # same event is pending forever and a retry never converges.
+        label="a rendered briefing acknowledges its events",
+        path="scripts/conference_ai_briefing.py",
+        old="        store.mark_rendered(event_ids, filename, now_ms=now_ms)",
+        new="        pass",
+        test=(
+            "tests/test_conference_ai_briefing.py"
+            "::test_existing_file_skips_the_model_call"
+        ),
+    ),
+    Probe(
+        # Plain new submissions must stay in the deterministic listing unless
+        # the source explicitly opts into AI summaries for them.
+        label="plain new submissions are not AI events by default",
+        path="scripts/conference_events.py",
+        old=(
+            "    if include_new_submissions and (\n"
+            '        NEW_SUBMISSION in event_types or "PAPER_CONTENT_UPDATED" in event_types\n'
+            "    ):"
+        ),
+        new="    if True:",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_new_submission_does_not_call_ai_by_default"
+        ),
+    ),
+    Probe(
+        # A public review is untrusted text.  The sanitizer is the enforcement
+        # boundary, not the prompt instruction.
+        label="model output is sanitized before it is written",
+        path="scripts/conference_ai_briefing.py",
+        old=(
+            "                content = _sanitize_conference_markdown(\n"
+            "                    _clean_conference_briefing(\n"
+            '                        str(call_ai(prompt, model=model, max_tokens=max_tokens) or "")\n'
+            "                    )\n"
+            "                )"
+        ),
+        new=(
+            "                content = _clean_conference_briefing(\n"
+            '                    str(call_ai(prompt, model=model, max_tokens=max_tokens) or "")\n'
+            "                )"
+        ),
+        test=(
+            "tests/test_conference_ai_briefing.py"
+            "::test_render_sanitizes_the_model_output"
+        ),
+    ),
+    Probe(
+        # Per-reply truncation alone does not bound a paper with many replies;
+        # the review count cap is the other half.
+        label="a paper's review list is capped before rendering",
+        path="scripts/conference_events.py",
+        old="        reviews = reviews[-limit:]",
+        new="        reviews = reviews",
+        test=(
+            "tests/test_conference_events.py"
+            "::test_snapshot_caps_review_count_abstract_and_review_text"
+        ),
+    ),
+    Probe(
+        # A source name is interpolated into a briefing filename; config is
+        # trusted, but a traversal component must still fail closed.
+        label="an unsafe source name is rejected",
+        path="scripts/conference_sync.py",
+        old=(
+            '        or not re.fullmatch(r"[A-Za-z0-9_.-]+", source)\n'
+            '        or source in {".", ".."}'
+        ),
+        new="        or False\n        or False",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_unsafe_source_name_is_invalid_config"
+        ),
+    ),
+    Probe(
+        # A crash after writing but before marking must reuse the file on the
+        # next day; a date in the filename makes that impossible.
+        label="the AI briefing filename is stable across days",
+        path="scripts/conference_ai_briefing.py",
+        old='        filename = f"{source}_ai_{_batch_hash(event_ids)}.md"',
+        new='        filename = f"{source}_ai_{date}_{_batch_hash(event_ids)}.md"',
+        test=(
+            "tests/test_conference_ai_briefing.py"
+            "::test_existing_file_skips_the_model_call"
+        ),
+    ),
+    Probe(
+        # A single pathological event must stop consuming model calls after
+        # max_attempts instead of blocking the queue forever.
+        label="a repeatedly failing event is quarantined",
+        path="scripts/conference_store.py",
+        old="                    f\"status = CASE WHEN attempts + 1 >= ? THEN 'failed' \"",
+        new="                    f\"status = CASE WHEN 0 THEN 'failed' \"",
+        test=(
+            "tests/test_conference_ai_briefing.py"
+            "::test_single_event_failure_is_quarantined_after_max_attempts"
+        ),
+    ),
+    Probe(
+        # The one-time seed must respect seed_limit; a large historical
+        # database otherwise queues an unbounded model backlog.
+        label="the one-time AI seed respects its limit",
+        path="scripts/conference_store.py",
+        old='"ORDER BY updated_ms DESC, forum_id LIMIT ?",',
+        new='"ORDER BY updated_ms DESC, forum_id LIMIT 999999",',
+        test=(
+            "tests/test_conference_store.py"
+            "::test_seed_review_events_honors_the_limit"
+        ),
+    ),
+    Probe(
+        # Without this branch the new conference category silently falls
+        # through to the filename/date scanner and sends nothing.
+        label="conference push uses the digest path",
+        path="scripts/push_to_discord.py",
+        old="        return push_conference_category(channel_id, date, strict=strict)",
+        new="        return 0",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_push_category_delegates_conference_to_digest_path"
+        ),
+    ),
+    Probe(
+        # A delivered digest must archive its detailed source and sidecar;
+        # otherwise the same 42 papers are sent again on the next run.
+        label="a delivered conference digest is archived",
+        path="scripts/push_to_discord.py",
+        old="            _archive_conference_files(digest.files)",
+        new="            pass",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_push_conference_sends_only_the_digest_and_archives"
+        ),
+    ),
+    Probe(
+        # conference must share the AI-news channel when no dedicated channel
+        # is configured; without the fallback the category is skipped.
+        label="conference falls back to the AI-news channel",
+        path="scripts/push_to_discord.py",
+        old='    if not channels.get("conference"):',
+        new="    if False:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_conference_channel_falls_back_to_ai_news"
+        ),
+    ),
+    Probe(
+        # No files must still produce the explicit no-update notice instead
+        # of a silent zero.
+        label="conference with no files sends a no-update notice",
+        path="scripts/push_to_discord.py",
+        old='        notice = f"📭 **会议** 频道：{date} 暂无新增投稿或评审变化"',
+        new='        notice = ""',
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_push_conference_no_files_sends_no_update_notice"
+        ),
+    ),
+    Probe(
+        # The AI briefing title may be model-truncated; the database title
+        # is authoritative and must win.
+        label="the database title wins over a truncated briefing title",
+        path="scripts/conference_digest.py",
+        old='                    title=str(summary.get("title") or paper["title"]),',
+        new='                    title=paper["title"],',
+        test=(
+            "tests/test_conference_digest.py"
+            "::test_database_title_overrides_truncated_briefing_title"
+        ),
+    ),
+    Probe(
+        # Reusing a complete sidecar is what keeps a second preview/push from
+        # spending another model call on unchanged briefings.
+        label="a complete one-liner sidecar is reused",
+        path="scripts/conference_digest.py",
+        old=('    if cached is not None and (cached.get("complete") or not generate):'),
+        new="    if False:",
+        test=("tests/test_conference_digest.py::test_sidecar_cache_is_reused"),
+    ),
+    Probe(
+        # A long digest line is wrapped explicitly so terminal rendering does
+        # not duplicate a wrapped line.
+        label="conference quote lines are wrapped at sixty characters",
+        path="scripts/conference_digest.py",
+        old="        for line in _wrap_text(paper.one_line, width=60):",
+        new="        for line in [paper.one_line]:",
+        test=(
+            "tests/test_conference_digest.py"
+            "::test_quote_lines_are_wrapped_at_sixty_chars"
+        ),
+    ),
+    Probe(
         # Without the success marker, catch-up retries a job that already
         # finished and the daily state never settles.
         label="a successful job is recorded for its scheduled day",

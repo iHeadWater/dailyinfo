@@ -54,12 +54,14 @@ dailyinfo restart    # Restart the development FreshRSS
 ### Pipeline Execution
 
 ```bash
-dailyinfo run                      # Run all 5 pipelines
+dailyinfo run                      # Run all 6 pipelines
 dailyinfo run -p 1                 # Pipeline 1 (papers)
 dailyinfo run -p 2                 # Pipeline 2 (AI news)
 dailyinfo run -p 3                 # Pipeline 3 (arXiv CS.AI)
 dailyinfo run -p 4                 # Pipeline 4 (code trending)
 dailyinfo run -p 5                 # Pipeline 5 (university news)
+dailyinfo run -p 6                 # Pipeline 6 (conference submissions)
+dailyinfo run -p 6 --source openreview_iclr_2027  # One conference source
 dailyinfo run -f all               # Force regenerate every source today
 dailyinfo run -p 1 -f arxiv_cs_ai  # Force regenerate one source only
 ```
@@ -77,12 +79,36 @@ back to the model in `DAILYINFO_FALLBACK_MODEL` (default
 A missing `GLM_API_KEY` disables the fallback outright rather than retrying
 without credentials.
 
+Pipeline 6 stores OpenReview submission metadata and public replies in
+`$DAILYINFO_DATA_ROOT/conference/conference.sqlite3`, writes a deterministic
+markdown listing to `briefings/conference/`, and can additionally render an AI
+Chinese briefing for review-bearing events (`{source}_ai_{batch_hash}.md`).
+It does not rank relevance. `dailyinfo push` sends a compact one-line-per-paper
+digest to the conference channel (`DISCORD_CHANNEL_CONFERENCE`, falling back to
+`DISCORD_CHANNEL_AI_NEWS`); the detailed AI briefing stays local and is moved to
+`pushed/conference/` after delivery. When no digest is pending, one
+`暂无新增投稿或评审变化` notice is sent. New submissions alone stay in the
+deterministic listing unless `ai_briefing.include_new_submissions` is enabled;
+`ai_briefing.max_events_per_briefing` and `max_batches_per_run` cap model calls.
+Reviews are fetched in bulk with `details=replies`; only replies readable by
+`everyone` are stored. The first review run stores a one-time sample of the
+latest `reviews.sample_limit` submissions (default 50), then sets
+`reviews_watch_from_ms`; later incremental and weekly rescan passes never go
+before that cutoff. `reviews.max_pages_per_run` pauses with a resumable cursor
+and `reviews.request_interval_seconds` spaces requests. Set `OPENREVIEW_EMAIL`
+and `OPENREVIEW_PASSWORD` in `.env`; OpenReview authenticates by **email**, and
+anonymous note queries are rejected by its browser challenge. The legacy
+`OPENREVIEW_USERNAME` key is still read as a fallback. A source that is not
+open yet (`NOT_OPEN`) or not due for a poll (`NOT_DUE`) is a clean outcome, not
+a failure.
+
 ### Push to Discord
 
 ```bash
 dailyinfo push                       # Push today's briefings (all categories)
 dailyinfo push -d 2026-04-22         # Backfill a specific day (YYYY-MM-DD)
 dailyinfo push -c papers,ai_news     # Push only selected categories
+dailyinfo push -c conference         # Conference one-line review digest only
 dailyinfo push -c weekly             # Push weekly recap only (noon cron)
 dailyinfo push --force               # Explicitly retry a successful Discord delivery
 ```
@@ -178,7 +204,7 @@ FRESHRSS_PASSWORD=freshrss123
 | `DEEPSEEK_API_KEY` | DeepSeek API key (required — primary model: `deepseek-flash`) |
 | `GLM_API_KEY` | Zhipu GLM API key (optional, only needed for fallback) |
 | `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
-| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` | Per-category channel IDs (missing ones are skipped, not fatal) |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` / `_CONFERENCE` | Per-category channel IDs (missing ones are skipped, not fatal; conference falls back to `_AI_NEWS`) |
 | `DISCORD_CHANNEL_*_DEV` / `_STAGING` | Env-specific channel IDs when `DAILYINFO_ENV=dev` or `staging` |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) — controls data dir and channel suffix |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`; env-suffixed for dev/staging) |

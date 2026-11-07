@@ -1964,3 +1964,146 @@ def test_the_deep_content_retry_keeps_markdown_in_the_summary(monkeypatch):
     assert not (
         BRIEFINGS_DIR / "ai_news" / f"latent_space_briefing_{rp.DATE}_failed1.md"
     ).exists()
+
+
+def test_conference_sources_respect_enabled_and_source_filter(monkeypatch):
+    import run_pipelines as rp
+
+    cfg = {
+        "sources": [
+            {"name": "a", "category": "conference", "type": "api", "enabled": True},
+            {"name": "b", "category": "conference", "type": "api", "enabled": False},
+            {"name": "c", "category": "conference", "type": "api"},
+            {"name": "d", "category": "papers", "type": "rss", "enabled": True},
+        ]
+    }
+    monkeypatch.setattr(rp, "SOURCE_FILTER", set())
+    assert [s["name"] for s in rp._conference_sources(cfg)] == ["a", "c"]
+
+    monkeypatch.setattr(rp, "SOURCE_FILTER", {"c"})
+    assert [s["name"] for s in rp._conference_sources(cfg)] == ["c"]
+
+
+def test_run_pipeline_conference_counts_clean_sources(monkeypatch):
+    from types import SimpleNamespace
+
+    import run_pipelines as rp
+    from conference_sync import SourceResult
+
+    cfg = {
+        "sources": [
+            {"name": "a", "category": "conference", "type": "api", "enabled": True},
+            {"name": "b", "category": "conference", "type": "api", "enabled": True},
+        ]
+    }
+    monkeypatch.setattr(rp, "_load_sources", lambda: (cfg, {}, {}))
+    monkeypatch.setattr(
+        rp,
+        "ConferenceStore",
+        lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(
+        rp,
+        "OpenReviewRuntime",
+        lambda _cfg: SimpleNamespace(
+            provider=lambda _cfg: object(),
+            close=lambda: None,
+        ),
+    )
+    seen = []
+
+    def fake_sync(**kwargs):
+        seen.append((kwargs["source_cfg"]["name"], kwargs.get("call_ai")))
+        return SourceResult(source=kwargs["source_cfg"]["name"], outcome="NOT_DUE")
+
+    monkeypatch.setattr(rp, "sync_source", fake_sync)
+    monkeypatch.setattr(rp, "SOURCE_FILTER", set())
+    monkeypatch.setattr(rp, "_conference_credentials_present", lambda: True)
+
+    assert rp.run_pipeline_conference() == 2
+    assert [name for name, _ in seen] == ["a", "b"]
+    assert all(callback is rp.call_ai for _, callback in seen)
+
+
+def test_run_pipeline_conference_raises_when_a_source_fails(monkeypatch):
+    from types import SimpleNamespace
+
+    import run_pipelines as rp
+    from conference_sync import SourceResult
+
+    cfg = {
+        "sources": [
+            {"name": "a", "category": "conference", "type": "api", "enabled": True}
+        ]
+    }
+    monkeypatch.setattr(rp, "_load_sources", lambda: (cfg, {}, {}))
+    monkeypatch.setattr(
+        rp,
+        "ConferenceStore",
+        lambda *_args, **_kwargs: SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(
+        rp,
+        "OpenReviewRuntime",
+        lambda _cfg: SimpleNamespace(
+            provider=lambda _cfg: object(),
+            close=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(
+        rp,
+        "sync_source",
+        lambda **_kwargs: SourceResult(source="a", outcome="AUTH_REQUIRED", fatal=True),
+    )
+    monkeypatch.setattr(rp, "SOURCE_FILTER", set())
+    monkeypatch.setattr(rp, "_conference_credentials_present", lambda: True)
+
+    with pytest.raises(RuntimeError, match="AUTH_REQUIRED"):
+        rp.run_pipeline_conference()
+
+
+def test_run_pipeline_conference_returns_zero_without_sources(monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "_load_sources", lambda: ({"sources": []}, {}, {}))
+    monkeypatch.setattr(rp, "SOURCE_FILTER", set())
+
+    assert rp.run_pipeline_conference() == 0
+
+
+def test_run_pipeline_conference_skips_without_credentials(monkeypatch):
+    import run_pipelines as rp
+
+    cfg = {
+        "sources": [
+            {"name": "a", "category": "conference", "type": "api", "enabled": True}
+        ]
+    }
+    monkeypatch.setattr(rp, "_load_sources", lambda: (cfg, {}, {}))
+    monkeypatch.setattr(rp, "SOURCE_FILTER", set())
+    monkeypatch.setattr(rp, "_conference_credentials_present", lambda: False)
+
+    assert rp.run_pipeline_conference() == 0
+
+
+def test_conference_credentials_accept_email_or_legacy_username(monkeypatch):
+    import run_pipelines as rp
+
+    monkeypatch.setattr(rp, "_read_env_value", lambda _key: "")
+    for key in (
+        "OPENREVIEW_EMAIL",
+        "OPENREVIEW_USERNAME",
+        "OPENREVIEW_PASSWORD",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv("OPENREVIEW_EMAIL", "user@example.com")
+    monkeypatch.setenv("OPENREVIEW_PASSWORD", "secret")
+    assert rp._conference_credentials_present() is True
+
+    monkeypatch.delenv("OPENREVIEW_EMAIL")
+    monkeypatch.setenv("OPENREVIEW_USERNAME", "legacy@example.com")
+    assert rp._conference_credentials_present() is True
+
+    monkeypatch.delenv("OPENREVIEW_PASSWORD")
+    assert rp._conference_credentials_present() is False

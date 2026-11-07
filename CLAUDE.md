@@ -28,12 +28,14 @@ uv sync --python python3 && uv pip install -e .
 dailyinfo install                # Validate .env + create workspace dirs + install deps
 
 # Run pipelines (idempotent - skips sources with today's briefing)
-dailyinfo run                    # All 5 pipelines
+dailyinfo run                    # All 6 pipelines
 dailyinfo run -p 1               # Pipeline 1: papers
 dailyinfo run -p 2               # Pipeline 2: AI news
 dailyinfo run -p 3               # Pipeline 3: arXiv
 dailyinfo run -p 4               # Pipeline 4: code trending
 dailyinfo run -p 5               # Pipeline 5: university news
+dailyinfo run -p 6               # Pipeline 6: conference submissions
+dailyinfo run -p 6 --source openreview_iclr_2027  # One conference source
 dailyinfo run -f all             # Force regenerate all sources
 dailyinfo run -f arxiv_cs_ai    # Force regenerate one source
 
@@ -79,7 +81,7 @@ uv run mkdocs serve              # Local preview
 
 ## Architecture
 
-### Five Pipelines
+### Six Pipelines
 
 | Pipeline | Sources | Output |
 |----------|---------|--------|
@@ -88,14 +90,24 @@ uv run mkdocs serve              # Local preview
 | 3 | arXiv CS.AI (RSS, up to 500 articles) | `arxiv/` |
 | 4 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
 | 5 | DLUT university sites (scrape + API) | `resource/` |
+| 6 | OpenReview submissions (ICLR 2027, ICML 2027, NeurIPS 2026) | `conference/` |
 
 Each pipeline is independent — a failure in one does not affect the others. Common processing logic (fetch → batch → AI → merge → save) is shared via `_process_regular_source()`.
 
+Pipeline 6 is deliberately different: it ingests **submission metadata and public replies** into `$DAILYINFO_DATA_ROOT/conference/conference.sqlite3`, writes a **deterministic markdown listing** plus an **optional AI Chinese briefing** for review-bearing events to `briefings/conference/`, and pushes a **compact one-line-per-paper digest** (not the detailed file) to the conference channel. The conference channel falls back to `DISCORD_CHANNEL_AI_NEWS`; when nothing is pending it sends one no-update notice. It does not use `DataSource`/`Item`/the canonical `PublicationStore`; `conference_sync.py` paginates OpenReview and commits each page with its cursor in one transaction, advancing the source watermark only after a complete scan.
+
+Reviews use `details=replies` on the same submission page (no per-forum requests). Only replies whose `readers` contain `everyone` are stored, in the `reviews` table plus a derived `paper_review_summary`. The first review run stores a one-time sample of the latest `reviews.sample_limit` submissions (default 50) and then sets `reviews_watch_from_ms`; subsequent incremental and weekly rescan passes use that cutoff, so historical reviews before it are never backfilled. `reviews.max_pages_per_run` pauses a run with a resumable cursor, and `reviews.request_interval_seconds` spaces page requests.
+
+Each source must declare `reviews.rating_options`: ICLR 2027 is `1..4` (observed), ICML 2027 is `1..6` and NeurIPS 2026 is `1..10` (provisional, from the published review forms; verify against the live invitation when the venue opens). Without a scale, raw ratings are still stored but `paper_review_summary.rating_count` stays 0 and the derived signals are disabled. The review extractor also accepts `recommendation` and `overall_recommendation` when a venue names its score field that way.
+
+The optional AI layer is `conference_defaults.ai_briefing`: `enabled` (default true), `include_new_submissions` (default false, so a plain new submission stays in the deterministic listing), `max_events_per_briefing` and `max_batches_per_run` (cost caps), `max_tokens`, `max_review_chars`, `max_abstract_chars`, `max_reviews_per_paper`, `max_attempts`, and `seed_limit`. It is driven by the `events` table: `REVIEWS_CHANGED`, `DECISION_CHANGED`, `AUTHOR_RESPONSE_CHANGED`, status changes and similar events queue a paper; `PAPER_DISCOVERED` queues it only when `include_new_submissions` is true or the snapshot already carries public reviews. The first AI-enabled run seeds up to `seed_limit` papers that already have reviews or a decision. `render_pending_events()` calls the same `run_pipelines.call_ai` (DeepSeek primary, GLM fallback) and writes `{source}_ai_{batch_hash}.md`; a model failure splits the batch, retries the single event, and marks it `failed` after `max_attempts`. Failures never change the ingestion watermark. `conference_digest.py` turns those detailed files into the compact Discord digest, caching one-line summaries in `*.md.digest.json`; delivered detailed files and sidecars move to `pushed/conference/`.
+
 ### Data Flow
 
-1. **Collection**: FreshRSS for RSS; `datasource.py` handles scraping/API
+1. **Collection**: FreshRSS for RSS; `datasource.py` handles scraping/API; `openreview_provider.py` + `conference_sync.py` handle conference submissions
 2. **Processing** (`run_pipelines.py`): Fetch -> format -> call DeepSeek AI with prompt templates -> save markdown to `~/.myagentdata/dailyinfo/briefings/{category}/`
-3. **Push** (`push_to_discord.py`): Scan briefings -> POST to Discord channels -> move to `pushed/{category}/`
+3. **Conference store** (`conference_store.py`): SQLite is the durable record and queue; the deterministic listing is rendered from pending rows, while `events` queues review/decision changes for `conference_ai_briefing.py`; public replies are stored in `reviews` with a per-paper `paper_review_summary`
+4. **Push** (`push_to_discord.py`): Scan briefings -> POST to Discord channels -> move to `pushed/{category}/`
 
 ### DataSource Class Hierarchy
 
@@ -103,6 +115,8 @@ Each pipeline is independent — a failure in one does not affect the others. Co
   - `RSSDataSource` - FreshRSS SQLite DB
   - `ScrapeDataSource` - HTML scraping (GitHub Trending, DLUT sites, Chinese water journals)
   - `APIDataSource` - REST API calls (HuggingFace, DLUT recruitment, Crossref)
+
+Conference sources are intentionally **not** routed through the `Item`/`seen-URL` contract: their unit is a submission with a stable OpenReview ID, their state is a SQLite watermark rather than a `seen` JSON, and they never enter the canonical publication store.
 
 ### Key Design Patterns
 
@@ -116,7 +130,7 @@ Each pipeline is independent — a failure in one does not affect the others. Co
 
 ## Source Configuration
 
-Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`.
+Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`, `conference`.
 
 Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-flash`, `max_content_chars: 12000` (plain-text cap for `use_content` sources; `>= 200`, truncation marker appended).
 
@@ -130,8 +144,8 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 
 ## Environment Variables
 
-Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`
-Optional: `GLM_API_KEY` (Zhipu fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`, `DAILYINFO_ENV_FILE` (**test-only** — redirects every `.env` lookup; set only by `tests/conftest.py`)
+Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`; `OPENREVIEW_EMAIL` + `OPENREVIEW_PASSWORD` for pipeline 6 (the API rejects anonymous note queries with a browser challenge). OpenReview authenticates by **email**, not display name; the legacy `OPENREVIEW_USERNAME` key is still read as a fallback.
+Optional: `GLM_API_KEY` (Zhipu fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `DISCORD_CHANNEL_CONFERENCE` (falls back to `DISCORD_CHANNEL_AI_NEWS`), `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`, `DAILYINFO_ENV_FILE` (**test-only** — redirects every `.env` lookup; set only by `tests/conftest.py`)
 
 Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPERS_PATH`)已随 zotero_sync 迁移至 mylibrary,本仓库不再需要。
 
