@@ -213,8 +213,8 @@ def test_existing_resource_pipeline_reaches_canonical_store(monkeypatch, tmp_pat
         "category": "resource",
         "type": "scrape",
         "enabled": True,
-        "news_group": "dlut_news",
-        "section": "综合新闻",
+        "news_group": "dlut_notices",
+        "section": "科研项目申报",
         "url": "https://news.dlut.edu.cn/zhxw.htm",
     }
     config = {
@@ -246,7 +246,7 @@ def test_existing_resource_pipeline_reaches_canonical_store(monkeypatch, tmp_pat
     assert rp.run_pipeline_resource() == 1
     bundle = PublicationStore().load_bundle(f"resource-{rp.DATE}")
     assert bundle.items[0].source.name == "dlut_zhxw"
-    assert "综合新闻" in bundle.briefing.body
+    assert "科研项目申报" in bundle.briefing.body
 
 
 def test_ai_news_deep_content_uses_structured_summary(monkeypatch):
