@@ -1,0 +1,45 @@
+FROM python:3.12-slim
+
+ARG UV_VERSION=0.10.9
+ARG SUPERCRONIC_VERSION=v0.2.51
+
+# tzdata is not present in debian-slim; without it ZoneInfo("Asia/Shanghai")
+# raises at startup and supercronic would interpret the crontab in UTC.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir "uv==${UV_VERSION}"
+
+# supercronic is the container-native cron: a single static binary that runs
+# as the compose user and passes job output to docker logs. Verify the
+# published checksum for the target architecture instead of trusting TLS alone.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "${arch}" in \
+        amd64) sha256="cc232108374e8e2b537045f2d5eaa1229f619db314c3ba6a14d38b35dc0aa123" ;; \
+        arm64) sha256="4ae22576a78223d8ccdf5f3b3660a5cbb5288416bf0ca96afc4a36d195932b94" ;; \
+        *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    python -c "import urllib.request; urllib.request.urlretrieve('https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${arch}', '/tmp/supercronic')"; \
+    echo "${sha256}  /tmp/supercronic" | sha256sum -c -; \
+    install -m 0755 /tmp/supercronic /usr/local/bin/supercronic; \
+    rm -f /tmp/supercronic
+
+WORKDIR /app
+COPY pyproject.toml uv.lock README.md ./
+COPY scripts/ ./scripts/
+COPY config/ ./config/
+COPY deploy/crontab.full deploy/crontab.collect /etc/dailyinfo/
+COPY deploy/dailyinfo-scheduler /usr/local/bin/dailyinfo-scheduler
+RUN chmod 0755 /usr/local/bin/dailyinfo-scheduler \
+    && uv sync --frozen --no-dev --no-group docs --no-editable
+
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    HOME=/tmp \
+    TZ=Asia/Shanghai
+
+# No ENTRYPOINT on purpose. The collector overrides the command, and the
+# scheduler sets its own entrypoint in compose; an image-level ENTRYPOINT
+# would turn every override into arguments to supercronic.

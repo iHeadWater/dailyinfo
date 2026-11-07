@@ -1059,6 +1059,182 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # Without the success marker, catch-up retries a job that already
+        # finished and the daily state never settles.
+        label="a successful job is recorded for its scheduled day",
+        path="scripts/scheduler.py",
+        old="        job.success_date = today",
+        new='        job.success_date = ""',
+        test="tests/test_scheduler.py::test_success_clears_retry_state",
+    ),
+    Probe(
+        # Cron lines are the schedule; catch-up must replay them in order.
+        label="catch-up replays jobs in schedule order",
+        path="scripts/scheduler.py",
+        old="    jobs.sort(key=lambda job: (job.hour, job.minute))",
+        new="    jobs.sort(key=lambda job: (job.hour, job.minute), reverse=True)",
+        test="tests/test_scheduler.py::test_catch_up_runs_only_jobs_due_today_in_order",
+    ),
+    Probe(
+        # A healthcheck that cannot go red is the silent-failure mode this
+        # whole wrapper exists to prevent.
+        label="healthcheck reports an overdue job",
+        path="scripts/scheduler.py",
+        old=(
+            "    if failures:\n"
+            '        print("unhealthy: overdue jobs without a success today", flush=True)\n'
+            "        for failure in failures:\n"
+            '            print(f"  {failure}", flush=True)\n'
+            "        return 1\n"
+            "    return 0"
+        ),
+        new=("    if failures:\n" "        return 0\n" "    return 0"),
+        test="tests/test_scheduler.py::test_healthcheck_turns_red_for_an_overdue_job",
+    ),
+    Probe(
+        # Two jobs writing the same data root is the corruption risk the lock
+        # exists for; a busy lock must skip, not proceed.
+        label="a busy lock makes run-job skip",
+        path="scripts/scheduler.py",
+        old=(
+            "    lock = try_acquire_lock()\n"
+            "    if lock is None:\n"
+            '        log(f"job {name}: skipped, another job holds the lock", now=now)\n'
+            "        return 0"
+        ),
+        new=(
+            "    lock = try_acquire_lock()\n"
+            "    if False:\n"
+            '        log(f"job {name}: skipped, another job holds the lock", now=now)\n'
+            "        return 0"
+        ),
+        test="tests/test_scheduler.py::test_run_job_lock_busy_skips_without_running",
+    ),
+    Probe(
+        # A container whose local clock disagrees with the crontab timezone
+        # runs every job eight hours early or late, and nothing else notices.
+        label="verify-env rejects a local timezone mismatch",
+        path="scripts/scheduler.py",
+        old="    if local_offset != expected_offset:",
+        new="    if False:",
+        test="tests/test_scheduler.py::test_verify_env_rejects_a_timezone_mismatch",
+    ),
+    Probe(
+        # Collection-only mode must never quietly schedule a Discord push.
+        label="the collect crontab contains no push job",
+        path="deploy/crontab.collect",
+        old="30 4 * * * python -m scripts.scheduler run-job ai_news",
+        new=(
+            "30 4 * * * python -m scripts.scheduler run-job ai_news\n"
+            "30 5 * * * python -m scripts.scheduler run-job push_early"
+        ),
+        test="tests/test_scheduler.py::test_collect_crontab_is_full_minus_push_jobs",
+    ),
+    Probe(
+        # compose.yml takes precedence over docker-compose.yml, so an implicit
+        # `docker compose down` in the dev CLI would stop the production stack.
+        label="the dev CLI pins docker-compose.yml",
+        path="scripts/cli.py",
+        old='["docker", "compose", "-f", str(compose_file), "up", "-d", "freshrss"]',
+        new='["docker", "compose", "up", "-d", "freshrss"]',
+        test="tests/test_cli.py::test_service_commands_pin_the_dev_compose_file",
+    ),
+    Probe(
+        # Docker healthchecks and `compose exec` do not inherit the
+        # entrypoint's exports; without the installed-path lookup they read a
+        # file that exists only in the repository, and every check fails.
+        label="the crontab resolves from the installed image path",
+        path="scripts/scheduler.py",
+        old=(
+            '    installed = INSTALLED_CRONTAB_DIR / f"crontab.{selected}"\n'
+            "    if installed.is_file():\n"
+            "        return installed"
+        ),
+        new=(
+            '    installed = INSTALLED_CRONTAB_DIR / f"crontab.{selected}"\n'
+            "    if False:\n"
+            "        return installed"
+        ),
+        test="tests/test_scheduler.py::test_crontab_path_prefers_the_installed_copy",
+    ),
+    Probe(
+        # The scheduler writes as UID 33; without the group-read policy the
+        # MCP process (UID 10001) cannot read the new briefings.
+        label="the scheduler inherits the publication group-read policy",
+        path="compose.production.yml",
+        old=(
+            '      DAILYINFO_PUBLICATION_GROUP_READ: "1"\n'
+            "      DAILYINFO_SCHEDULER_JOBS: ${DAILYINFO_SCHEDULER_JOBS:-full}"
+        ),
+        new="      DAILYINFO_SCHEDULER_JOBS: ${DAILYINFO_SCHEDULER_JOBS:-full}",
+        test=(
+            "tests/test_deployment_config.py"
+            "::test_scheduler_inherits_the_collector_permission_environment"
+        ),
+    ),
+    Probe(
+        # Collection jobs are fed by network parsers; they must not inherit
+        # the bot token that the push jobs need.
+        label="collection children lose the Discord credentials",
+        path="scripts/scheduler.py",
+        old="    if not spec.push_only:",
+        new="    if False:",
+        test=(
+            "tests/test_scheduler.py"
+            "::test_collection_children_do_not_see_discord_credentials"
+        ),
+    ),
+    Probe(
+        # An unwritable data root must not turn every 15-minute sweep into
+        # another execution attempt.
+        label="run-job refuses to execute when state cannot be written",
+        path="scripts/scheduler.py",
+        old=(
+            "        except SchedulerConfigError as exc:\n"
+            '            log(f"job {name}: refusing to run, state is not writable: {exc}", now=now)\n'
+            "            return EXIT_STATE_UNWRITABLE"
+        ),
+        new=(
+            "        except SchedulerConfigError as exc:\n"
+            '            log(f"job {name}: refusing to run, state is not writable: {exc}", now=now)'
+        ),
+        test="tests/test_scheduler.py::test_run_job_refuses_when_state_cannot_be_written",
+    ),
+    Probe(
+        # A long sweep must not stamp later jobs with the sweep start time.
+        label="catch-up records each job's actual start time",
+        path="scripts/scheduler.py",
+        old="        run_job(job.name, now=clock(), runner=runner)",
+        new="        run_job(job.name, now=sweep_now, runner=runner)",
+        test="tests/test_scheduler.py::test_catch_up_records_the_actual_run_time",
+    ),
+    Probe(
+        # Attempts from yesterday must not consume today's budget.
+        label="the attempt budget resets on a new day",
+        path="scripts/scheduler.py",
+        old="        if job.last_attempt_date != today:",
+        new="        if False:",
+        test="tests/test_scheduler.py::test_day_rollover_resets_the_attempt_budget",
+    ),
+    Probe(
+        # A restart must give catch-up a bounded window instead of turning
+        # every pre-restart job red immediately.
+        label="healthcheck grants a bounded restart window",
+        path="scripts/scheduler.py",
+        old="        if is_today and last_started_at is not None:",
+        new="        if False:",
+        test="tests/test_scheduler.py::test_healthcheck_grants_a_bounded_restart_window",
+    ),
+    Probe(
+        # Compose auto-loads .env; the dev file must not read the production
+        # data-root variable.
+        label="the dev compose uses a separate data-root variable",
+        path="docker-compose.yml",
+        old="${DAILYINFO_DEV_DATA_ROOT:-~/.myagentdata/dailyinfo-dev}",
+        new="${DAILYINFO_DATA_ROOT:-~/.myagentdata/dailyinfo-dev}",
+        test="tests/test_deployment_config.py::test_legacy_compose_is_dev_scoped",
+    ),
+    Probe(
         # A configured filter that is never applied would let the school-news
         # noise back into the notices digest; the parser test pins the drop.
         label="configured keyword filters actually drop non-matching items",

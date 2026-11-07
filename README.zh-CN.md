@@ -31,7 +31,7 @@ FreshRSS / 网页抓取 / API 数据源
 | **配置驱动** | 在 `config/sources.json` 中添加 RSS、网页或 API 数据源,无需改代码 |
 | **幂等,可安全重跑** | 已有今日简报的数据源自动跳过;已推送文件不会重复发送 |
 | **高容错** | 指数退避重试、AI 响应不完整时自动拆分批次、数据源级隔离 |
-| **调度无关** | 自带 cron、systemd timer 或 agent runtime——DailyInfo 负责流水线,不负责时钟 |
+| **自带调度** | 容器栈自己完成每日采集、生成与推送;外部 cron / agent runtime 仍可选用 |
 
 ## 效果展示
 

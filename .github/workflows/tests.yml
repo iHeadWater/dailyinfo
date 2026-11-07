@@ -39,3 +39,48 @@ jobs:
       # applied by hand. This is that discipline, mechanised.
       - name: Check that the guards can fail
         run: uv run --frozen --extra mcp python tests/mutation_probes.py
+
+      # The merged stack is what a fresh machine runs; a schema error here is
+      # invisible to the unit tests.
+      - name: Validate the self-hosted compose stack
+        run: |
+          mkdir -p /tmp/dailyinfo-ci /tmp/mcp-secrets
+          : > /tmp/producer.env
+          DAILYINFO_DATA_ROOT=/tmp/dailyinfo-ci \
+          DAILYINFO_IMAGE=dailyinfo-producer:ci \
+          DAILYINFO_PRODUCER_ENV=/tmp/producer.env \
+          DAILYINFO_MCP_SECRETS_DIR=/tmp/mcp-secrets \
+          docker compose -f compose.yml config -q
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build the producer image
+        run: docker build -f Dockerfile.producer -t dailyinfo-producer:ci .
+
+      # The collector overrides the command; an image-level ENTRYPOINT would
+      # turn that override into arguments to supercronic.
+      - name: Assert the image has no entrypoint
+        run: |
+          test "$(docker image inspect --format '{{json .Config.Entrypoint}}' dailyinfo-producer:ci)" = "null"
+
+      - name: Assert tzdata and the scheduler wrapper work
+        run: |
+          docker run --rm --entrypoint python dailyinfo-producer:ci -c "from zoneinfo import ZoneInfo; print(ZoneInfo('Asia/Shanghai'))"
+          docker run --rm \
+            -e DAILYINFO_DATA_ROOT=/tmp/data \
+            -e DAILYINFO_SCHEDULER_JOBS=collect \
+            -e DAILYINFO_SCHEDULER_CRONTAB=/etc/dailyinfo/crontab.collect \
+            -e DEEPSEEK_API_KEY=test \
+            --entrypoint python dailyinfo-producer:ci -m scripts.scheduler verify-env
+          # Go's flag package writes usage to stderr.
+          docker run --rm --entrypoint supercronic dailyinfo-producer:ci -help 2>&1 | grep -q passthrough-logs
+          # No entrypoint exports here: this is what the Docker healthcheck
+          # and `compose exec` actually see.
+          docker run --rm \
+            -e DAILYINFO_DATA_ROOT=/tmp/data \
+            -e DAILYINFO_SCHEDULER_JOBS=collect \
+            --entrypoint python dailyinfo-producer:ci -m scripts.scheduler healthcheck

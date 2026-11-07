@@ -8,13 +8,13 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 
 **Core pipeline**: FreshRSS collection -> AI summary generation (markdown to disk) -> Discord push + archive
 
-**Design principles**: Configuration-driven (`config/sources.json`) + idempotent CLI + external scheduling (any cron / agent runtime). Optional integration with myopenclaw is documented in `docs/agent-config.md`; dailyinfo itself has no runtime dependency on it.
+**Design principles**: Configuration-driven (`config/sources.json`) + idempotent CLI + self-hosted container scheduling (`compose.yml`, supercronic + `deploy/crontab.*`). External cron / agent runtimes remain supported for custom setups. Optional integration with myopenclaw is documented in `docs/agent-config.md`; dailyinfo itself has no runtime dependency on it.
 
 ## Tech Stack
 
 - Python 3.10+, package manager: uv (primary) / pip (fallback)
 - CLI: Click 8+
-- RSS: FreshRSS (Docker/SQLite, `restart: always`, auto-start via myopenclaw launchd)
+- RSS: FreshRSS (Docker/SQLite, `restart: unless-stopped`, started by the self-hosted compose stack)
 - AI: DeepSeek official API, primary `deepseek-flash` (fallback: Zhipu official API `glm-5.3-flash`)
 - Push: Discord Bot API via `requests`
 - Docs: MkDocs Material (GitHub Pages)
@@ -36,6 +36,11 @@ dailyinfo run -p 4               # Pipeline 4: code trending
 dailyinfo run -p 5               # Pipeline 5: university news
 dailyinfo run -f all             # Force regenerate all sources
 dailyinfo run -f arxiv_cs_ai    # Force regenerate one source
+
+# Self-hosted scheduler (inside the compose stack)
+docker compose up -d             # fresh host: production + MCP
+docker compose exec scheduler python -m scripts.scheduler status
+docker compose exec scheduler python -m scripts.scheduler healthcheck
 
 # Push to Discord
 dailyinfo push                   # Today's briefings

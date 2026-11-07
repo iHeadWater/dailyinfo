@@ -291,6 +291,19 @@ def test_start_fails_when_compose_missing(cli_mod, tmp_path, monkeypatch):
     assert "docker-compose.yml not found" in result.output
 
 
+def test_service_commands_pin_the_dev_compose_file(cli_mod):
+    """compose.yml is production; an implicit `docker compose down` would hit it."""
+    for command in ("start", "stop", "restart"):
+        result = CliRunner().invoke(cli_mod.cli, [command])
+        assert result.exit_code == 0, result.output
+
+    expected = str(cli_mod.PROJECT_ROOT / "docker-compose.yml")
+    assert cli_mod.__test_calls__
+    for cmd in cli_mod.__test_calls__:
+        assert "-f" in cmd
+        assert expected in cmd
+
+
 def test_version_flag_prints_project_version(cli_mod):
     project_version = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"][
         "version"

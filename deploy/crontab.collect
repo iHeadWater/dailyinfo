@@ -1,0 +1,8 @@
+# Collection-only schedule: same run jobs as crontab.full, no Discord pushes.
+# Used by deployments whose consumers read through the read-only MCP.
+*/15 * * * * python -m scripts.scheduler catch-up
+0 3 * * * python -m scripts.scheduler run-job arxiv
+30 3 * * * python -m scripts.scheduler run-job resource
+45 3 * * * python -m scripts.scheduler run-job code
+0 4 * * * python -m scripts.scheduler run-job papers
+30 4 * * * python -m scripts.scheduler run-job ai_news
