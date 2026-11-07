@@ -356,3 +356,83 @@ def test_a_category_run_subscribes_and_resolves_in_the_same_run(tmp_path, monkey
     }
     saved = list((BRIEFINGS_DIR / "ai_news").glob("latent_space_briefing_*.md"))
     assert len(saved) == 1
+
+
+def test_code_pipeline_subscribes_rss_and_uses_deep_content(tmp_path, monkeypatch):
+    """Code RSS sources must go through FreshRSS, not the scrape/API loop."""
+    import json
+    import time
+
+    import run_pipelines as rp
+    from paths import BRIEFINGS_DIR
+
+    db_path = tmp_path / "freshrss.sqlite"
+    db = _fresh_db(str(db_path))
+    now = int(time.time())
+    db.execute(
+        "INSERT INTO entry (id_feed, title, link, content, date, lastSeen)"
+        " VALUES (1, '科技爱好者周刊（第 416 期）：编程已经面目全非',"
+        " 'https://www.ruanyifeng.com/blog/2026/10/weekly-issue-416.html', ?, ?, ?)",
+        ["word " * 80, now, now],
+    )
+    db.commit()
+    sources_json = tmp_path / "sources.json"
+    sources_json.write_text(
+        json.dumps(
+            {
+                "defaults": {},
+                "prompt_templates": {
+                    "ruanyf_weekly": "weekly digest of {content}",
+                    "code_trending": "unused {items}",
+                },
+                "sources": [
+                    {
+                        "name": "ruanyf_weekly",
+                        "display_name": "阮一峰科技爱好者周刊",
+                        "type": "rss",
+                        "category": "code",
+                        "enabled": True,
+                        "prompt_template": "ruanyf_weekly",
+                        "use_content": True,
+                        "title_contains": "科技爱好者周刊",
+                        "url": "https://feeds.feedburner.com/ruanyifeng",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(rp, "SOURCES_JSON", str(sources_json))
+    monkeypatch.setattr(rp, "FRESHRSS_DB", str(db_path))
+    monkeypatch.setattr(rp, "log", lambda *_: None)
+    monkeypatch.setattr(rp.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(rp, "PUBLICATION_INTEGRATION", True)
+
+    def structured_weekly(prompt, **_kwargs):
+        return json.dumps(
+            {
+                "items": [
+                    {
+                        "source_ref": "item-0001",
+                        "summary": "stub weekly",
+                        "why_it_matters": None,
+                        "tags": [],
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(rp, "call_ai", structured_weekly)
+
+    saved = rp.run_pipeline_code()
+
+    assert saved == 1
+    row = db.execute("SELECT url, name FROM feed").fetchone()
+    assert dict(row) == {
+        "url": "https://feeds.feedburner.com/ruanyifeng",
+        "name": "阮一峰科技爱好者周刊",
+    }
+    briefing = list((BRIEFINGS_DIR / "code").glob("ruanyf_weekly_briefing_*.md"))
+    assert len(briefing) == 1
+    assert "stub weekly" in briefing[0].read_text(encoding="utf-8")
