@@ -34,6 +34,10 @@ docker compose up -d
 | `full`（默认） | `deploy/crontab.full` | 5 个 run + 3 个 Discord push；需要 `DAILYINFO_PUSH_ENV` |
 | `collect` | `deploy/crontab.collect` | 只跑 5 个 run，不推送；供只经 MCP 消费的部署使用 |
 
+> 当前 crontab 只覆盖 pipeline 1–5。Pipeline 6（OpenReview 会议）尚未接入
+> scheduler，需手动执行 `dailyinfo run -p 6` / `dailyinfo push -c conference`，
+> 或由外部 cron 触发；follow-up 见 #101。
+
 full 模式启动时校验 `DISCORD_BOT_TOKEN`；缺失则容器退出并提示改用
 `collect`，不会出现“前 5 个任务成功、3 次推送全失败”的半套状态。
 
@@ -93,6 +97,8 @@ DISCORD_CHANNEL_AI_NEWS=
 DISCORD_CHANNEL_CODE=
 DISCORD_CHANNEL_RESOURCE=
 DISCORD_CHANNEL_ARXIV=
+# 可选；未配置时会议速览回落到 DISCORD_CHANNEL_AI_NEWS
+DISCORD_CHANNEL_CONFERENCE=
 ```
 
 ### 镜像

@@ -23,17 +23,21 @@ def _markdown_cell(value) -> str:
 
 
 def sync_readme_index() -> None:
-    """Copy README.md to docs/index.md so the docs homepage stays identical."""
+    """Copy README.md to docs/index.md so the docs homepage stays identical.
+
+    README links to docs such as ``docs/mcp.md`` because it lives at the repo
+    root.  Inside ``docs/index.md`` those links must be local, otherwise MkDocs
+    resolves them to ``docs/docs/mcp.md``.
+    """
+
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    (DOCS_DIR / "index.md").write_text(
-        README.read_text(encoding="utf-8"), encoding="utf-8"
+    readme_text = README.read_text(encoding="utf-8")
+    readme_text = re.sub(r"\]\(docs/([^)]+)\)", r"](\1)", readme_text)
+    readme_text = readme_text.replace(
+        "](LICENSE)",
+        "](https://github.com/iHeadWater/dailyinfo/blob/main/LICENSE)",
     )
-    mirror_dir = DOCS_DIR / "docs"
-    mirror_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("architecture.md", "agent-config.md", "cli.md"):
-        source = DOCS_DIR / name
-        target = mirror_dir / name
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    (DOCS_DIR / "index.md").write_text(readme_text, encoding="utf-8")
 
 
 def sync_pictures() -> None:

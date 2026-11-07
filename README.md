@@ -4,23 +4,24 @@ Read-only MCP access to generated or delivered briefings is an optional componen
 
 [中文](https://github.com/iHeadWater/dailyinfo/blob/main/README.zh-CN.md) | English
 
-DailyInfo is an automated research intelligence collector for AI for Science researchers. Every day it gathers journal papers, AI news, arXiv preprints, code trends, and university announcements from RSS feeds, scraped pages, and APIs — then turns them into concise Chinese-language briefings delivered straight to your Discord.
+DailyInfo is an automated research intelligence collector for AI for Science researchers. Every day it gathers journal papers, AI news, arXiv preprints, code trends, university notices, and conference submissions from RSS feeds, scraped pages, APIs, and OpenReview — then turns them into concise Chinese-language briefings delivered to Discord and, optionally, the Web.
 
 ## How It Works
 
-One pipeline, five independent sources of information:
+One orchestrated system, six independent information pipelines:
 
 ```text
-FreshRSS / scrape / API sources
+FreshRSS / scrape / API / OpenReview
   -> dailyinfo run
-  -> structured summaries + canonical PublicationStore
-  -> dailyinfo publish --sink web / discord
-  -> independent delivery sinks + local state
+  -> canonical PublicationStore (five regular categories)
+     + conference SQLite + review briefings
+  -> dailyinfo push / publish --sink web|discord
+  -> Discord + Web + local archive
 ```
 
-1. **Collect** — five independent pipelines pull from 40+ feeds, pages, and APIs. A failure in one never blocks the others.
-2. **Summarize and finalize** — DeepSeek produces structured summaries; DailyInfo validates and persists one canonical PublicationBundle per category/date while retaining the legacy Markdown output.
-3. **Deliver** — `dailyinfo publish` sends the canonical bundle to selected sinks. Discord and Web delivery state are independent and retryable.
+1. **Collect** — six independent pipelines pull from 40+ feeds, pages, APIs, and OpenReview. A failure in one never blocks the others.
+2. **Summarize and finalize** — DeepSeek produces structured Chinese summaries. The five regular categories are validated into one canonical `PublicationBundle` per category/date; conference submissions and public reviews live in a dedicated SQLite store, with deterministic listings and AI review briefings.
+3. **Deliver** — `dailyinfo push` sends Discord; `dailyinfo publish --sink web` sends the canonical Web bundle. Conference pushes a compact one-line-per-paper digest. Delivery state is independent and retryable.
 
 You wake up to a curated digest of everything relevant to your field — no feed readers to check, no email, no noise.
 
@@ -28,7 +29,8 @@ You wake up to a curated digest of everything relevant to your field — no feed
 
 | | |
 |---|---|
-| **Five pipelines** | Papers (30+ journals, including Chinese water-resources journals) · AI news · arXiv CS.AI (up to 500 preprints/day) · GitHub trending + HuggingFace models · University updates |
+| **Six pipelines** | Papers (30+ journals, including Chinese water-resources journals) · AI news · arXiv CS.AI (up to 500 preprints/day) · GitHub trending + HuggingFace models · University notices · Conference submissions (ICLR 2027, ICML 2027, NeurIPS 2026) |
+| **Review-aware conference digest** | OpenReview submissions, public reviews, decisions, rebuttals, and rating signals; Discord gets one line per paper, detailed briefings stay local |
 | **Chinese-first briefings** | AI summaries in Chinese with automatic fallback to a Zhipu GLM model when the primary API fails |
 | **Configuration-driven** | Add RSS, scrape, or API sources in `config/sources.json` — no code changes required |
 | **Idempotent & safe to rerun** | Sources with today's briefing are skipped; pushed files are never re-sent |
@@ -68,20 +70,24 @@ Default data root: `~/.myagentdata/dailyinfo/`. Override it with `DAILYINFO_DATA
 ```text
 ~/.myagentdata/dailyinfo/
 ├── freshrss/data/       # FreshRSS SQLite + config
-├── briefings/           # Markdown files waiting to be pushed
+├── conference/          # OpenReview SQLite (submissions, replies, review summary)
+├── briefings/           # Files waiting to be pushed
 │   ├── papers/
 │   ├── ai_news/
 │   ├── arxiv/
 │   ├── code/
-│   └── resource/
+│   ├── resource/
+│   └── conference/      # deterministic listing + detailed AI review briefings
 ├── pushed/              # Successfully pushed archive
 │   ├── papers/
 │   ├── ai_news/
 │   ├── arxiv/
 │   ├── code/
-│   └── resource/
+│   ├── resource/
+│   └── conference/
 ├── publications/         # Canonical Publication v1 store
-└── deliveries/           # Independent Discord/Web delivery state
+├── deliveries/           # Independent Discord/Web delivery state
+└── state/                # Runtime markers and scheduler state
 ```
 
 ## Quick Start
@@ -91,33 +97,40 @@ git clone <repo-url>
 cd dailyinfo
 
 cp .env.example .env
-# Fill DEEPSEEK_API_KEY and DISCORD_BOT_TOKEN.
+# Fill DEEPSEEK_API_KEY, DISCORD_BOT_TOKEN, and OpenReview credentials for pipeline 6.
 
 uv sync --python python3
 uv pip install -e .
 dailyinfo install
 
+# Local development: FreshRSS container + manual run/push
 dailyinfo start
 dailyinfo run
 dailyinfo push
+
+# Production: self-hosted scheduler + collector + read-only MCP
+docker compose up -d
 ```
 
-`dailyinfo install` validates `.env`, creates local data directories, and installs dependencies. It does not write crontab entries; scheduling belongs to your cron or agent runtime.
+`dailyinfo install` validates `.env`, creates local data directories, and installs dependencies. It never writes host crontab entries: production scheduling belongs to the compose stack, and external cron/agent runtimes remain optional. See [Production Deployment](docs/production.md).
 
 ## Main Commands
 
 | Command | Purpose |
 |---------|---------|
 | `dailyinfo install` | Validate environment and create data directories |
-| `dailyinfo start` / `stop` / `restart` | Manage the FreshRSS container |
-| `dailyinfo run` | Run all briefing pipelines |
+| `dailyinfo start` / `stop` / `restart` | Manage the development FreshRSS container |
+| `dailyinfo run` | Run all six pipelines |
 | `dailyinfo run -p 1` | Pipeline 1: journal papers |
 | `dailyinfo run -p 2` | Pipeline 2: AI news |
 | `dailyinfo run -p 3` | Pipeline 3: arXiv CS.AI |
 | `dailyinfo run -p 4` | Pipeline 4: code trending |
-| `dailyinfo run -p 5` | Pipeline 5: university/resource |
+| `dailyinfo run -p 5` | Pipeline 5: university notices |
+| `dailyinfo run -p 6` | Pipeline 6: OpenReview conference submissions |
+| `dailyinfo run -p 6 --source openreview_iclr_2027` | One conference source |
 | `dailyinfo run -f all` | Force regeneration for all sources |
 | `dailyinfo push` | Push pending briefings to Discord and archive them |
+| `dailyinfo push -c conference` | Push only the conference review digest |
 | `dailyinfo push -d 2026-04-22` | Push briefings for a specific date |
 | `dailyinfo publish --sink web` | Publish canonical briefings to the configured `dailyinfo-web` checkout |
 | `dailyinfo publish --sink discord` | Deliver canonical briefings to Discord |
@@ -130,13 +143,21 @@ dailyinfo push
 | `dailyinfo cache-clear` | Clear a source's FreshRSS cache (default `arxiv_cs_ai`) |
 | `dailyinfo clean-cache` | Delete FreshRSS cache files older than N hours (default 24h) |
 
+Scheduler operations inside the production stack:
+
+```bash
+docker compose exec scheduler python -m scripts.scheduler status
+docker compose exec scheduler python -m scripts.scheduler healthcheck
+```
+
 ## Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
 | `DEEPSEEK_API_KEY` | DeepSeek API key (primary model for `dailyinfo run`) |
 | `DISCORD_BOT_TOKEN` | Discord bot token for `dailyinfo push` |
-| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` | Optional category channel IDs |
+| `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` / `_CONFERENCE` | Optional category channel IDs; conference falls back to `_AI_NEWS` |
+| `OPENREVIEW_EMAIL` / `OPENREVIEW_PASSWORD` | OpenReview credentials for pipeline 6 (email, not display name) |
 | `FRESHRSS_USER` | FreshRSS username |
 | `FRESHRSS_PASSWORD` | FreshRSS initial password |
 | `DAILYINFO_DATA_ROOT` | Override default data root |
@@ -149,21 +170,24 @@ dailyinfo push
 
 ## Scheduling and Agents
 
-DailyInfo intentionally avoids owning the scheduler. Recommended ownership:
+Production scheduling is owned by the dailyinfo compose stack: the `scheduler` container reads `deploy/crontab.*` through supercronic, records job outcomes, catches up missed jobs, and exposes a healthcheck. `dailyinfo install` never writes host crontab entries.
 
 | Responsibility | Owner |
 |----------------|-------|
 | FreshRSS container and local data layout | DailyInfo |
-| Markdown generation via `dailyinfo run` | DailyInfo |
-| Discord push/archive via `dailyinfo push` | DailyInfo |
-| Timed execution | cron, myopenclaw, openclaw, or agent runtime |
+| `dailyinfo run` / `push` / `publish` | DailyInfo |
+| Timed execution | dailyinfo `scheduler` container (default); external cron, myopenclaw, or agent runtime optional |
+
+> Pipeline 6 (conference) is not yet part of `deploy/crontab.*`. Until the scheduler follow-up lands, run it manually with `dailyinfo run -p 6` and `dailyinfo push -c conference`, or add it to an external cron.
 
 ## Documentation
 
-- [Architecture](architecture.md)
-- [CLI Reference](cli.md)
-- [Agent Config](agent-config.md)
-- [Information Sources](sources.md)
+- [Architecture](docs/architecture.md)
+- [CLI Reference](docs/cli.md)
+- [Agent Config](docs/agent-config.md)
+- [Information Sources](docs/sources.md)
+- [Read-only MCP](docs/mcp.md)
+- [Production Deployment](docs/production.md)
 
 ## License
 

@@ -35,6 +35,8 @@ This command:
 2. Creates the workspace under `~/.myagentdata/dailyinfo/` (`freshrss/data`, `briefings/*`, `pushed/*`).
 3. Installs Python dependencies via `uv sync` (falls back to `pip install -e .`).
 
+Pipeline 6 additionally needs `OPENREVIEW_EMAIL` + `OPENREVIEW_PASSWORD`; `dailyinfo install` does not require them because pipelines 1–5 can run without OpenReview.
+
 **It does NOT write to the host crontab.** Production scheduling runs inside the dailyinfo container stack (`compose.yml`, supercronic + `deploy/crontab.*`) — see [Production Deployment](production.md). External cron, systemd timers, or agent runtimes remain supported for custom setups (see [Agent Config](agent-config.md)).
 
 ## Commands
@@ -116,7 +118,9 @@ dailyinfo push --force               # Explicitly retry a successful Discord del
 For Phase 2C publications, `push` loads the canonical
 `publications/briefings/.../briefing.json` bundle, sends its `Briefing.body`
 through `DiscordPublisher`, and records `(briefing_id, discord)` in the
-independent `deliveries/` store. A recorded successful delivery is skipped on
+independent `deliveries/` store. Conference is the exception: it has no
+canonical bundle, so `push -c conference` sends the compact one-line digest
+built from `briefings/conference/` and archives the detailed files. A recorded successful delivery is skipped on
 normal repeats; `--force` explicitly sends it again. Failed deliveries return
 non-zero and remain retryable. The old `briefings/` and `pushed/` Markdown paths
 remain for compatibility and archive maintenance; a real legacy pending file
@@ -194,6 +198,8 @@ Create `.env` in the project root:
 ```env
 DEEPSEEK_API_KEY=sk-your_deepseek_key_here
 DISCORD_BOT_TOKEN=your_discord_token
+OPENREVIEW_EMAIL=you@example.com
+OPENREVIEW_PASSWORD=your_openreview_password
 FRESHRSS_USER=owen
 FRESHRSS_PASSWORD=freshrss123
 # DAILYINFO_DATA_ROOT=   # optional override, defaults to ~/.myagentdata/dailyinfo
@@ -206,6 +212,7 @@ FRESHRSS_PASSWORD=freshrss123
 | `DISCORD_BOT_TOKEN` | Discord bot token used by `dailyinfo push` |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_CODE` / `_RESOURCE` / `_ARXIV` / `_CONFERENCE` | Per-category channel IDs (missing ones are skipped, not fatal; conference falls back to `_AI_NEWS`) |
 | `DISCORD_CHANNEL_*_DEV` / `_STAGING` | Env-specific channel IDs when `DAILYINFO_ENV=dev` or `staging` |
+| `OPENREVIEW_EMAIL` / `OPENREVIEW_PASSWORD` | OpenReview credentials for pipeline 6 (email, not display name; legacy `OPENREVIEW_USERNAME` still read) |
 | `DAILYINFO_ENV` | Environment: `prod` / `dev` / `staging` (default `prod`) — controls data dir and channel suffix |
 | `DAILYINFO_DATA_ROOT` | Override data root (default `~/.myagentdata/dailyinfo`; env-suffixed for dev/staging) |
 | `DAILYINFO_WEB_REPO` | Local `dailyinfo-web` checkout required by `publish --sink web` |
@@ -218,18 +225,24 @@ FRESHRSS_PASSWORD=freshrss123
 
 ## Scheduling
 
-dailyinfo 提供幂等的 CLI 命令，由任意外部 cron 触发即可。推荐时刻表：
+生产环境默认由 dailyinfo 自己的 compose 栈调度（`scheduler` + supercronic + `deploy/crontab.*`），不再依赖宿主 cron。外部 cron、systemd timer 或 agent runtime 仍可用于自定义部署。
+
+当前 self-hosted 时刻表（`deploy/crontab.full`）：
 
 | Command | Scheduled time | Purpose |
 |---------|----------------|---------|
 | `dailyinfo run -p 3` | 03:00 | arXiv CS.AI |
-| `dailyinfo run -p 5` | 03:30 | university news |
+| `dailyinfo run -p 5` | 03:30 | university notices |
 | `dailyinfo run -p 4` | 03:45 | code trending |
 | `dailyinfo run -p 1` | 04:00 | papers |
 | `dailyinfo run -p 2` | 04:30 | AI news |
-| `dailyinfo push` | 05:30-07:00 | push to Discord |
+| `push --categories ai_news,code,resource` | 05:30 | early push |
+| `push --categories papers` | 06:00 | papers push |
+| `push --categories arxiv` | 07:00 | arXiv push |
 
-系统 crontab 示例：
+> Pipeline 6（会议）暂未加入 `deploy/crontab.*`。在 follow-up #101 完成前，需要手动运行 `dailyinfo run -p 6` 和 `dailyinfo push -c conference`，或自己加到外部 cron。
+
+外置调度示例（包含 pipeline 6）：
 
 ```cron
 0 3 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 3 >> logs/pipeline3.log 2>&1
@@ -237,22 +250,25 @@ dailyinfo 提供幂等的 CLI 命令，由任意外部 cron 触发即可。推�
 45 3 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 4 >> logs/pipeline4.log 2>&1
 0 4 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 1 >> logs/pipeline1.log 2>&1
 30 4 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 2 >> logs/pipeline2.log 2>&1
+0 5 * * * cd /path/to/dailyinfo && python3 scripts/run_pipelines.py --pipeline 6 >> logs/pipeline6.log 2>&1
 30 5 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories ai_news,code,resource >> logs/discord_push.log 2>&1
 0 6 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories papers >> logs/discord_push.log 2>&1
 0 7 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories arxiv >> logs/discord_push.log 2>&1
+30 7 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories conference >> logs/discord_push.log 2>&1
 ```
 
-如果你也在用 myopenclaw 的 agent 生态来统一管理这些 cron，可以参见 [Agent Config](agent-config.md)。
+如果也在用 myopenclaw 的 agent 生态管理外部调度，可以参见 [Agent Config](agent-config.md)。
 
 ## Docker Services
 
-Only FreshRSS runs in Docker:
+开发环境只需要 FreshRSS；生产环境使用完整的 compose 栈：
 
 ```bash
-docker compose up -d freshrss          # Start
-docker compose down                    # Stop
-docker compose logs -f freshrss        # Logs
-# Web UI: http://localhost:8081
+# 开发：仅 FreshRSS
+docker compose -f docker-compose.yml up -d freshrss
+# 生产：freshrss + scheduler + collector profile + 只读 MCP
+docker compose up -d
+docker compose exec scheduler python -m scripts.scheduler status
 ```
 
-FreshRSS data is persisted at `~/.myagentdata/dailyinfo/freshrss/data/`.
+FreshRSS data 持久化在 `~/.myagentdata/dailyinfo/freshrss/data/`。生产部署的镜像、凭据边界、补跑和回滚见 [Production Deployment](production.md)。

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DailyInfo is an automated research intelligence aggregation and push system for AI for Science researchers. It collects RSS feeds, scrapes websites, and queries APIs, then uses DeepSeek (Zhipu GLM as fallback) to generate Chinese-language summaries pushed to Discord channels.
 
-**Core pipeline**: FreshRSS collection -> AI summary generation (markdown to disk) -> Discord push + archive
+**Core pipeline**: FreshRSS/API/OpenReview collection -> AI summary generation -> canonical PublicationBundle + legacy Markdown -> Discord push / Web publish + archive
 
 **Design principles**: Configuration-driven (`config/sources.json`) + idempotent CLI + self-hosted container scheduling (`compose.yml`, supercronic + `deploy/crontab.*`). External cron / agent runtimes remain supported for custom setups. Optional integration with myopenclaw is documented in `docs/agent-config.md`; dailyinfo itself has no runtime dependency on it.
 
@@ -45,7 +45,8 @@ docker compose exec scheduler python -m scripts.scheduler status
 docker compose exec scheduler python -m scripts.scheduler healthcheck
 
 # Push to Discord
-dailyinfo push                   # Today's briefings
+dailyinfo push                   # Today's briefings (includes conference digest)
+dailyinfo push -c conference     # Conference one-line digest only
 dailyinfo push -d 2026-04-22    # Specific date
 
 # Resume one failed source into today's briefing (papers/ai_news/arxiv only)
@@ -90,7 +91,7 @@ uv run mkdocs serve              # Local preview
 | 3 | arXiv CS.AI (RSS, up to 500 articles) | `arxiv/` |
 | 4 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
 | 5 | DLUT university sites (scrape + API) | `resource/` |
-| 6 | OpenReview submissions (ICLR 2027, ICML 2027, NeurIPS 2026) | `conference/` |
+| 6 | OpenReview submissions (ICLR 2027, ICML 2027, NeurIPS 2026) | `briefings/conference/` + `conference/conference.sqlite3` |
 
 Each pipeline is independent — a failure in one does not affect the others. Common processing logic (fetch → batch → AI → merge → save) is shared via `_process_regular_source()`.
 
@@ -105,9 +106,9 @@ The optional AI layer is `conference_defaults.ai_briefing`: `enabled` (default t
 ### Data Flow
 
 1. **Collection**: FreshRSS for RSS; `datasource.py` handles scraping/API; `openreview_provider.py` + `conference_sync.py` handle conference submissions
-2. **Processing** (`run_pipelines.py`): Fetch -> format -> call DeepSeek AI with prompt templates -> save markdown to `~/.myagentdata/dailyinfo/briefings/{category}/`
+2. **Processing** (`run_pipelines.py`): Fetch -> format -> call DeepSeek AI with prompt templates -> validate into canonical `PublicationBundle` + save legacy markdown to `~/.myagentdata/dailyinfo/briefings/{category}/`
 3. **Conference store** (`conference_store.py`): SQLite is the durable record and queue; the deterministic listing is rendered from pending rows, while `events` queues review/decision changes for `conference_ai_briefing.py`; public replies are stored in `reviews` with a per-paper `paper_review_summary`
-4. **Push** (`push_to_discord.py`): Scan briefings -> POST to Discord channels -> move to `pushed/{category}/`
+4. **Push** (`push_to_discord.py`): Canonical Publication -> Discord/Web publishers; conference detailed briefings -> compact one-line digest -> Discord; successful legacy files move to `pushed/{category}/`
 
 ### DataSource Class Hierarchy
 

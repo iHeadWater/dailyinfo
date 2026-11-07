@@ -4,13 +4,13 @@
 
 dailyinfo 自身**不依赖任何外部 agent 框架**。本文是给已经在用 [myopenclaw](https://github.com/OuyangWenyu/myopenclaw) 之类生态的用户的一份"开箱即用"说明。
 
-如果你只想跑 dailyinfo，请直接看 [CLI 参考](cli.md) 配置一条系统 crontab 即可，本文可以跳过。
+如果你只想跑 dailyinfo，优先使用[生产部署](production.md)的自带调度 compose 栈；本文只适用于仍想外置调度的自定义部署。
 
 ---
 
 ## 为什么默认数据根是 `~/.myagentdata/dailyinfo/`
 
-dailyinfo 把所有持久化数据（FreshRSS DB、briefings、pushed 归档）放在用户目录下一个统一的子目录里：
+dailyinfo 把所有持久化数据（FreshRSS DB、conference SQLite、briefings、pushed 归档、publications、deliveries、state）放在用户目录下一个统一的子目录里：
 
 ```
 ~/.myagentdata/dailyinfo/
@@ -56,10 +56,16 @@ docker compose ps                                       # backup-cron 是否在�
 
 | Cron | Command | Purpose |
 |------|---------|---------|
-| `0 6 * * *`  | `dailyinfo run -p 1` | Pipeline 1：RSS 论文 + AI 新闻 |
-| `15 6 * * *` | `dailyinfo run -p 2` | Pipeline 2：代码趋势 |
-| `30 6 * * *` | `dailyinfo run -p 3` | Pipeline 3：高校资讯 |
-| `0 7 * * *`  | `dailyinfo push`     | 推送 Discord + 归档 |
+| `0 3 * * *`  | `dailyinfo run -p 3` | Pipeline 3：arXiv CS.AI |
+| `30 3 * * *` | `dailyinfo run -p 5` | Pipeline 5：院所通知 |
+| `45 3 * * *` | `dailyinfo run -p 4` | Pipeline 4：代码趋势 |
+| `0 4 * * *`  | `dailyinfo run -p 1` | Pipeline 1：期刊论文 |
+| `30 4 * * *` | `dailyinfo run -p 2` | Pipeline 2：AI 资讯 |
+| `0 5 * * *`  | `dailyinfo run -p 6` | Pipeline 6：OpenReview 会议投稿 |
+| `30 5 * * *` | `dailyinfo push -c ai_news,code,resource` | 早间推送 |
+| `0 6 * * *`  | `dailyinfo push -c papers` | 论文推送 |
+| `0 7 * * *`  | `dailyinfo push -c arxiv` | arXiv 推送 |
+| `30 7 * * *` | `dailyinfo push -c conference` | 会议速览推送 |
 
 > 调度器只是"定时触发器"——它**不需要**理解 markdown 内容，**不需要**直接发 Discord。所有读取文件 + POST Discord 的逻辑都在 `scripts/push_to_discord.py`（纯 Python，无 AI 调用）。
 
