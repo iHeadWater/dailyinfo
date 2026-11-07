@@ -1,0 +1,46 @@
+# Separate from FreshRSS: this service never runs collection or publication.
+services:
+  dailyinfo-mcp:
+    image: ${DAILYINFO_MCP_IMAGE:-dailyinfo-mcp:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: dailyinfo-mcp
+    restart: unless-stopped
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
+    ports:
+      - "${DAILYINFO_MCP_BIND_ADDRESS:-127.0.0.1}:8768:8768"
+    environment:
+      DAILYINFO_MCP_HOST: 0.0.0.0
+      DAILYINFO_MCP_PORT: "8768"
+      DAILYINFO_MCP_DATA_ROOT: /data
+      DAILYINFO_MCP_KEYS_FILE: /run/secrets/dailyinfo/keys.json
+      DAILYINFO_MCP_SINKS: discord
+      DAILYINFO_MCP_VISIBILITY: "${DAILYINFO_MCP_VISIBILITY:-delivered}"
+      DAILYINFO_MCP_ALLOWED_HOSTS: "${DAILYINFO_MCP_ALLOWED_HOSTS:-127.0.0.1:8768,localhost:8768}"
+    volumes:
+      - type: bind
+        source: ${DAILYINFO_DATA_ROOT:?Set the existing DailyInfo data root}/publications
+        target: /data/publications
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${DAILYINFO_DATA_ROOT:?Set the existing DailyInfo data root}/deliveries
+        target: /data/deliveries
+        read_only: true
+        bind:
+          create_host_path: false
+      # Mount a directory so atomic key-file replacement is visible immediately.
+      - type: bind
+        source: ${DAILYINFO_MCP_SECRETS_DIR:?Set the protected MCP secrets directory}
+        target: /run/secrets/dailyinfo
+        read_only: true
+        bind:
+          create_host_path: false

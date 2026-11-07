@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+mcp = ["mcp==1.30.0"]
 dev = [
     "black>=24",
     "ruff>=0.4",
@@ -33,6 +34,7 @@ docs = [
 
 [project.scripts]
 dailyinfo = "scripts.cli:cli"
+dailyinfo-mcp = "scripts.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

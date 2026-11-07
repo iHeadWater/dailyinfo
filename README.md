@@ -1,5 +1,7 @@
 # DailyInfo
 
+Read-only MCP access to generated or delivered briefings is an optional component. See [MCP connection and deployment](docs/mcp.md) for Streamable HTTP and per-user Bearer authentication, and [collection-only deployment](docs/production.md) for production without Discord publishing.
+
 [中文](https://github.com/iHeadWater/dailyinfo/blob/main/README.zh-CN.md) | English
 
 DailyInfo is an automated research intelligence collector for AI for Science researchers. Every day it gathers journal papers, AI news, arXiv preprints, code trends, and university announcements from RSS feeds, scraped pages, and APIs — then turns them into concise Chinese-language briefings delivered straight to your Discord.

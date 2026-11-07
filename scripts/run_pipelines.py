@@ -1429,7 +1429,11 @@ def _ensure_rss_subscriptions(cfg: dict, db, category: str) -> list[str]:
     category run still works, and the next run retries the subscription.
     """
     from datasource import build_feed_url_map, resolve_feed_id
-    from freshrss_admin import ensure_subscription, resolve_category
+    from freshrss_admin import (
+        ensure_subscription,
+        resolve_category,
+        resolve_existing_subscription_url,
+    )
 
     added: list[str] = []
     try:
@@ -1438,6 +1442,13 @@ def _ensure_rss_subscriptions(cfg: dict, db, category: str) -> list[str]:
             # Canonicalise exactly as ensure_subscription will, or a padded
             # config URL slips past both checks below and inserts a twin.
             url = (source.get("url") or "").strip()
+            resolved = resolve_existing_subscription_url(
+                db, url=url, name=source.get("display_name") or source.get("name", "")
+            )
+            if resolved != url:
+                log(f"  {source['name']}: reusing subscribed permanent redirect target")
+            url = resolved
+            source["url"] = url
             category_name = source.get("freshrss_category")
             if category_name and resolve_category(db, category_name) is None:
                 log(
