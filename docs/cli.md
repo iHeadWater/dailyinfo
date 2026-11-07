@@ -50,12 +50,14 @@ dailyinfo restart    # Restart FreshRSS
 ### Pipeline Execution
 
 ```bash
-dailyinfo run                      # Run all 5 pipelines
+dailyinfo run                      # Run all 6 pipelines
 dailyinfo run -p 1                 # Pipeline 1 (papers)
 dailyinfo run -p 2                 # Pipeline 2 (AI news)
 dailyinfo run -p 3                 # Pipeline 3 (arXiv CS.AI)
 dailyinfo run -p 4                 # Pipeline 4 (code trending)
 dailyinfo run -p 5                 # Pipeline 5 (university news)
+dailyinfo run -p 6                 # Pipeline 6 (conference submissions)
+dailyinfo run -p 6 --source openreview_iclr_2027  # One conference source
 dailyinfo run -f all               # Force regenerate every source today
 dailyinfo run -p 1 -f arxiv_cs_ai  # Force regenerate one source only
 ```
@@ -72,6 +74,14 @@ back to the model in `DAILYINFO_FALLBACK_MODEL` (default
 `glm-5.3-flash` via the Zhipu official API) for 2 more attempts before giving up.
 A missing `GLM_API_KEY` disables the fallback outright rather than retrying
 without credentials.
+
+Pipeline 6 is ingestion-only for now: it stores OpenReview submission metadata in
+`$DAILYINFO_DATA_ROOT/conference/conference.sqlite3` and writes a deterministic
+markdown listing to `briefings/conference/`. It does not call a model, rank
+relevance, fetch reviews, or push. Set `OPENREVIEW_USERNAME` and
+`OPENREVIEW_PASSWORD` in `.env`; anonymous note queries are rejected by
+OpenReview's browser challenge. A source that is not open yet (`NOT_OPEN`) or
+not due for a poll (`NOT_DUE`) is a clean outcome, not a failure.
 
 ### Push to Discord
 

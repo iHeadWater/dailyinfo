@@ -1014,6 +1014,19 @@ PROBES: tuple[Probe, ...] = (
             "::test_has_real_briefing_today_false_for_failure_placeholders"
         ),
     ),
+    Probe(
+        # A failed page must not advance the source watermark: the next run
+        # has to resume from the last committed cursor instead of skipping
+        # whatever was never stored.
+        label="a failed page does not advance the watermark",
+        path="scripts/conference_sync.py",
+        old="            store.fail_run(run.run_id, outcome, message, now_ms=now_ms)",
+        new="            store.finish_run(run.run_id, now_ms=now_ms)",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_failed_page_does_not_advance_watermark_and_resumes"
+        ),
+    ),
 )
 
 

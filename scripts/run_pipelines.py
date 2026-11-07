@@ -26,9 +26,23 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from conference_store import ConferenceStore
+from conference_sync import sync_source
 from datasource import DataSource, RSSDataSource, build_feed_url_map
 from logsafe import http_error_detail, one_line
-from paths import BRIEFINGS_DIR, ENV_FILE, FRESHRSS_DATA, PUSHED_DIR, STATE_DIR
+from openreview_provider import (
+    OpenReviewRuntime,
+    classify_openreview_error,
+)
+from paths import (
+    BRIEFINGS_DIR,
+    CONFERENCE_DIR,
+    ENV_FILE,
+    FRESHRSS_DATA,
+    PUSHED_DIR,
+    STATE_DIR,
+    _read_env_value,
+)
 from publication import (
     DELIVERY_SINKS,
     DeliveryStateStore,
@@ -659,6 +673,8 @@ def _already_pushed_within(name: str, category: str, lookback_hours: int) -> boo
 # every source is re-run; names in ``FORCE_SOURCES`` are selectively re-run.
 FORCE_ALL: bool = False
 FORCE_SOURCES: set[str] = set()
+# Populated from CLI ``--source``. Empty means every enabled source runs.
+SOURCE_FILTER: set[str] = set()
 
 # Canonical gaps recorded during a run: sources that failed to produce
 # structured output, and therefore are absent from that category's publication.
@@ -2326,6 +2342,102 @@ def run_pipeline_resource() -> int:
 
 
 # =====================================================================
+# PIPELINE 6: Conference Papers (OpenReview submissions)
+# =====================================================================
+def _conference_sources(cfg: dict) -> list[dict]:
+    return [
+        source
+        for source in _filter_sources(cfg, "conference", "api")
+        if not SOURCE_FILTER or source.get("name") in SOURCE_FILTER
+    ]
+
+
+def _conference_credentials_present() -> bool:
+    username = os.environ.get("OPENREVIEW_USERNAME") or _read_env_value(
+        "OPENREVIEW_USERNAME"
+    )
+    password = os.environ.get("OPENREVIEW_PASSWORD") or _read_env_value(
+        "OPENREVIEW_PASSWORD"
+    )
+    return bool(username.strip() and password.strip())
+
+
+def run_pipeline_conference() -> int:
+    """Ingest OpenReview submissions into the conference store.
+
+    Deliberately does not render AI summaries, rank relevance, fetch reviews
+    or push anywhere.  The return value is the number of sources that
+    completed cleanly, so a quiet day (NOT_DUE / NOT_OPEN) still counts as a
+    successful pipeline run.
+    """
+
+    cfg, defaults, _templates = _load_sources()
+    sources = _conference_sources(cfg)
+    if not sources:
+        log("=== Pipeline 6: Conference Papers ===")
+        log("  no enabled conference sources")
+        return 0
+
+    log("=== Pipeline 6: Conference Papers ===")
+    if not _conference_credentials_present():
+        # A missing credential is a configuration state, not an OpenReview
+        # failure: failing the whole daily run because an optional data source
+        # was never configured would take pipelines 1-5 down with it.  Once
+        # the credentials exist, a rejected login is still fatal.
+        log(
+            "  [SKIP] OPENREVIEW_USERNAME/OPENREVIEW_PASSWORD not set; "
+            "conference sources are disabled"
+        )
+        return 0
+    store = ConferenceStore(CONFERENCE_DIR / "conference.sqlite3")
+    runtime: OpenReviewRuntime | None = None
+    completed = 0
+    failures: list[str] = []
+    try:
+        for source_cfg in sources:
+            name = str(source_cfg.get("name") or "?")
+            merged = {**defaults.get("conference_defaults", {}), **source_cfg}
+            log(f"  {name}...")
+            try:
+                if runtime is None:
+                    runtime = OpenReviewRuntime(merged)
+                provider = runtime.provider(merged)
+                result = sync_source(
+                    source_cfg=source_cfg,
+                    defaults=defaults,
+                    store=store,
+                    provider=provider,
+                    briefings_dir=BRIEFINGS_DIR,
+                    date=DATE,
+                    force=_is_forced(name),
+                )
+                log(f"    {result.outcome}: {result.message}")
+                if result.briefing_path:
+                    log(f"    briefing: {result.briefing_path}")
+                if result.fatal:
+                    failures.append(f"{name}: {result.outcome}")
+                else:
+                    completed += 1
+            except Exception as exc:
+                outcome = classify_openreview_error(exc)
+                secret = os.environ.get("OPENREVIEW_PASSWORD", "") or _read_env_value(
+                    "OPENREVIEW_PASSWORD"
+                )
+                message = one_line(str(exc), secret)
+                log(f"    {outcome}: {message}")
+                failures.append(f"{name}: {outcome}")
+    finally:
+        store.close()
+        if runtime is not None:
+            runtime.close()
+
+    if failures:
+        raise RuntimeError("conference sources failed: " + "; ".join(failures))
+    log(f"  Pipeline 6 done: {completed} sources complete")
+    return completed
+
+
+# =====================================================================
 # Main
 # =====================================================================
 def main() -> int:
@@ -2333,10 +2445,10 @@ def main() -> int:
     parser.add_argument(
         "--pipeline",
         type=int,
-        choices=[1, 2, 3, 4, 5],
+        choices=[1, 2, 3, 4, 5, 6],
         help=(
             "Run specific pipeline: 1=papers, 2=ai_news, 3=arxiv, "
-            "4=code, 5=resource. Default: all"
+            "4=code, 5=resource, 6=conference. Default: all"
         ),
     )
     parser.add_argument(
@@ -2347,14 +2459,24 @@ def main() -> int:
         help="Force regenerate. Pass 'all' to refresh everything or a source "
         "name to target one source. Repeatable.",
     )
+    parser.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        metavar="SOURCE",
+        help="Run only the named source (repeatable). Currently used by "
+        "pipeline 6 to target one conference.",
+    )
     args = parser.parse_args()
 
-    global FORCE_ALL, FORCE_SOURCES, PUBLICATION_INTEGRATION, PUBLICATION_GAPS
+    global FORCE_ALL, FORCE_SOURCES, SOURCE_FILTER
+    global PUBLICATION_INTEGRATION, PUBLICATION_GAPS
     if not _get_glm_key():
         log("[WARN] 兜底已禁用：未配置 GLM_API_KEY")
     _warn_if_fallback_looks_like_openrouter(_resolve_fallback_model(None))
     FORCE_ALL = "all" in args.force
     FORCE_SOURCES = set(args.force) - {"all"}
+    SOURCE_FILTER = set(args.source)
     PUBLICATION_INTEGRATION = True
     PUBLICATION_GAPS = []
     if FORCE_ALL or FORCE_SOURCES:
@@ -2374,8 +2496,9 @@ def main() -> int:
         3: run_pipeline_arxiv,
         4: run_pipeline_code,
         5: run_pipeline_resource,
+        6: run_pipeline_conference,
     }
-    to_run = [args.pipeline] if args.pipeline else [1, 2, 3, 4, 5]
+    to_run = [args.pipeline] if args.pipeline else [1, 2, 3, 4, 5, 6]
     total_saved = 0
     failed_pipelines = 0
 
@@ -2390,7 +2513,7 @@ def main() -> int:
             traceback.print_exc()
 
     log("=== Summary ===")
-    for d in ["papers", "ai_news", "code", "resource", "arxiv"]:
+    for d in ["papers", "ai_news", "code", "resource", "arxiv", "conference"]:
         path = BRIEFINGS_DIR / d
         if path.exists():
             files = [f.name for f in sorted(path.iterdir()) if DATE in f.name]

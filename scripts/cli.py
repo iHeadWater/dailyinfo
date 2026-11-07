@@ -54,6 +54,9 @@ def _env_banner() -> str:
 
 
 CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
+# Conference is ingest-only for now: it has briefings but no Discord/publication
+# category, so status shows it without adding it to push.
+STATUS_CATEGORIES = [*CATEGORIES, "conference"]
 
 
 def _python() -> str:
@@ -248,9 +251,10 @@ def restart():
 @click.option(
     "--pipeline",
     "-p",
-    type=click.Choice(["1", "2", "3", "4", "5", "all"]),
+    type=click.Choice(["1", "2", "3", "4", "5", "6", "all"]),
     default="all",
-    help="Pipeline to run: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource.",
+    help="Pipeline to run: 1=papers, 2=ai_news, 3=arxiv, 4=code, 5=resource, "
+    "6=conference.",
 )
 @click.option(
     "-f",
@@ -260,7 +264,15 @@ def restart():
     help="Force regenerate today's briefing. Pass 'all' to refresh everything "
     "or a source name (e.g. 'arxiv_cs_ai'). Repeatable.",
 )
-def run(pipeline, force):
+@click.option(
+    "--source",
+    "sources",
+    multiple=True,
+    metavar="SOURCE",
+    help="Run only the named source (repeatable). Currently used by "
+    "pipeline 6 to target one conference.",
+)
+def run(pipeline, force, sources):
     """Scrape sources, generate AI summaries, save briefing files.
 
     By default, sources whose today's briefing already exists are skipped;
@@ -272,6 +284,8 @@ def run(pipeline, force):
         cmd += ["--pipeline", pipeline]
     for src in force:
         cmd += ["--force", src]
+    for src in sources:
+        cmd += ["--source", src]
     result = subprocess.run(cmd, cwd=PROJECT_ROOT)
     sys.exit(result.returncode)
 
@@ -441,7 +455,7 @@ def status():
 
     click.echo(f"Briefings for {DATE} {_env_banner()}:")
     click.echo(f"  Workspace: {WORKSPACE_ROOT}")
-    for cat in CATEGORIES:
+    for cat in STATUS_CATEGORIES:
         path = BRIEFINGS_DIR / cat
         if path.is_dir():
             files = [f for f in sorted(path.iterdir()) if DATE in f.name]

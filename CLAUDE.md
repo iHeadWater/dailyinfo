@@ -28,12 +28,14 @@ uv sync --python python3 && uv pip install -e .
 dailyinfo install                # Validate .env + create workspace dirs + install deps
 
 # Run pipelines (idempotent - skips sources with today's briefing)
-dailyinfo run                    # All 5 pipelines
+dailyinfo run                    # All 6 pipelines
 dailyinfo run -p 1               # Pipeline 1: papers
 dailyinfo run -p 2               # Pipeline 2: AI news
 dailyinfo run -p 3               # Pipeline 3: arXiv
 dailyinfo run -p 4               # Pipeline 4: code trending
 dailyinfo run -p 5               # Pipeline 5: university news
+dailyinfo run -p 6               # Pipeline 6: conference submissions
+dailyinfo run -p 6 --source openreview_iclr_2027  # One conference source
 dailyinfo run -f all             # Force regenerate all sources
 dailyinfo run -f arxiv_cs_ai    # Force regenerate one source
 
@@ -74,7 +76,7 @@ uv run mkdocs serve              # Local preview
 
 ## Architecture
 
-### Five Pipelines
+### Six Pipelines
 
 | Pipeline | Sources | Output |
 |----------|---------|--------|
@@ -83,14 +85,18 @@ uv run mkdocs serve              # Local preview
 | 3 | arXiv CS.AI (RSS, up to 500 articles) | `arxiv/` |
 | 4 | GitHub Trending (scrape), HuggingFace (API) | `code/` |
 | 5 | DLUT university sites (scrape + API) | `resource/` |
+| 6 | OpenReview submissions (ICLR 2027, ICML 2027, NeurIPS 2026) | `conference/` |
 
 Each pipeline is independent — a failure in one does not affect the others. Common processing logic (fetch → batch → AI → merge → save) is shared via `_process_regular_source()`.
 
+Pipeline 6 is deliberately different: it ingests **submission metadata only** into `$DAILYINFO_DATA_ROOT/conference/conference.sqlite3`, writes a **deterministic markdown listing** (no AI, no relevance ranking) to `briefings/conference/`, and does not push. It does not use `DataSource`/`Item`/the canonical `PublicationStore`; `conference_sync.py` paginates OpenReview and commits each page with its cursor in one transaction, advancing the source watermark only after a complete scan.
+
 ### Data Flow
 
-1. **Collection**: FreshRSS for RSS; `datasource.py` handles scraping/API
+1. **Collection**: FreshRSS for RSS; `datasource.py` handles scraping/API; `openreview_provider.py` + `conference_sync.py` handle conference submissions
 2. **Processing** (`run_pipelines.py`): Fetch -> format -> call DeepSeek AI with prompt templates -> save markdown to `~/.myagentdata/dailyinfo/briefings/{category}/`
-3. **Push** (`push_to_discord.py`): Scan briefings -> POST to Discord channels -> move to `pushed/{category}/`
+3. **Conference store** (`conference_store.py`): SQLite is the durable record and queue; briefings are rendered from pending rows, never from a model
+4. **Push** (`push_to_discord.py`): Scan briefings -> POST to Discord channels -> move to `pushed/{category}/`
 
 ### DataSource Class Hierarchy
 
@@ -98,6 +104,8 @@ Each pipeline is independent — a failure in one does not affect the others. Co
   - `RSSDataSource` - FreshRSS SQLite DB
   - `ScrapeDataSource` - HTML scraping (GitHub Trending, DLUT sites, Chinese water journals)
   - `APIDataSource` - REST API calls (HuggingFace, DLUT recruitment, Crossref)
+
+Conference sources are intentionally **not** routed through the `Item`/`seen-URL` contract: their unit is a submission with a stable OpenReview ID, their state is a SQLite watermark rather than a `seen` JSON, and they never enter the canonical publication store.
 
 ### Key Design Patterns
 
@@ -111,7 +119,7 @@ Each pipeline is independent — a failure in one does not affect the others. Co
 
 ## Source Configuration
 
-Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`.
+Sources in `config/sources.json` have types: `rss`, `api`, `scrape`. Categories: `papers`, `ai_news`, `code`, `resource`, `conference`.
 
 Defaults (all overridable per-source): `lookback_hours: 24`, `max_articles_per_batch: 10`, `model: deepseek-flash`, `max_content_chars: 12000` (plain-text cap for `use_content` sources; `>= 200`, truncation marker appended).
 
@@ -125,7 +133,7 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 
 ## Environment Variables
 
-Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`
+Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`; `OPENREVIEW_USERNAME` + `OPENREVIEW_PASSWORD` for pipeline 6 (the API rejects anonymous note queries with a browser challenge)
 Optional: `GLM_API_KEY` (Zhipu fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`, `DAILYINFO_ENV_FILE` (**test-only** — redirects every `.env` lookup; set only by `tests/conftest.py`)
 
 Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPERS_PATH`)已随 zotero_sync 迁移至 mylibrary,本仓库不再需要。

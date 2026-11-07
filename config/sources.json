@@ -4,7 +4,19 @@
     "model": "deepseek-flash",
     "lookback_hours": 24,
     "max_articles_per_batch": 10,
-    "freshrss_user": ""
+    "freshrss_user": "",
+    "conference_defaults": {
+      "public_only": true,
+      "baseurl": "https://api2.openreview.net",
+      "page_size": 1000,
+      "watermark_overlap_hours": 48,
+      "poll_interval_hours": 24,
+      "full_rescan_interval_days": 7,
+      "api_connect_timeout_seconds": 10,
+      "api_read_timeout_seconds": 30,
+      "api_rate_limit_retries": 1,
+      "api_rate_limit_max_wait_seconds": 90
+    }
   },
   "prompt_templates": {
     "one_line_summary": "请为以下 {count} 篇 {display_name} 最新文章各生成一句话中文摘要，突出核心发现或贡献：\n\n{article_list}\n\n请严格按以下 Markdown 格式返回：\n\n## 📚 {display_name} 今日简报 ({date}) - {count}篇文章\n\n1. **文章标题**\n   > 一句话中文摘要\n\n2. **文章标题**\n   > 一句话中文摘要\n\n...\n\n不要在列表之外添加总结、注释或补充说明。",
@@ -655,6 +667,38 @@
       "max_articles_per_batch": 20,
       "prompt_template": "recruitment",
       "type": "api"
+    },
+    {
+      "name": "openreview_iclr_2027",
+      "display_name": "ICLR 2027",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "ICLR.cc/2027/Conference",
+      "url": "https://openreview.net/group?id=ICLR.cc%2F2027%2FConference",
+      "enabled": true
+    },
+    {
+      "name": "openreview_icml_2027",
+      "display_name": "ICML 2027",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "ICML.cc/2027/Conference",
+      "url": "https://openreview.net/group?id=ICML.cc%2F2027%2FConference",
+      "enabled": true
+    },
+    {
+      "name": "openreview_neurips_2026",
+      "display_name": "NeurIPS 2026",
+      "category": "conference",
+      "type": "api",
+      "provider": "openreview",
+      "venue_id": "NeurIPS.cc/2026/Conference",
+      "url": "https://openreview.net/group?id=NeurIPS.cc%2F2026%2FConference",
+      "enabled": true,
+      "poll_interval_hours": 168,
+      "full_rescan_interval_days": 30
     }
   ],
   "discord_channels": {

@@ -108,6 +108,11 @@ FRESHRSS_DATA = WORKSPACE_ROOT / "freshrss" / "data"
 CURRENT_ENV = get_dailyinfo_env()
 
 STATE_DIR = WORKSPACE_ROOT / "state"
+# Conference submissions/state live in a dedicated top-level directory, the
+# same way publications/ and deliveries/ own their stores.  FreshRSS's SQLite
+# is container-owned and publications/ has a fail-closed canonical schema, so
+# neither is a safe home for this data.
+CONFERENCE_DIR = WORKSPACE_ROOT / "conference"
 
 
 # -----------------------------------------------------------------------
