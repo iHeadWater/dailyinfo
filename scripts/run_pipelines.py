@@ -2453,12 +2453,12 @@ def _conference_credentials_present() -> bool:
 
 
 def run_pipeline_conference() -> int:
-    """Ingest OpenReview submissions into the conference store.
+    """Ingest OpenReview submissions and public reviews into the store.
 
-    Deliberately does not render AI summaries, rank relevance, fetch reviews
-    or push anywhere.  The return value is the number of sources that
-    completed cleanly, so a quiet day (NOT_DUE / NOT_OPEN) still counts as a
-    successful pipeline run.
+    Renders the deterministic listing plus an optional AI Chinese briefing
+    for review-bearing events.  It does not rank relevance or push anywhere.
+    The return value is the number of sources that completed cleanly, so a
+    quiet day (NOT_DUE / NOT_OPEN) still counts as a successful pipeline run.
     """
 
     cfg, defaults, _templates = _load_sources()
@@ -2500,10 +2500,13 @@ def run_pipeline_conference() -> int:
                     briefings_dir=BRIEFINGS_DIR,
                     date=DATE,
                     force=_is_forced(name),
+                    call_ai=call_ai,
                 )
                 log(f"    {result.outcome}: {result.message}")
                 if result.briefing_path:
                     log(f"    briefing: {result.briefing_path}")
+                for ai_path in result.ai_briefing_paths:
+                    log(f"    AI briefing: {ai_path}")
                 if result.fatal:
                     failures.append(f"{name}: {result.outcome}")
                 else:

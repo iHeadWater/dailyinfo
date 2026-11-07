@@ -1109,6 +1109,149 @@ PROBES: tuple[Probe, ...] = (
             "::test_review_sample_uses_latest_n_and_marks_completed"
         ),
     ),
+    Probe(
+        # A bootstrap imports tens of thousands of old submissions; without
+        # the baseline cutoff the AI queue would aim at all of them.
+        label="a baseline submission is never queued for AI",
+        path="scripts/conference_sync.py",
+        old="    if baseline_cutoff is not None:\n        # Baseline papers",
+        new="    if False:\n        # Baseline papers",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_baseline_papers_are_not_queued_even_when_new_submissions_are_included"
+        ),
+    ),
+    Probe(
+        # A metadata-only page has no replies.  Treating that as an empty
+        # review set would report a review change and re-render every paper.
+        label="a metadata-only page preserves the stored reviews",
+        path="scripts/conference_sync.py",
+        old=(
+            "            after_reviews = replies_by_forum.get(forum_id)\n"
+            "            if not after_reviews:"
+        ),
+        new=(
+            "            after_reviews = replies_by_forum.get(forum_id) or []\n"
+            "            if False:"
+        ),
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_metadata_only_page_does_not_report_a_review_change"
+        ),
+    ),
+    Probe(
+        # Marking rendered is the queue's acknowledgement.  Without it the
+        # same event is pending forever and a retry never converges.
+        label="a rendered briefing acknowledges its events",
+        path="scripts/conference_ai_briefing.py",
+        old="        store.mark_rendered(event_ids, filename, now_ms=now_ms)",
+        new="        pass",
+        test=(
+            "tests/test_conference_ai_briefing.py"
+            "::test_existing_file_skips_the_model_call"
+        ),
+    ),
+    Probe(
+        # Plain new submissions must stay in the deterministic listing unless
+        # the source explicitly opts into AI summaries for them.
+        label="plain new submissions are not AI events by default",
+        path="scripts/conference_events.py",
+        old=(
+            "    if include_new_submissions and (\n"
+            '        NEW_SUBMISSION in event_types or "PAPER_CONTENT_UPDATED" in event_types\n'
+            "    ):"
+        ),
+        new="    if True:",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_new_submission_does_not_call_ai_by_default"
+        ),
+    ),
+    Probe(
+        # A public review is untrusted text.  The sanitizer is the enforcement
+        # boundary, not the prompt instruction.
+        label="model output is sanitized before it is written",
+        path="scripts/conference_ai_briefing.py",
+        old=(
+            "                content = _sanitize_conference_markdown(\n"
+            "                    _clean_conference_briefing(\n"
+            '                        str(call_ai(prompt, model=model, max_tokens=max_tokens) or "")\n'
+            "                    )\n"
+            "                )"
+        ),
+        new=(
+            "                content = _clean_conference_briefing(\n"
+            '                    str(call_ai(prompt, model=model, max_tokens=max_tokens) or "")\n'
+            "                )"
+        ),
+        test=(
+            "tests/test_conference_ai_briefing.py"
+            "::test_render_sanitizes_the_model_output"
+        ),
+    ),
+    Probe(
+        # Per-reply truncation alone does not bound a paper with many replies;
+        # the review count cap is the other half.
+        label="a paper's review list is capped before rendering",
+        path="scripts/conference_events.py",
+        old="        reviews = reviews[-limit:]",
+        new="        reviews = reviews",
+        test=(
+            "tests/test_conference_events.py"
+            "::test_snapshot_caps_review_count_abstract_and_review_text"
+        ),
+    ),
+    Probe(
+        # A source name is interpolated into a briefing filename; config is
+        # trusted, but a traversal component must still fail closed.
+        label="an unsafe source name is rejected",
+        path="scripts/conference_sync.py",
+        old=(
+            '        or not re.fullmatch(r"[A-Za-z0-9_.-]+", source)\n'
+            '        or source in {".", ".."}'
+        ),
+        new="        or False\n        or False",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_unsafe_source_name_is_invalid_config"
+        ),
+    ),
+    Probe(
+        # A crash after writing but before marking must reuse the file on the
+        # next day; a date in the filename makes that impossible.
+        label="the AI briefing filename is stable across days",
+        path="scripts/conference_ai_briefing.py",
+        old='        filename = f"{source}_ai_{_batch_hash(event_ids)}.md"',
+        new='        filename = f"{source}_ai_{date}_{_batch_hash(event_ids)}.md"',
+        test=(
+            "tests/test_conference_ai_briefing.py"
+            "::test_existing_file_skips_the_model_call"
+        ),
+    ),
+    Probe(
+        # A single pathological event must stop consuming model calls after
+        # max_attempts instead of blocking the queue forever.
+        label="a repeatedly failing event is quarantined",
+        path="scripts/conference_store.py",
+        old="                    f\"status = CASE WHEN attempts + 1 >= ? THEN 'failed' \"",
+        new="                    f\"status = CASE WHEN 0 THEN 'failed' \"",
+        test=(
+            "tests/test_conference_ai_briefing.py"
+            "::test_single_event_failure_is_quarantined_after_max_attempts"
+        ),
+    ),
+    Probe(
+        # The one-time seed must respect seed_limit; a large historical
+        # database otherwise queues an unbounded model backlog.
+        label="the one-time AI seed respects its limit",
+        path="scripts/conference_store.py",
+        old='"ORDER BY updated_ms DESC, forum_id LIMIT ?",',
+        new='"ORDER BY updated_ms DESC, forum_id LIMIT 999999",',
+        test=(
+            "tests/test_conference_store.py"
+            "::test_seed_review_events_honors_the_limit"
+        ),
+    ),
 )
 
 

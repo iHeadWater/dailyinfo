@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from conference_store import ConferenceStore
 from conference_sync import sync_source
 from openreview_provider import (
@@ -48,14 +50,36 @@ def _paper(index, cdate):
     }
 
 
-def _page(papers, cursor, total=None, number=1):
+def _page(papers, cursor, total=None, number=1, replies=None):
     return SubmissionPage(
         papers=papers,
         cursor_after=cursor,
         total=total,
         page_number=number,
         raw_count=len(papers),
+        replies=replies or [],
     )
+
+
+def _review_reply(index, forum_id, content=None):
+    return {
+        "id": f"review-{index}",
+        "reply_id": f"review-{index}",
+        "forum_id": forum_id,
+        "invitations": ["ICLR.cc/2027/Conference/Submission/-/Official_Review"],
+        "readers": ["everyone"],
+        "content": content
+        or {
+            "rating": {"value": "8"},
+            "confidence": {"value": "4"},
+            "summary": {"value": "The paper is solid."},
+            "strengths": {"value": "novel"},
+            "weaknesses": {"value": "limited baselines"},
+            "questions": {"value": "how does it scale?"},
+        },
+        "cdate": 2_100,
+        "mdate": 2_100,
+    }
 
 
 class FakeProvider:
@@ -773,4 +797,401 @@ def test_bootstrap_page_cap_pauses_and_resumes(tmp_path):
     assert (
         tmp_path / "briefings" / "conference" / "iclr_baseline_2026-11-07.md"
     ).exists()
+    store.close()
+
+
+AI_DEFAULTS = {
+    "conference_defaults": {
+        **DEFAULTS["conference_defaults"],
+        "reviews": {
+            "enabled": True,
+            "sample_limit": 50,
+            "page_size": 200,
+            "request_interval_seconds": 0,
+            "max_pages_per_run": 100,
+            "rating_options": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+        },
+        "ai_briefing": {
+            "enabled": True,
+            "include_new_submissions": False,
+            "max_events_per_briefing": 10,
+            "max_batches_per_run": 1,
+            "max_tokens": 1_000,
+            "max_review_chars": 4_000,
+        },
+    }
+}
+
+
+def _fake_ai(calls, *, error=None):
+    def fake(prompt, model="stub", max_tokens=0):
+        calls.append(prompt)
+        if error is not None:
+            raise error
+        return "### Paper 1\n\n这是一段中文评审摘要。"
+
+    return fake
+
+
+def test_new_submission_does_not_call_ai_by_default(tmp_path):
+    provider = FakeProvider([_page([_paper(1, 11_000)], "forum-1", total=1)])
+    calls = []
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=AI_DEFAULTS,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+        force=True,
+        call_ai=_fake_ai(calls),
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert result.ai_briefings == 0
+    assert calls == []
+    assert store.pending_events("iclr", 10) == []
+    store.close()
+
+
+def test_review_sample_creates_an_ai_briefing(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    first = FakeProvider([_page([_paper(1, 11_000)], "forum-1", total=1)])
+    sync_source(
+        source_cfg=SOURCE,
+        defaults=AI_DEFAULTS,
+        store=store,
+        provider=first,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+        force=True,
+        call_ai=_fake_ai([]),
+    )
+
+    calls = []
+    second = FakeProvider(
+        [
+            _page(
+                [_paper(1, 11_000)],
+                "forum-1",
+                total=1,
+                replies=[_review_reply(1, "forum-1")],
+            )
+        ]
+    )
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=AI_DEFAULTS,
+        store=store,
+        provider=second,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=20_000,
+        force=True,
+        call_ai=_fake_ai(calls),
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert result.new_replies == 1
+    assert result.ai_briefings == 1
+    assert calls and "The paper is solid." in calls[0]
+    assert store.pending_events("iclr", 10) == []
+    assert result.ai_briefing_paths
+    assert "这是一段中文评审摘要" in Path(result.ai_briefing_paths[0]).read_text(
+        encoding="utf-8"
+    )
+    store.close()
+
+
+def test_ai_failure_keeps_event_pending_and_watermark_advanced(tmp_path, monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-secret")
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    first = FakeProvider([_page([_paper(1, 11_000)], "forum-1", total=1)])
+    sync_source(
+        source_cfg=SOURCE,
+        defaults=AI_DEFAULTS,
+        store=store,
+        provider=first,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+        force=True,
+        call_ai=_fake_ai([]),
+    )
+
+    second = FakeProvider(
+        [
+            _page(
+                [_paper(1, 11_000)],
+                "forum-1",
+                total=1,
+                replies=[_review_reply(1, "forum-1")],
+            )
+        ]
+    )
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=AI_DEFAULTS,
+        store=store,
+        provider=second,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=20_000,
+        force=True,
+        call_ai=_fake_ai([], error=RuntimeError("bad sk-test-secret")),
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert result.ai_briefings == 0
+    assert "AI briefing failed" in result.message
+    assert "sk-test-secret" not in result.message
+    assert store.venue_state("iclr").watermark_ms == 11_000
+    assert len(store.pending_events("iclr", 10)) == 1
+    assert (tmp_path / "briefings" / "conference" / "iclr_2026-11-07.md").exists()
+    store.close()
+
+
+def test_missing_model_key_does_not_fail_ingestion(tmp_path):
+    defaults = {
+        "conference_defaults": {
+            **AI_DEFAULTS["conference_defaults"],
+            "ai_briefing": {
+                **AI_DEFAULTS["conference_defaults"]["ai_briefing"],
+                "include_new_submissions": True,
+            },
+        }
+    }
+    provider = FakeProvider([_page([_paper(1, 11_000)], "forum-1", total=1)])
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+        force=True,
+        call_ai=_fake_ai([], error=SystemExit(1)),
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert "DEEPSEEK_API_KEY not configured" in result.message
+    assert len(store.pending_events("iclr", 10)) == 1
+    store.close()
+
+
+def test_baseline_papers_are_not_queued_for_ai(tmp_path):
+    provider = FakeProvider([_page([_paper(1, 5_000)], "forum-1", total=1)])
+    calls = []
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=AI_DEFAULTS,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+        force=True,
+        call_ai=_fake_ai(calls),
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert store.papers_count("iclr") == 1
+    assert store.pending_events("iclr", 10) == []
+    assert calls == []
+    store.close()
+
+
+def test_new_submission_can_opt_into_ai_briefings(tmp_path):
+    defaults = {
+        "conference_defaults": {
+            **AI_DEFAULTS["conference_defaults"],
+            "ai_briefing": {
+                **AI_DEFAULTS["conference_defaults"]["ai_briefing"],
+                "include_new_submissions": True,
+            },
+        }
+    }
+    provider = FakeProvider([_page([_paper(1, 11_000)], "forum-1", total=1)])
+    calls = []
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+        force=True,
+        call_ai=_fake_ai(calls),
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert result.ai_briefings == 1
+    assert len(calls) == 1
+    store.close()
+
+
+def test_baseline_papers_are_not_queued_even_when_new_submissions_are_included(
+    tmp_path,
+):
+    defaults = {
+        "conference_defaults": {
+            **AI_DEFAULTS["conference_defaults"],
+            "ai_briefing": {
+                **AI_DEFAULTS["conference_defaults"]["ai_briefing"],
+                "include_new_submissions": True,
+            },
+        }
+    }
+    provider = FakeProvider([_page([_paper(1, 5_000)], "forum-1", total=1)])
+    calls = []
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+        force=True,
+        call_ai=_fake_ai(calls),
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert result.ai_briefings == 0
+    assert calls == []
+    assert store.pending_events("iclr", 10) == []
+    store.close()
+
+
+def test_metadata_only_page_does_not_report_a_review_change(tmp_path):
+    from conference_reviews import build_page_review_data
+    from conference_sync import _build_page_events
+
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    store.ensure_venue("iclr", "ICLR.cc/2027/Conference", "inv")
+    run = store.start_run(
+        source="iclr",
+        venue_id="ICLR.cc/2027/Conference",
+        invitation="inv",
+        mode="incremental",
+        config_hash="cfg",
+        now_ms=5_000,
+    )
+    rating_options = [str(value) for value in range(1, 11)]
+    reply_rows, summaries = build_page_review_data(
+        [_review_reply(1, "forum-1")],
+        CAPABILITIES,
+        {"reviews": {"rating_options": rating_options}},
+    )
+    store.commit_page(
+        run_id=run.run_id,
+        papers=[_paper(1, 11_000)],
+        replies=reply_rows,
+        summaries=summaries,
+        cursor_after="forum-1",
+        candidate_watermark_ms=11_000,
+        total_expected=1,
+        raw_count=1,
+        now_ms=5_000,
+    )
+
+    events = _build_page_events(
+        store=store,
+        source="iclr",
+        run=run,
+        papers=[_paper(1, 11_000)],
+        reply_rows=[],
+        summaries=[],
+        include_replies=True,
+        cfg={
+            "reviews": {"rating_options": [str(value) for value in range(1, 11)]},
+            "ai_briefing": {"include_new_submissions": False},
+        },
+        now_ms=6_000,
+    )
+
+    assert events == []
+    store.close()
+
+
+def test_unsafe_source_name_is_invalid_config(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+
+    result = sync_source(
+        source_cfg={**SOURCE, "name": "../evil"},
+        defaults=DEFAULTS,
+        store=store,
+        provider=FakeProvider([]),
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+    )
+
+    assert result.outcome == "INVALID_CONFIG"
+    assert result.fatal is True
+    store.close()
+
+
+def test_existing_reviews_are_seeded_on_the_first_ai_run(tmp_path):
+    from conference_reviews import build_page_review_data
+
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    store.ensure_venue("iclr", "ICLR.cc/2027/Conference", "inv")
+    run = store.start_run(
+        source="iclr",
+        venue_id="ICLR.cc/2027/Conference",
+        invitation="inv",
+        mode="bootstrap",
+        config_hash="cfg",
+        now_ms=10_000,
+    )
+    rating_options = [str(value) for value in range(1, 11)]
+    reply_rows, summaries = build_page_review_data(
+        [_review_reply(1, "forum-1")],
+        CAPABILITIES,
+        {"reviews": {"rating_options": rating_options}},
+    )
+    store.commit_page(
+        run_id=run.run_id,
+        papers=[_paper(1, 11_000)],
+        replies=reply_rows,
+        summaries=summaries,
+        cursor_after="forum-1",
+        candidate_watermark_ms=11_000,
+        total_expected=1,
+        raw_count=1,
+        now_ms=10_000,
+    )
+    store.finish_run(run.run_id, now_ms=10_000)
+    assert store.venue_state("iclr").ai_initialized_ms is None
+
+    provider = FakeProvider([_page([_paper(1, 11_000)], "forum-1", total=1)])
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=AI_DEFAULTS,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=20_000,
+        force=True,
+        call_ai=_fake_ai([]),
+    )
+
+    assert result.ai_briefings == 1
+    assert store.venue_state("iclr").ai_initialized_ms == 20_000
     store.close()

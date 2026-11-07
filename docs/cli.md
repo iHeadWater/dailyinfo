@@ -75,16 +75,20 @@ back to the model in `DAILYINFO_FALLBACK_MODEL` (default
 A missing `GLM_API_KEY` disables the fallback outright rather than retrying
 without credentials.
 
-Pipeline 6 is ingestion-only for now: it stores OpenReview submission metadata and
-public replies in `$DAILYINFO_DATA_ROOT/conference/conference.sqlite3` and writes a
-deterministic markdown listing to `briefings/conference/`. It does not call a model,
-rank relevance, or push. Reviews are fetched in bulk with `details=replies`; only
-replies readable by `everyone` are stored. The first review run stores a one-time
-sample of the latest `reviews.sample_limit` submissions (default 50), then sets
-`reviews_watch_from_ms`; later incremental and weekly rescan passes never go before
-that cutoff. `reviews.max_pages_per_run` pauses with a resumable cursor and
-`reviews.request_interval_seconds` spaces requests. Set `OPENREVIEW_EMAIL` and
-`OPENREVIEW_PASSWORD` in `.env`; OpenReview authenticates by **email**, and
+Pipeline 6 stores OpenReview submission metadata and public replies in
+`$DAILYINFO_DATA_ROOT/conference/conference.sqlite3`, writes a deterministic
+markdown listing to `briefings/conference/`, and can additionally render an AI
+Chinese briefing for review-bearing events (`{source}_ai_{batch_hash}.md`).
+It does not rank relevance or push. New submissions alone stay in the
+deterministic listing unless `ai_briefing.include_new_submissions` is enabled;
+`ai_briefing.max_events_per_briefing` and `max_batches_per_run` cap model calls.
+Reviews are fetched in bulk with `details=replies`; only replies readable by
+`everyone` are stored. The first review run stores a one-time sample of the
+latest `reviews.sample_limit` submissions (default 50), then sets
+`reviews_watch_from_ms`; later incremental and weekly rescan passes never go
+before that cutoff. `reviews.max_pages_per_run` pauses with a resumable cursor
+and `reviews.request_interval_seconds` spaces requests. Set `OPENREVIEW_EMAIL`
+and `OPENREVIEW_PASSWORD` in `.env`; OpenReview authenticates by **email**, and
 anonymous note queries are rejected by its browser challenge. The legacy
 `OPENREVIEW_USERNAME` key is still read as a fallback. A source that is not
 open yet (`NOT_OPEN`) or not due for a poll (`NOT_DUE`) is a clean outcome, not

@@ -2013,7 +2013,7 @@ def test_run_pipeline_conference_counts_clean_sources(monkeypatch):
     seen = []
 
     def fake_sync(**kwargs):
-        seen.append(kwargs["source_cfg"]["name"])
+        seen.append((kwargs["source_cfg"]["name"], kwargs.get("call_ai")))
         return SourceResult(source=kwargs["source_cfg"]["name"], outcome="NOT_DUE")
 
     monkeypatch.setattr(rp, "sync_source", fake_sync)
@@ -2021,7 +2021,8 @@ def test_run_pipeline_conference_counts_clean_sources(monkeypatch):
     monkeypatch.setattr(rp, "_conference_credentials_present", lambda: True)
 
     assert rp.run_pipeline_conference() == 2
-    assert seen == ["a", "b"]
+    assert [name for name, _ in seen] == ["a", "b"]
+    assert all(callback is rp.call_ai for _, callback in seen)
 
 
 def test_run_pipeline_conference_raises_when_a_source_fails(monkeypatch):

@@ -62,3 +62,18 @@ def test_each_enabled_conference_source_has_a_rating_scale():
     for source in _conference_sources():
         options = source.get("reviews", {}).get("rating_options", [])
         assert len(options) >= 2, source["name"]
+
+
+def test_ai_briefing_defaults_are_bounded():
+    defaults = _config()["defaults"]["conference_defaults"]["ai_briefing"]
+
+    assert defaults["enabled"] is True
+    assert defaults["include_new_submissions"] is False
+    assert 1 <= defaults["max_events_per_briefing"] <= 20
+    assert 1 <= defaults["max_batches_per_run"] <= 20
+    assert defaults["max_tokens"] > 0
+    assert defaults["max_review_chars"] > 0
+    assert defaults["max_abstract_chars"] > 0
+    assert 1 <= defaults["max_reviews_per_paper"] <= 50
+    assert defaults["max_attempts"] >= 1
+    assert defaults["seed_limit"] >= 1

@@ -15,15 +15,25 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
+from typing import Callable
 
+from conference_ai_briefing import render_pending_events
 from conference_briefing import (
     baseline_path,
     briefing_path,
     render_baseline,
     render_briefing,
     write_briefing,
+)
+from conference_events import (
+    build_event,
+    build_snapshot,
+    detect_event_types,
+    is_ai_event,
+    snapshot_signature,
 )
 from conference_reviews import build_page_review_data
 from conference_store import ConferenceStore, SyncRun, VenueState
@@ -44,6 +54,8 @@ class SourceResult:
     new_papers: int = 0
     new_replies: int = 0
     briefing_path: str | None = None
+    ai_briefings: int = 0
+    ai_briefing_paths: tuple[str, ...] = ()
     message: str = ""
     fatal: bool = False
 
@@ -52,6 +64,17 @@ def _secret() -> str:
     return os.environ.get("OPENREVIEW_PASSWORD", "") or _read_env_value(
         "OPENREVIEW_PASSWORD"
     )
+
+
+def _safe_error(exc: BaseException) -> str:
+    """Flatten an exception and redact every credential this pipeline holds."""
+
+    text = one_line(str(exc), "")
+    for key in ("OPENREVIEW_PASSWORD", "DEEPSEEK_API_KEY", "GLM_API_KEY"):
+        secret = os.environ.get(key, "") or _read_env_value(key)
+        if secret:
+            text = one_line(text, secret)
+    return text
 
 
 def _config_hash(
@@ -162,11 +185,204 @@ def _merge_config(defaults: dict, source_cfg: dict) -> dict:
         **(base.get("reviews", {}) or {}),
         **(source_cfg.get("reviews", {}) or {}),
     }
+    cfg["ai_briefing"] = {
+        **(base.get("ai_briefing", {}) or {}),
+        **(source_cfg.get("ai_briefing", {}) or {}),
+    }
     return cfg
 
 
 def _reviews_enabled(reviews_cfg: dict) -> bool:
     return bool(reviews_cfg.get("enabled", False))
+
+
+def _ai_enabled(cfg: dict, call_ai: Callable[..., str] | None) -> bool:
+    return (
+        bool((cfg.get("ai_briefing") or {}).get("enabled", False))
+        and call_ai is not None
+    )
+
+
+def _build_page_events(
+    *,
+    store: ConferenceStore,
+    source: str,
+    run: SyncRun,
+    papers: list[dict],
+    reply_rows: list[dict],
+    summaries: list[dict],
+    include_replies: bool,
+    cfg: dict,
+    now_ms: int,
+) -> list[dict]:
+    """Build events for one page from the before/after snapshots.
+
+    Only a real review/decision/status change becomes an AI event by default;
+    a plain new submission remains the deterministic listing's job.
+    """
+
+    review_cfg = cfg.get("reviews", {}) or {}
+    ai_cfg = cfg.get("ai_briefing") or {}
+    max_review_chars = int(ai_cfg.get("max_review_chars", 4_000) or 4_000)
+    max_abstract_chars = int(ai_cfg.get("max_abstract_chars", 4_000) or 4_000)
+    include_new_submissions = bool(ai_cfg.get("include_new_submissions", False))
+    baseline_cutoff = run.started_ms if run.mode == "bootstrap" else None
+    if baseline_cutoff is not None:
+        # Baseline papers were already known when the venue was first
+        # imported; filtering them before the per-forum lookup avoids tens of
+        # thousands of pointless queries during a bootstrap.
+        papers = [
+            paper for paper in papers if int(paper.get("cdate") or 0) >= baseline_cutoff
+        ]
+    if not papers:
+        return []
+
+    forum_ids = [
+        str(paper.get("forum_id") or paper.get("note_id") or "") for paper in papers
+    ]
+    before_states = store.forum_states(source, forum_ids)
+    replies_by_forum: dict[str, list[dict]] = {}
+    for row in reply_rows:
+        replies_by_forum.setdefault(str(row.get("forum_id") or ""), []).append(row)
+    summaries_by_forum = {
+        str(summary.get("forum_id") or ""): summary for summary in summaries
+    }
+    events: list[dict] = []
+
+    for paper in papers:
+        forum_id = str(paper.get("forum_id") or paper.get("note_id") or "")
+        if not forum_id:
+            continue
+        before = before_states.get(forum_id)
+        before_signature = None
+        if before is not None:
+            before_snapshot = build_snapshot(
+                before["paper"],
+                before["reviews"],
+                before["summary"],
+                review_cfg=review_cfg,
+                max_review_chars=max_review_chars,
+                max_abstract_chars=max_abstract_chars,
+                # Signature building must see every review; the prompt is
+                # capped later by the renderer.
+                max_reviews_per_paper=0,
+            )
+            before_signature = snapshot_signature(before_snapshot)
+
+        if include_replies:
+            after_reviews = replies_by_forum.get(forum_id)
+            if not after_reviews:
+                # No public reply in this page: keep the previously stored
+                # reviews rather than treating an empty page as a deletion.
+                after_reviews = before["reviews"] if before else []
+            after_summary = summaries_by_forum.get(forum_id)
+            if after_summary is None:
+                after_summary = before["summary"] if before else None
+        else:
+            after_reviews = before["reviews"] if before else []
+            after_summary = before["summary"] if before else None
+
+        after_snapshot = build_snapshot(
+            paper,
+            after_reviews,
+            after_summary,
+            review_cfg=review_cfg,
+            max_review_chars=max_review_chars,
+            max_abstract_chars=max_abstract_chars,
+            max_reviews_per_paper=0,
+        )
+        after_signature = snapshot_signature(after_snapshot)
+        event_types = detect_event_types(before_signature, after_signature)
+        if not is_ai_event(
+            event_types,
+            after_snapshot,
+            include_new_submissions=include_new_submissions,
+        ):
+            continue
+        events.append(
+            build_event(
+                source=source,
+                forum_id=forum_id,
+                event_types=event_types,
+                signature=after_signature,
+                now_ms=now_ms,
+            )
+        )
+    return events
+
+
+def _seed_ai_events(
+    *,
+    store: ConferenceStore,
+    source: str,
+    state: VenueState,
+    cfg: dict,
+    call_ai: Callable[..., str] | None,
+    now_ms: int,
+) -> str:
+    """Queue existing reviews once, when the AI layer is first enabled."""
+
+    if not _ai_enabled(cfg, call_ai) or state.ai_initialized_ms is not None:
+        return ""
+    ai_cfg = cfg.get("ai_briefing") or {}
+    try:
+        store.seed_review_events(
+            source,
+            now_ms,
+            max_review_chars=int(ai_cfg.get("max_review_chars", 4_000) or 4_000),
+            max_abstract_chars=int(ai_cfg.get("max_abstract_chars", 4_000) or 4_000),
+            # The signature sees every reply; only the prompt is capped.
+            max_reviews_per_paper=0,
+            limit=int(ai_cfg.get("seed_limit", 200) or 200),
+        )
+        store.mark_ai_initialized(source, now_ms)
+    except Exception as exc:
+        return _safe_error(exc)
+    return ""
+
+
+def _render_ai(
+    *,
+    store: ConferenceStore,
+    source: str,
+    display_name: str,
+    cfg: dict,
+    defaults: dict,
+    call_ai: Callable[..., str] | None,
+    briefings_dir: str | Path,
+    date: str,
+    now_ms: int,
+) -> tuple[list[str], str]:
+    """Render pending AI briefings; a failure never fails ingestion."""
+
+    if not _ai_enabled(cfg, call_ai):
+        return [], ""
+    try:
+        paths = render_pending_events(
+            store=store,
+            source=source,
+            display_name=display_name,
+            config=cfg,
+            defaults=defaults,
+            call_ai=call_ai,
+            briefings_dir=briefings_dir,
+            date=date,
+            now_ms=now_ms,
+        )
+        failed = store.failed_event_count(source)
+        retrying = store.retrying_event_count(source)
+        if failed:
+            return paths, f"{failed} AI event(s) failed permanently"
+        if retrying:
+            return paths, f"{retrying} AI event(s) failed; will retry"
+        return paths, ""
+    except SystemExit:
+        # ``load_deepseek_key`` exits the process when the key is absent.
+        # The conference store is already durable; do not take pipeline 6
+        # down because the optional AI layer is unconfigured.
+        return [], "DEEPSEEK_API_KEY not configured"
+    except Exception as exc:
+        return [], _safe_error(exc)
 
 
 def _select_review_mode(
@@ -228,6 +444,7 @@ def sync_source(
     date: str,
     now_ms: int | None = None,
     force: bool = False,
+    call_ai: Callable[..., str] | None = None,
 ) -> SourceResult:
     """Ingest one OpenReview source with resumable, loss-free pagination."""
 
@@ -236,11 +453,16 @@ def sync_source(
     source = str(cfg.get("name") or "").strip()
     venue_id = str(cfg.get("venue_id") or "").strip()
     display_name = str(cfg.get("display_name") or source)
-    if not source or not venue_id:
+    if (
+        not source
+        or not venue_id
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+", source)
+        or source in {".", ".."}
+    ):
         return SourceResult(
             source=source or "<unknown>",
             outcome="INVALID_CONFIG",
-            message="conference source needs name and venue_id",
+            message="conference source needs a safe name and venue_id",
             fatal=True,
         )
 
@@ -251,6 +473,14 @@ def sync_source(
     watch_from = None
     if _reviews_enabled(reviews_cfg):
         watch_from = store.ensure_reviews_watch_from(source, now_ms)
+    seed_error = _seed_ai_events(
+        store=store,
+        source=source,
+        state=state,
+        cfg=cfg,
+        call_ai=call_ai,
+        now_ms=now_ms,
+    )
 
     if not force and _not_due(
         state,
@@ -271,10 +501,29 @@ def sync_source(
         except Exception as exc:
             flushed = None
             message = f"pending briefing failed: {one_line(str(exc), _secret())}"
+        ai_paths, ai_error = _render_ai(
+            store=store,
+            source=source,
+            display_name=display_name,
+            cfg=cfg,
+            defaults=defaults,
+            call_ai=call_ai,
+            briefings_dir=briefings_dir,
+            date=date,
+            now_ms=now_ms,
+        )
+        if seed_error:
+            message = f"{message}; AI event seed failed: {seed_error}"
+        if ai_paths:
+            message = f"{message}; AI briefings: {len(ai_paths)}"
+        if ai_error:
+            message = f"{message}; AI briefing failed: {ai_error}"
         return SourceResult(
             source=source,
             outcome="NOT_DUE",
             briefing_path=flushed,
+            ai_briefings=len(ai_paths),
+            ai_briefing_paths=tuple(ai_paths),
             message=message,
         )
 
@@ -344,6 +593,7 @@ def sync_source(
         total = run.total_expected
         pages = 0
         paused = False
+        event_error = ""
         iterator = provider.iter_submission_pages(
             capabilities,
             min_cdate=min_cdate,
@@ -366,11 +616,32 @@ def sync_source(
                 reply_rows, summaries = build_page_review_data(
                     page.replies, capabilities, cfg
                 )
+            page_events: list[dict] = []
+            if _ai_enabled(cfg, call_ai):
+                try:
+                    page_events = _build_page_events(
+                        store=store,
+                        source=source,
+                        run=run,
+                        papers=page.papers,
+                        reply_rows=reply_rows,
+                        summaries=summaries,
+                        include_replies=include_replies,
+                        cfg=cfg,
+                        now_ms=now_ms,
+                    )
+                except Exception as exc:
+                    # Event detection is best-effort.  The page is durable;
+                    # a detection failure is reported in the run message, but
+                    # the AI briefing for this page may be lost because the
+                    # committed before-state hides the diff on the next run.
+                    event_error = _safe_error(exc)
             committed = store.commit_page(
                 run_id=run.run_id,
                 papers=page.papers,
                 replies=reply_rows,
                 summaries=summaries,
+                events=page_events,
                 cursor_after=page.cursor_after,
                 candidate_watermark_ms=candidate,
                 total_expected=page.total,
@@ -403,11 +674,32 @@ def sync_source(
                 f"{mode}: paused after {pages} pages, "
                 f"{new_count} new papers, {new_replies} new replies"
             )
+            ai_paths, ai_error = _render_ai(
+                store=store,
+                source=source,
+                display_name=display_name,
+                cfg=cfg,
+                defaults=defaults,
+                call_ai=call_ai,
+                briefings_dir=briefings_dir,
+                date=date,
+                now_ms=now_ms,
+            )
+            if seed_error:
+                message = f"{message}; AI event seed failed: {seed_error}"
+            if event_error:
+                message = f"{message}; AI event failed: {event_error}"
+            if ai_paths:
+                message = f"{message}; AI briefings: {len(ai_paths)}"
+            if ai_error:
+                message = f"{message}; AI briefing failed: {ai_error}"
             return SourceResult(
                 source=source,
                 outcome="PAUSED",
                 new_papers=new_count,
                 new_replies=new_replies,
+                ai_briefings=len(ai_paths),
+                ai_briefing_paths=tuple(ai_paths),
                 message=message,
             )
 
@@ -437,18 +729,39 @@ def sync_source(
             # pending is what makes the next run retry the briefing.
             flushed = None
             briefing_error = one_line(str(exc), _secret())
+        ai_paths, ai_error = _render_ai(
+            store=store,
+            source=source,
+            display_name=display_name,
+            cfg=cfg,
+            defaults=defaults,
+            call_ai=call_ai,
+            briefings_dir=briefings_dir,
+            date=date,
+            now_ms=now_ms,
+        )
         message = (
             f"{mode}: {new_count} new papers, {new_replies} new replies, "
             f"{total if total is not None else '?'} total"
         )
         if briefing_error:
             message = f"{message}; briefing failed: {briefing_error}"
+        if seed_error:
+            message = f"{message}; AI event seed failed: {seed_error}"
+        if event_error:
+            message = f"{message}; AI event failed: {event_error}"
+        if ai_paths:
+            message = f"{message}; AI briefings: {len(ai_paths)}"
+        if ai_error:
+            message = f"{message}; AI briefing failed: {ai_error}"
         return SourceResult(
             source=source,
             outcome="SUCCESS" if not briefing_error else "SUCCESS_BRIEFING_FAILED",
             new_papers=new_count,
             new_replies=new_replies,
             briefing_path=flushed,
+            ai_briefings=len(ai_paths),
+            ai_briefing_paths=tuple(ai_paths),
             message=message,
         )
     except OpenReviewNotPublic as exc:
@@ -468,10 +781,29 @@ def sync_source(
                 f"{one_line(str(flush_exc), _secret())}"
             )
             flushed = None
+        ai_paths, ai_error = _render_ai(
+            store=store,
+            source=source,
+            display_name=display_name,
+            cfg=cfg,
+            defaults=defaults,
+            call_ai=call_ai,
+            briefings_dir=briefings_dir,
+            date=date,
+            now_ms=now_ms,
+        )
+        if seed_error:
+            message = f"{message}; AI event seed failed: {seed_error}"
+        if ai_paths:
+            message = f"{message}; AI briefings: {len(ai_paths)}"
+        if ai_error:
+            message = f"{message}; AI briefing failed: {ai_error}"
         return SourceResult(
             source=source,
             outcome="NOT_OPEN",
             briefing_path=flushed,
+            ai_briefings=len(ai_paths),
+            ai_briefing_paths=tuple(ai_paths),
             message=message,
         )
     except Exception as exc:

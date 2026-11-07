@@ -373,7 +373,7 @@ def _summary(forum_id: str = "forum-1"):
     }
 
 
-def test_v1_database_migrates_to_v2_and_preserves_papers(tmp_path):
+def test_v1_database_migrates_to_v3_and_preserves_papers(tmp_path):
     path = tmp_path / "conference.sqlite3"
     _create_v1_database(path)
 
@@ -389,7 +389,7 @@ def test_v1_database_migrates_to_v2_and_preserves_papers(tmp_path):
         store.conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()["value"]
-        == "2"
+        == "3"
     )
     venue_columns = {
         row["name"] for row in store.conn.execute("PRAGMA table_info(venues)")
@@ -398,6 +398,7 @@ def test_v1_database_migrates_to_v2_and_preserves_papers(tmp_path):
         "reviews_watch_from_ms",
         "last_review_rescan_ms",
         "reviews_sample_completed_ms",
+        "ai_initialized_ms",
     } <= venue_columns
     run_columns = {
         row["name"] for row in store.conn.execute("PRAGMA table_info(sync_runs)")
@@ -405,7 +406,33 @@ def test_v1_database_migrates_to_v2_and_preserves_papers(tmp_path):
     assert "new_replies" in run_columns
     store.conn.execute("SELECT COUNT(*) FROM reviews").fetchone()
     store.conn.execute("SELECT COUNT(*) FROM paper_review_summary").fetchone()
+    store.conn.execute("SELECT COUNT(*) FROM events").fetchone()
     store.close()
+
+
+def test_v2_database_migrates_to_v3(tmp_path):
+    path = tmp_path / "conference.sqlite3"
+    store = ConferenceStore(path)
+    store.conn.execute("DROP TABLE events")
+    store.conn.execute("ALTER TABLE venues DROP COLUMN ai_initialized_ms")
+    store.conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'")
+    store.conn.commit()
+    store.close()
+
+    migrated = ConferenceStore(path)
+
+    assert (
+        migrated.conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()["value"]
+        == "3"
+    )
+    venue_columns = {
+        row["name"] for row in migrated.conn.execute("PRAGMA table_info(venues)")
+    }
+    assert "ai_initialized_ms" in venue_columns
+    migrated.conn.execute("SELECT COUNT(*) FROM events").fetchone()
+    migrated.close()
 
 
 def test_review_upsert_preserves_first_seen_and_counts_new(tmp_path):
@@ -530,10 +557,181 @@ def test_v1_tables_without_meta_row_still_migrate(tmp_path):
         store.conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()["value"]
-        == "2"
+        == "3"
     )
     venue_columns = {
         row["name"] for row in store.conn.execute("PRAGMA table_info(venues)")
     }
     assert "reviews_watch_from_ms" in venue_columns
+    assert "ai_initialized_ms" in venue_columns
     store.close()
+
+
+def _event(index: int, forum_id: str | None = None, event_type="REVIEWS_CHANGED"):
+    forum = forum_id or f"forum-{index}"
+    return {
+        "event_id": f"event-{index}",
+        "source": "iclr",
+        "forum_id": forum,
+        "event_types": [event_type],
+        "fingerprint": f"fingerprint-{index}",
+        "created_ms": 5_000 + index,
+    }
+
+
+def test_commit_page_persists_events_and_supersedes_pending(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    run = _start(store, now_ms=5_000)
+
+    store.commit_page(
+        run_id=run.run_id,
+        papers=[_paper(1)],
+        replies=[_review(1)],
+        summaries=[_summary()],
+        events=[_event(1)],
+        cursor_after="forum-1",
+        candidate_watermark_ms=1_000,
+        total_expected=1,
+        raw_count=1,
+        now_ms=5_000,
+    )
+    pending = store.pending_events("iclr", limit=10)
+    assert [event["event_id"] for event in pending] == ["event-1"]
+
+    store.commit_page(
+        run_id=run.run_id,
+        papers=[_paper(1)],
+        replies=[_review(1)],
+        summaries=[_summary()],
+        events=[_event(2, "forum-1")],
+        cursor_after="forum-1",
+        candidate_watermark_ms=1_000,
+        total_expected=1,
+        raw_count=1,
+        now_ms=6_000,
+    )
+
+    statuses = {
+        row["event_id"]: row["status"]
+        for row in store.conn.execute("SELECT event_id, status FROM events")
+    }
+    assert statuses == {"event-1": "superseded", "event-2": "pending"}
+    assert [event["event_id"] for event in store.pending_events("iclr", 10)] == [
+        "event-2"
+    ]
+    store.close()
+
+
+def test_mark_rendered_clears_pending_events(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    run = _start(store, now_ms=5_000)
+    store.commit_page(
+        run_id=run.run_id,
+        papers=[_paper(1)],
+        replies=[_review(1)],
+        summaries=[_summary()],
+        events=[_event(1), _event(2)],
+        cursor_after="forum-2",
+        candidate_watermark_ms=2_000,
+        total_expected=2,
+        raw_count=2,
+        now_ms=5_000,
+    )
+
+    assert store.mark_rendered(["event-1", "event-2"], "briefing.md", now_ms=7_000) == 2
+
+    assert store.pending_events("iclr", 10) == []
+    row = store.conn.execute(
+        "SELECT status, briefing_filename FROM events WHERE event_id = 'event-1'"
+    ).fetchone()
+    assert row["status"] == "rendered"
+    assert row["briefing_filename"] == "briefing.md"
+    store.close()
+
+
+def test_forum_states_returns_paper_reviews_and_summary(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    run = _start(store, now_ms=5_000)
+    store.commit_page(
+        run_id=run.run_id,
+        papers=[_paper(1), _paper(2)],
+        replies=[_review(1)],
+        summaries=[_summary()],
+        cursor_after="forum-2",
+        candidate_watermark_ms=2_000,
+        total_expected=2,
+        raw_count=2,
+        now_ms=5_000,
+    )
+
+    states = store.forum_states("iclr", ["forum-1", "forum-2", "missing"])
+
+    assert set(states) == {"forum-1", "forum-2"}
+    assert states["forum-1"]["paper"]["title"] == "Paper 1"
+    assert states["forum-1"]["reviews"][0]["rating"] == "3"
+    assert states["forum-1"]["summary"]["rating_raw_values"] == ["3"]
+    assert states["forum-2"]["reviews"] == []
+    assert states["forum-2"]["summary"] is None
+    store.close()
+
+
+def test_seed_review_events_queues_existing_review_papers_once(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    run = _start(store, now_ms=5_000)
+    store.commit_page(
+        run_id=run.run_id,
+        papers=[_paper(1), _paper(2)],
+        replies=[_review(1)],
+        summaries=[_summary()],
+        cursor_after="forum-2",
+        candidate_watermark_ms=2_000,
+        total_expected=2,
+        raw_count=2,
+        now_ms=5_000,
+    )
+
+    assert store.seed_review_events("iclr", now_ms=6_000) == 1
+    assert store.seed_review_events("iclr", now_ms=7_000) == 0
+    pending = store.pending_events("iclr", 10)
+    assert [event["forum_id"] for event in pending] == ["forum-1"]
+
+    store.mark_ai_initialized("iclr", now_ms=8_000)
+    assert store.venue_state("iclr").ai_initialized_ms == 8_000
+    store.close()
+
+
+def test_seed_review_events_honors_the_limit(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    run = _start(store, now_ms=5_000)
+    store.commit_page(
+        run_id=run.run_id,
+        papers=[_paper(1), _paper(2)],
+        replies=[_review(1), _review(2, "forum-2")],
+        summaries=[_summary("forum-1"), _summary("forum-2")],
+        cursor_after="forum-2",
+        candidate_watermark_ms=2_000,
+        total_expected=2,
+        raw_count=2,
+        now_ms=5_000,
+    )
+
+    assert store.seed_review_events("iclr", now_ms=6_000, limit=1) == 1
+    assert len(store.pending_events("iclr", 10)) == 1
+    store.close()
+
+
+def test_v3_database_without_attempt_columns_is_upgraded(tmp_path):
+    path = tmp_path / "conference.sqlite3"
+    store = ConferenceStore(path)
+    store.conn.execute("ALTER TABLE events DROP COLUMN attempts")
+    store.conn.execute("ALTER TABLE events DROP COLUMN last_error")
+    store.conn.execute("UPDATE meta SET value = '3' WHERE key = 'schema_version'")
+    store.conn.commit()
+    store.close()
+
+    reopened = ConferenceStore(path)
+    columns = {
+        row["name"] for row in reopened.conn.execute("PRAGMA table_info(events)")
+    }
+    assert {"attempts", "last_error"} <= columns
+    reopened.close()

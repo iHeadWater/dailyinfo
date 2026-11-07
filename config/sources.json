@@ -30,6 +30,19 @@
         "controversy_min_reviews": 3,
         "controversy_std_threshold": 0.2,
         "controversy_range_threshold": 0.4
+      },
+      "ai_briefing": {
+        "enabled": true,
+        "include_new_submissions": false,
+        "max_events_per_briefing": 5,
+        "max_batches_per_run": 10,
+        "max_tokens": 12000,
+        "max_review_chars": 2000,
+        "max_abstract_chars": 2000,
+        "max_reviews_per_paper": 5,
+        "max_attempts": 3,
+        "seed_limit": 200,
+        "model": null
       }
     }
   },

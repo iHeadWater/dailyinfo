@@ -21,7 +21,7 @@ import time
 import uuid
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 # A RUNNING row whose heartbeat is older than this is assumed dead.  The sync
 # layer resumes from its committed cursor instead of starting over.
 STALE_RUN_MS = 5 * 60 * 1000
@@ -48,6 +48,7 @@ class VenueState:
     reviews_watch_from_ms: int | None
     last_review_rescan_ms: int | None
     reviews_sample_completed_ms: int | None
+    ai_initialized_ms: int | None
     last_outcome: str
     last_message: str
 
@@ -105,7 +106,8 @@ class ConferenceStore:
         # deliberately uses the connection's own context manager rather than
         # _tx().
         with self.conn:
-            self.conn.executescript("""
+            self.conn.executescript(
+                """
                 CREATE TABLE IF NOT EXISTS meta (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -121,6 +123,7 @@ class ConferenceStore:
                     reviews_watch_from_ms INTEGER,
                     last_review_rescan_ms INTEGER,
                     reviews_sample_completed_ms INTEGER,
+                    ai_initialized_ms INTEGER,
                     last_outcome TEXT NOT NULL DEFAULT '',
                     last_message TEXT NOT NULL DEFAULT ''
                 );
@@ -193,6 +196,18 @@ class ConferenceStore:
                     updated_ms INTEGER NOT NULL,
                     PRIMARY KEY (source, forum_id)
                 );
+                CREATE TABLE IF NOT EXISTS events (
+                    event_id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    forum_id TEXT NOT NULL,
+                    event_types_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    briefing_filename TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    created_ms INTEGER NOT NULL,
+                    updated_ms INTEGER NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS sync_runs (
                     run_id TEXT PRIMARY KEY,
                     source TEXT NOT NULL,
@@ -226,7 +241,18 @@ class ConferenceStore:
                     ON reviews(source, reply_type);
                 CREATE INDEX IF NOT EXISTS sync_runs_source_status
                     ON sync_runs(source, status, updated_ms);
-                """)
+                CREATE INDEX IF NOT EXISTS events_pending
+                    ON events(source, status, created_ms);
+                CREATE INDEX IF NOT EXISTS events_forum
+                    ON events(source, forum_id, status);
+                """
+            )
+        # Keep this additive even for a v3 database created by an earlier
+        # build of this branch (the event queue shipped before attempts/
+        # last_error were added).
+        with self._tx():
+            self._add_column("events", "attempts", "INTEGER NOT NULL DEFAULT 0")
+            self._add_column("events", "last_error", "TEXT NOT NULL DEFAULT ''")
         row = self.conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'"
         ).fetchone()
@@ -241,6 +267,9 @@ class ConferenceStore:
             }
             if columns and "reviews_watch_from_ms" not in columns:
                 self._migrate_v1_to_v2()
+                self._migrate_v2_to_v3()
+            elif columns and "ai_initialized_ms" not in columns:
+                self._migrate_v2_to_v3()
             else:
                 with self._tx():
                     self.conn.execute(
@@ -261,6 +290,9 @@ class ConferenceStore:
             )
         if found == 1:
             self._migrate_v1_to_v2()
+            self._migrate_v2_to_v3()
+        elif found == 2:
+            self._migrate_v2_to_v3()
         elif found < 1:
             raise ConferenceSchemaError(
                 f"conference database schema v{found} is older than any "
@@ -277,6 +309,40 @@ class ConferenceStore:
             self._add_column("sync_runs", "new_replies", "INTEGER NOT NULL DEFAULT 0")
             self.conn.execute(
                 "INSERT INTO meta(key, value) VALUES('schema_version', '2') "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            )
+
+    def _migrate_v2_to_v3(self) -> None:
+        """Add the AI briefing event queue; no existing row is rewritten."""
+
+        with self._tx():
+            self._add_column("venues", "ai_initialized_ms", "INTEGER")
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    event_id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    forum_id TEXT NOT NULL,
+                    event_types_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    briefing_filename TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    created_ms INTEGER NOT NULL,
+                    updated_ms INTEGER NOT NULL
+                )
+                """
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS events_pending "
+                "ON events(source, status, created_ms)"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS events_forum "
+                "ON events(source, forum_id, status)"
+            )
+            self.conn.execute(
+                "INSERT INTO meta(key, value) VALUES('schema_version', '3') "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
             )
 
@@ -329,7 +395,8 @@ class ConferenceStore:
                     "watermark_ms = NULL, bootstrap_completed_ms = NULL, "
                     "last_full_sync_ms = NULL, last_poll_ms = NULL, "
                     "reviews_watch_from_ms = NULL, last_review_rescan_ms = NULL, "
-                    "reviews_sample_completed_ms = NULL WHERE source = ?",
+                    "reviews_sample_completed_ms = NULL, ai_initialized_ms = NULL "
+                    "WHERE source = ?",
                     (venue_id, invitation, source),
                 )
             elif invitation and row["submission_invitation"] != invitation:
@@ -358,6 +425,7 @@ class ConferenceStore:
             reviews_watch_from_ms=row["reviews_watch_from_ms"],
             last_review_rescan_ms=row["last_review_rescan_ms"],
             reviews_sample_completed_ms=row["reviews_sample_completed_ms"],
+            ai_initialized_ms=row["ai_initialized_ms"],
             last_outcome=row["last_outcome"],
             last_message=row["last_message"],
         )
@@ -492,14 +560,16 @@ class ConferenceStore:
         raw_count: int,
         replies: Iterable[dict] = (),
         summaries: Iterable[dict] = (),
+        events: Iterable[dict] = (),
         now_ms: int | None = None,
     ) -> PageCommit:
-        """Upsert one page, its replies and its cursor atomically."""
+        """Upsert one page, its replies, events and cursor atomically."""
 
         now_ms = int(now_ms if now_ms is not None else time.time() * 1000)
         papers = list(papers)
         replies = list(replies)
         summaries = list(summaries)
+        events = list(events)
         new_count = 0
         new_replies = 0
         with self._tx():
@@ -711,6 +781,40 @@ class ConferenceStore:
                     ),
                 )
 
+            for event in events:
+                event_id = str(event.get("event_id") or "")
+                forum_id = str(event.get("forum_id") or "")
+                if not event_id or not forum_id:
+                    continue
+                event_types = event.get("event_types") or []
+                # A newer change replaces the old pending item for the same
+                # paper, so one render batch never contains the same paper
+                # twice with contradictory snapshots.
+                self.conn.execute(
+                    "UPDATE events SET status = 'superseded', updated_ms = ? "
+                    "WHERE source = ? AND forum_id = ? AND status = 'pending' "
+                    "AND event_id <> ?",
+                    (now_ms, source, forum_id, event_id),
+                )
+                self.conn.execute(
+                    "INSERT INTO events(event_id, source, forum_id, "
+                    "event_types_json, status, created_ms, updated_ms) "
+                    "VALUES(?, ?, ?, ?, 'pending', ?, ?) "
+                    "ON CONFLICT(event_id) DO UPDATE SET "
+                    "status = 'pending', briefing_filename = NULL, "
+                    "attempts = 0, last_error = '', "
+                    "created_ms = excluded.created_ms, "
+                    "updated_ms = excluded.updated_ms",
+                    (
+                        event_id,
+                        source,
+                        forum_id,
+                        _json(event_types),
+                        int(event.get("created_ms") or now_ms),
+                        now_ms,
+                    ),
+                )
+
             scanned = sum(
                 1
                 for paper in papers
@@ -844,6 +948,277 @@ class ConferenceStore:
                 "UPDATE venues SET last_outcome = ?, last_message = ? WHERE source = ?",
                 (outcome, message, run["source"]),
             )
+
+    # ------------------------------------------------------------------
+    # AI briefing event queue
+    # ------------------------------------------------------------------
+    def forum_states(self, source: str, forum_ids: Iterable[str]) -> dict[str, dict]:
+        """Return paper/reviews/summary for the requested forums.
+
+        The renderer and the event detector both need the *current* state,
+        not a second copy of every abstract stored in the event row.  Missing
+        forums are omitted so a stale event cannot resurrect a deleted row.
+        """
+
+        ids = list(dict.fromkeys(str(value) for value in forum_ids if str(value)))
+        states: dict[str, dict] = {
+            forum_id: {"paper": None, "reviews": [], "summary": None}
+            for forum_id in ids
+        }
+        for start in range(0, len(ids), _BRIEF_CHUNK):
+            chunk = ids[start : start + _BRIEF_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            paper_rows = self.conn.execute(
+                f"SELECT * FROM papers WHERE source = ? "
+                f"AND forum_id IN ({placeholders})",
+                (source, *chunk),
+            ).fetchall()
+            for row in paper_rows:
+                paper = self._paper_dict(row)
+                try:
+                    raw = json.loads(row["raw_json"] or "{}")
+                except (TypeError, ValueError):
+                    raw = {}
+                paper["affiliations"] = raw.get("affiliations") or []
+                paper["code_url"] = raw.get("code_url") or ""
+                paper["camera_ready"] = bool(raw.get("camera_ready", False))
+                states[row["forum_id"]]["paper"] = paper
+
+            review_rows = self.conn.execute(
+                f"SELECT * FROM reviews WHERE source = ? "
+                f"AND forum_id IN ({placeholders}) ORDER BY reply_id",
+                (source, *chunk),
+            ).fetchall()
+            for row in review_rows:
+                states[row["forum_id"]]["reviews"].append(self._review_dict(row))
+
+            summary_rows = self.conn.execute(
+                f"SELECT * FROM paper_review_summary WHERE source = ? "
+                f"AND forum_id IN ({placeholders})",
+                (source, *chunk),
+            ).fetchall()
+            for row in summary_rows:
+                states[row["forum_id"]]["summary"] = self._summary_dict(row)
+
+        return {
+            forum_id: state
+            for forum_id, state in states.items()
+            if state["paper"] is not None
+        }
+
+    def pending_events(self, source: str, limit: int = 10) -> list[dict]:
+        """Return the oldest pending briefing events for one source."""
+
+        rows = self.conn.execute(
+            "SELECT * FROM events WHERE source = ? AND status = 'pending' "
+            "ORDER BY created_ms, event_id LIMIT ?",
+            (source, max(0, int(limit))),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["event_types"] = json.loads(item["event_types_json"] or "[]")
+            result.append(item)
+        return result
+
+    def mark_rendered(
+        self,
+        event_ids: Iterable[str],
+        filename: str,
+        now_ms: int | None = None,
+    ) -> int:
+        """Mark events rendered after their briefing file is durable."""
+
+        ids = [str(value) for value in event_ids if str(value)]
+        if not ids:
+            return 0
+        now_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+        changed = 0
+        for start in range(0, len(ids), _BRIEF_CHUNK):
+            chunk = ids[start : start + _BRIEF_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            with self._tx():
+                cursor = self.conn.execute(
+                    f"UPDATE events SET status = 'rendered', "
+                    f"briefing_filename = ?, updated_ms = ? "
+                    f"WHERE event_id IN ({placeholders}) AND status = 'pending'",
+                    (filename, now_ms, *chunk),
+                )
+                changed += cursor.rowcount
+        return changed
+
+    def record_event_failure(
+        self,
+        event_ids: Iterable[str],
+        error: str,
+        *,
+        max_attempts: int,
+        now_ms: int | None = None,
+    ) -> int:
+        """Count a model failure; quarantine the event after N attempts."""
+
+        ids = [str(value) for value in event_ids if str(value)]
+        if not ids:
+            return 0
+        now_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+        message = " ".join(str(error or "").split())[:500]
+        changed = 0
+        for start in range(0, len(ids), _BRIEF_CHUNK):
+            chunk = ids[start : start + _BRIEF_CHUNK]
+            placeholders = ",".join("?" for _ in chunk)
+            with self._tx():
+                cursor = self.conn.execute(
+                    f"UPDATE events SET attempts = attempts + 1, "
+                    f"last_error = ?, updated_ms = ?, "
+                    f"status = CASE WHEN attempts + 1 >= ? THEN 'failed' "
+                    f"ELSE 'pending' END "
+                    f"WHERE event_id IN ({placeholders}) AND status = 'pending'",
+                    (message, now_ms, max(1, int(max_attempts)), *chunk),
+                )
+                changed += cursor.rowcount
+        return changed
+
+    def failed_event_count(self, source: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM events "
+            "WHERE source = ? AND status = 'failed'",
+            (source,),
+        ).fetchone()
+        return int(row["n"])
+
+    def retrying_event_count(self, source: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM events "
+            "WHERE source = ? AND status = 'pending' AND attempts > 0",
+            (source,),
+        ).fetchone()
+        return int(row["n"])
+
+    def seed_review_events(
+        self,
+        source: str,
+        now_ms: int,
+        *,
+        max_review_chars: int = 6_000,
+        max_abstract_chars: int = 4_000,
+        max_reviews_per_paper: int = 0,
+        limit: int = 200,
+    ) -> int:
+        """Queue one event per paper that already has reviews/decision.
+
+        This is the one-time backfill for a database ingested before the AI
+        briefing layer existed.  ``INSERT OR IGNORE`` makes a retry harmless.
+        """
+
+        from conference_events import build_event, build_snapshot, snapshot_signature
+
+        rows = self.conn.execute(
+            "SELECT * FROM paper_review_summary WHERE source = ? "
+            "AND (review_count > 0 OR decision <> '') "
+            "ORDER BY updated_ms DESC, forum_id LIMIT ?",
+            (source, max(1, int(limit))),
+        ).fetchall()
+        if not rows:
+            return 0
+        event_types_by_forum = {
+            row["forum_id"]: (
+                ["REVIEWS_CHANGED"]
+                if int(row["review_count"] or 0) > 0
+                else ["DECISION_CHANGED"]
+            )
+            for row in rows
+        }
+        states = self.forum_states(source, event_types_by_forum)
+        inserted = 0
+        with self._tx():
+            for forum_id, event_types in event_types_by_forum.items():
+                state = states.get(forum_id)
+                if state is None:
+                    continue
+                snapshot = build_snapshot(
+                    state["paper"],
+                    state["reviews"],
+                    state["summary"],
+                    max_review_chars=max_review_chars,
+                    max_abstract_chars=max_abstract_chars,
+                    max_reviews_per_paper=max_reviews_per_paper,
+                )
+                event = build_event(
+                    source=source,
+                    forum_id=forum_id,
+                    event_types=event_types,
+                    signature=snapshot_signature(snapshot),
+                    now_ms=now_ms,
+                )
+                cursor = self.conn.execute(
+                    "INSERT OR IGNORE INTO events(event_id, source, forum_id, "
+                    "event_types_json, status, created_ms, updated_ms) "
+                    "VALUES(?, ?, ?, ?, 'pending', ?, ?)",
+                    (
+                        event["event_id"],
+                        source,
+                        forum_id,
+                        _json(event_types),
+                        now_ms,
+                        now_ms,
+                    ),
+                )
+                inserted += cursor.rowcount
+        return inserted
+
+    def mark_ai_initialized(self, source: str, now_ms: int) -> None:
+        with self._tx():
+            self.conn.execute(
+                "UPDATE venues SET ai_initialized_ms = ? WHERE source = ?",
+                (now_ms, source),
+            )
+
+    @staticmethod
+    def _review_dict(row: sqlite3.Row) -> dict:
+        return {
+            "reply_id": row["reply_id"],
+            "forum_id": row["forum_id"],
+            "invitation": row["invitation"],
+            "reply_type": row["reply_type"],
+            "rating": row["rating"],
+            "confidence": row["confidence"],
+            "soundness": row["soundness"],
+            "presentation": row["presentation"],
+            "informativeness": row["informativeness"],
+            "summary": row["summary"],
+            "strengths": row["strengths"],
+            "weaknesses": row["weaknesses"],
+            "questions": row["questions"],
+            "decision": row["decision"],
+            "reply_mdate": row["reply_mdate"],
+        }
+
+    @staticmethod
+    def _summary_dict(row: sqlite3.Row) -> dict:
+        def load(value: str) -> list:
+            try:
+                parsed = json.loads(value or "[]")
+            except (TypeError, ValueError):
+                return []
+            return parsed if isinstance(parsed, list) else []
+
+        return {
+            "review_count": row["review_count"],
+            "rating_count": row["rating_count"],
+            "rating_mean": row["rating_mean"],
+            "rating_median": row["rating_median"],
+            "rating_std": row["rating_std"],
+            "rating_min": row["rating_min"],
+            "rating_max": row["rating_max"],
+            "rating_range": row["rating_range"],
+            "confidence_mean": row["confidence_mean"],
+            "rating_raw_values": load(row["rating_raw_values_json"]),
+            "confidence_raw_values": load(row["confidence_raw_values_json"]),
+            "decision": row["decision"],
+            "presentation": row["presentation"],
+            "strong_signal": bool(row["strong_signal"]),
+            "controversial": bool(row["controversial"]),
+        }
 
     # ------------------------------------------------------------------
     # Briefing queries
