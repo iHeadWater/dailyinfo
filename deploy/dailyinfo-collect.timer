@@ -1,0 +1,10 @@
+[Unit]
+Description=Generate DailyInfo content every morning
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 Asia/Shanghai
+Persistent=true
+Unit=dailyinfo-collect.service
+
+[Install]
+WantedBy=timers.target

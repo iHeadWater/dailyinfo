@@ -1,0 +1,60 @@
+# Content production only. MCP remains a separate read-only service.
+services:
+  freshrss:
+    image: ${FRESHRSS_IMAGE:-freshrss/freshrss:1.30.4}
+    container_name: dailyinfo-freshrss
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      CRON_MIN: "*/15"
+      ENABLE_ACCESS_LOG: "0"
+      FRESHRSS_INSTALL: "--default-user=collector --db-type=sqlite --language=zh-cn --base-url=http://localhost"
+    volumes:
+      - type: bind
+        source: ${DAILYINFO_DATA_ROOT:?Set the shared content root}/freshrss/data
+        target: /var/www/FreshRSS/data
+        bind:
+          create_host_path: false
+    # FreshRSS is an internal collector; no host port is published.
+    mem_limit: 512m
+    cpus: 1.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  collector:
+    profiles: [jobs]
+    image: ${DAILYINFO_IMAGE:?Set the reviewed DailyInfo image}
+    user: "33:33"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 2g
+    cpus: 2.0
+    env_file:
+      - ${DAILYINFO_PRODUCER_ENV:?Set the restricted producer env file}
+    environment:
+      TZ: Asia/Shanghai
+      DAILYINFO_ENV: prod
+      DAILYINFO_DATA_ROOT: /data
+      FRESHRSS_USER: collector
+      # Existing pipeline lookup falls back to USER when sources.json is unset.
+      USER: collector
+      DAILYINFO_PUBLICATION_GROUP_READ: "1"
+    volumes:
+      - type: bind
+        source: ${DAILYINFO_DATA_ROOT:?Set the shared content root}
+        target: /data
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    command: [python, -m, scripts.cli, run]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
