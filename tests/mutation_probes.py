@@ -1234,6 +1234,18 @@ PROBES: tuple[Probe, ...] = (
         new="${DAILYINFO_DATA_ROOT:-~/.myagentdata/dailyinfo-dev}",
         test="tests/test_deployment_config.py::test_legacy_compose_is_dev_scoped",
     ),
+    Probe(
+        # A configured filter that is never applied would let the school-news
+        # noise back into the notices digest; the parser test pins the drop.
+        label="configured keyword filters actually drop non-matching items",
+        path="scripts/datasource.py",
+        old="        items = self._apply_keyword_filter(items)",
+        new="        items = items",
+        test=(
+            "tests/test_datasource_scrape.py"
+            "::test_dlut_gs_parses_notices_and_applies_keyword_filter"
+        ),
+    ),
 )
 
 

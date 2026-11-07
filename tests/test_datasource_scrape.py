@@ -210,3 +210,126 @@ def test_chinawater_filters_seen_articles(fake_requests):
 
     second = DataSource.create(cfg, DEFAULTS)
     assert second.fetch() == []
+
+
+def test_dlut_gs_parses_notices_and_applies_keyword_filter(fake_requests):
+    """研究生院通知：解析标题/日期，并按 include/exclude 过滤。"""
+    from conftest import FakeResponse
+    import datasource
+    from datasource import DataSource
+
+    today = datasource.NOW.strftime("%Y-%m-%d")
+    html = f"""
+    <UL>
+      <LI><A href="../../info/1089/52172.htm" target="_blank">关于申请2027年联合培养博士双学位项目的通知</A><SPAN class="date">[{today}]</SPAN>
+      <DIV class="cb"></DIV></LI>
+      <LI><A href="../../info/1089/52162.htm" target="_blank">学校总值班室值班安排</A><SPAN class="date">[{today}]</SPAN>
+      <DIV class="cb"></DIV></LI>
+    </UL>
+    """
+    fake_requests.register(
+        "http://gs.dlut.test/zytz.htm",
+        FakeResponse(status=200, text=html),
+    )
+
+    ds = DataSource.create(
+        {
+            "name": "dlut_gs",
+            "display_name": "研究生院通知",
+            "category": "resource",
+            "type": "scrape",
+            "url": "http://gs.dlut.test/zytz.htm",
+            "base_url": "http://gs.dlut.test/",
+            "date_format": "standard",
+            "max_items": 20,
+            "include_keywords": ["申请"],
+            "exclude_keywords": ["值班"],
+        },
+        DEFAULTS,
+    )
+
+    items = ds.fetch()
+    assert [item.title for item in items] == [
+        "关于申请2027年联合培养博士双学位项目的通知"
+    ]
+    assert items[0].url == "http://gs.dlut.test/info/1089/52172.htm"
+    assert items[0].date == today
+    assert [item.title for item in ds.filtered_out] == ["学校总值班室值班安排"]
+    assert ds._total_before_filter == 2
+
+
+def test_dlut_teach_uses_full_title_attribute(fake_requests):
+    """教务处列表的可见文本被截断，完整标题在 title 属性里。"""
+    from conftest import FakeResponse
+    import datasource
+    from datasource import DataSource
+
+    today = datasource.NOW.strftime("%Y-%m-%d")
+    full_title = "关于2026年度“人工智能+”虚拟仿真实验教学项目校内推荐结果的公示"
+    html = f"""
+    <UL>
+      <li id="line_u4_0" style="">
+        <a href="ny.jsp?urltype=news.NewsContentUrl&wbtreeid=1016&wbnewsid=18298"
+           target=_blank title="{full_title}" style="">关于2026年度“人工智能+”虚拟仿真实验教学...</a>
+        <SPAN>{today}</SPAN>
+      </li>
+    </UL>
+    """
+    fake_requests.register(
+        "https://teach.dlut.test/list.jsp",
+        FakeResponse(status=200, text=html),
+    )
+
+    ds = DataSource.create(
+        {
+            "name": "dlut_teach",
+            "display_name": "教务处通知",
+            "category": "resource",
+            "type": "scrape",
+            "url": "https://teach.dlut.test/list.jsp",
+            "base_url": "https://teach.dlut.test/",
+            "date_format": "standard",
+            "max_items": 20,
+        },
+        DEFAULTS,
+    )
+
+    items = ds.fetch()
+    assert [item.title for item in items] == [full_title]
+    assert items[0].url.startswith("https://teach.dlut.test/ny.jsp?")
+    assert items[0].date == today
+
+
+def test_keyword_filter_is_noop_without_config(fake_requests):
+    """没有配置关键词时，所有条目都保留。"""
+    from conftest import FakeResponse
+    import datasource
+    from datasource import DataSource
+
+    html = (
+        '<li class="bg-mask">'
+        f"<time><span>{datasource.NOW.strftime('%d')}</span> "
+        f"{datasource.NOW.strftime('%Y-%m')}</time>"
+        '<h4><a href="./info/1.htm">Any title</a></h4>'
+        "</li>"
+    )
+    fake_requests.register(
+        "https://dlut.example.edu/no-filter",
+        FakeResponse(status=200, text=html),
+    )
+
+    ds = DataSource.create(
+        {
+            "name": "dlut_news",
+            "category": "resource",
+            "type": "scrape",
+            "url": "https://dlut.example.edu/no-filter",
+            "base_url": "https://dlut.example.edu/",
+            "date_format": "dlut_news",
+            "max_items": 10,
+        },
+        DEFAULTS,
+    )
+
+    assert len(ds.fetch()) == 1
+    assert ds.filtered_out == []
