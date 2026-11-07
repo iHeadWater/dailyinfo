@@ -1252,6 +1252,87 @@ PROBES: tuple[Probe, ...] = (
             "::test_seed_review_events_honors_the_limit"
         ),
     ),
+    Probe(
+        # Without this branch the new conference category silently falls
+        # through to the filename/date scanner and sends nothing.
+        label="conference push uses the digest path",
+        path="scripts/push_to_discord.py",
+        old="        return push_conference_category(channel_id, date, strict=strict)",
+        new="        return 0",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_push_category_delegates_conference_to_digest_path"
+        ),
+    ),
+    Probe(
+        # A delivered digest must archive its detailed source and sidecar;
+        # otherwise the same 42 papers are sent again on the next run.
+        label="a delivered conference digest is archived",
+        path="scripts/push_to_discord.py",
+        old="            _archive_conference_files(digest.files)",
+        new="            pass",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_push_conference_sends_only_the_digest_and_archives"
+        ),
+    ),
+    Probe(
+        # conference must share the AI-news channel when no dedicated channel
+        # is configured; without the fallback the category is skipped.
+        label="conference falls back to the AI-news channel",
+        path="scripts/push_to_discord.py",
+        old='    if not channels.get("conference"):',
+        new="    if False:",
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_conference_channel_falls_back_to_ai_news"
+        ),
+    ),
+    Probe(
+        # No files must still produce the explicit no-update notice instead
+        # of a silent zero.
+        label="conference with no files sends a no-update notice",
+        path="scripts/push_to_discord.py",
+        old='        notice = f"📭 **会议** 频道：{date} 暂无新增投稿或评审变化"',
+        new='        notice = ""',
+        test=(
+            "tests/test_push_to_discord.py"
+            "::test_push_conference_no_files_sends_no_update_notice"
+        ),
+    ),
+    Probe(
+        # The AI briefing title may be model-truncated; the database title
+        # is authoritative and must win.
+        label="the database title wins over a truncated briefing title",
+        path="scripts/conference_digest.py",
+        old='                    title=str(summary.get("title") or paper["title"]),',
+        new='                    title=paper["title"],',
+        test=(
+            "tests/test_conference_digest.py"
+            "::test_database_title_overrides_truncated_briefing_title"
+        ),
+    ),
+    Probe(
+        # Reusing a complete sidecar is what keeps a second preview/push from
+        # spending another model call on unchanged briefings.
+        label="a complete one-liner sidecar is reused",
+        path="scripts/conference_digest.py",
+        old=('    if cached is not None and (cached.get("complete") or not generate):'),
+        new="    if False:",
+        test=("tests/test_conference_digest.py::test_sidecar_cache_is_reused"),
+    ),
+    Probe(
+        # A long digest line is wrapped explicitly so terminal rendering does
+        # not duplicate a wrapped line.
+        label="conference quote lines are wrapped at sixty characters",
+        path="scripts/conference_digest.py",
+        old="        for line in _wrap_text(paper.one_line, width=60):",
+        new="        for line in [paper.one_line]:",
+        test=(
+            "tests/test_conference_digest.py"
+            "::test_quote_lines_are_wrapped_at_sixty_chars"
+        ),
+    ),
 )
 
 

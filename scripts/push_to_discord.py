@@ -95,16 +95,33 @@ if not DISCORD_BOT_TOKEN or "your_" in DISCORD_BOT_TOKEN:
     log("❌ 错误：DISCORD_BOT_TOKEN 未设置或仍是占位符")
     exit(1)
 
+
+def _build_channel_map() -> dict[str, str]:
+    """Resolve channel IDs, with arxiv/conference sharing the AI-news channel."""
+
+    channels = {
+        category: get_channel_id(category)
+        for category in (
+            "papers",
+            "ai_news",
+            "code",
+            "resource",
+            "arxiv",
+            "conference",
+            "weekly",
+        )
+    }
+    if not channels.get("arxiv"):
+        channels["arxiv"] = channels.get("ai_news", "")
+    if not channels.get("conference"):
+        channels["conference"] = channels.get("ai_news", "")
+    return channels
+
+
 # Channel IDs are resolved per-category using the env-aware config module.
 # In dev/staging environments, the keys are suffixed (e.g. DISCORD_CHANNEL_PAPERS_DEV).
 # Missing entries cause that category to be skipped at push time, not a fatal error.
-DISCORD_CHANNELS = {
-    category: get_channel_id(category)
-    for category in ("papers", "ai_news", "code", "resource", "arxiv", "weekly")
-}
-# arxiv shares the ai_news Discord channel
-if not DISCORD_CHANNELS.get("arxiv"):
-    DISCORD_CHANNELS["arxiv"] = DISCORD_CHANNELS.get("ai_news")
+DISCORD_CHANNELS = _build_channel_map()
 
 log(
     f"环境: {CURRENT_ENV}  频道映射: { {k: (v or '(未配置)') for k, v in DISCORD_CHANNELS.items()} }"
@@ -810,6 +827,66 @@ def _cleanup_placeholder_files(filepaths):
             log(f"  ⚠️  清理 {os.path.basename(filepath)} 出错: {e}")
 
 
+def _archive_conference_files(files):
+    """Move delivered detailed briefings and their one-liner sidecars aside."""
+
+    destination_dir = PUSHED_DIR / "conference"
+    for source_path in files:
+        for candidate in (
+            source_path,
+            source_path.with_name(source_path.name + ".digest.json"),
+        ):
+            if not candidate.exists():
+                continue
+            try:
+                destination_dir.mkdir(parents=True, exist_ok=True)
+                destination = destination_dir / candidate.name
+                if destination.exists():
+                    candidate.unlink()
+                else:
+                    shutil.move(str(candidate), str(destination))
+            except OSError as exc:
+                log(f"  ⚠️  会议简报归档失败，保留 {candidate.name}: {exc}")
+
+
+def push_conference_category(channel_id, date=None, *, strict=False):
+    """Send one compact digest per conference source, never the detailed file."""
+
+    date = date or _today()
+    from conference_digest import build_digests, estimated_discord_messages
+
+    digests = build_digests(
+        date,
+        sources=_load_sources_by_category("conference"),
+        briefings_dir=BRIEFINGS_DIR / "conference",
+    )
+    if not digests:
+        notice = f"📭 **会议** 频道：{date} 暂无新增投稿或评审变化"
+        if not send_to_discord(channel_id, notice):
+            if strict:
+                raise RuntimeError(f"Discord conference notice failed for {date}")
+        return 0
+
+    delivered = 0
+    delivery_failed = False
+    for digest in digests:
+        log(
+            f"  会议速览 {digest.display_name}: {len(digest.papers)} 篇, "
+            f"{len(digest.content)} 字符, "
+            f"约 {estimated_discord_messages(digest.content)} 条消息"
+        )
+        if send_to_discord(channel_id, digest.content):
+            delivered += 1
+            _archive_conference_files(digest.files)
+        else:
+            delivery_failed = True
+            log(f"  ✗ {digest.display_name} 速览推送失败，详细简报保留原位")
+
+    if strict and delivery_failed:
+        raise RuntimeError(f"one or more conference digests failed for {date}")
+    return delivered
+
+
 def push_category(category, channel_id, date=None, *, strict=False):
     """Push every briefing for ``category`` whose filename contains ``date``.
 
@@ -820,6 +897,8 @@ def push_category(category, channel_id, date=None, *, strict=False):
             existing callers keep working; pass an older date to backfill.
     """
     date = date or _today()
+    if category == "conference":
+        return push_conference_category(channel_id, date, strict=strict)
     category_dir = os.path.join(BRIEFINGS_DIR, category)
 
     if not os.path.exists(category_dir):
@@ -953,8 +1032,16 @@ def _parse_date(value):
         ) from exc
 
 
-ALL_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv", "weekly"]
-DAILY_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv"]
+ALL_CATEGORIES = [
+    "papers",
+    "ai_news",
+    "code",
+    "resource",
+    "arxiv",
+    "conference",
+    "weekly",
+]
+DAILY_CATEGORIES = ["papers", "ai_news", "code", "resource", "arxiv", "conference"]
 
 
 def main(date=None, categories=None, force=False):
@@ -971,7 +1058,15 @@ def main(date=None, categories=None, force=False):
     publication_store = PublicationStore()
     delivery_store = DeliveryStateStore()
 
-    PUSH_ORDER = ["papers", "code", "resource", "ai_news", "arxiv", "weekly"]
+    PUSH_ORDER = [
+        "papers",
+        "code",
+        "resource",
+        "ai_news",
+        "arxiv",
+        "conference",
+        "weekly",
+    ]
     for category in PUSH_ORDER:
         if category not in active:
             continue
@@ -981,7 +1076,7 @@ def main(date=None, categories=None, force=False):
             skipped += 1
             continue
         log(f"推送到 #{category}...")
-        if category == "weekly":
+        if category in ("weekly", "conference"):
             try:
                 count = push_category(category, channel_id, date, strict=True)
                 delivered += count

@@ -231,9 +231,13 @@ def test_run_forwards_source_filters(cli_mod):
     assert "openreview_icml_2027" in last
 
 
-def test_conference_is_status_only_not_a_push_category(cli_mod):
+def test_conference_is_status_visible_and_a_daily_push_category(cli_mod):
+    import push_to_discord as pd
+
     assert "conference" not in cli_mod.CATEGORIES
     assert "conference" in cli_mod.STATUS_CATEGORIES
+    assert "conference" in pd.DAILY_CATEGORIES
+    assert "conference" in pd.ALL_CATEGORIES
 
 
 def test_push_invokes_push_script(cli_mod):
