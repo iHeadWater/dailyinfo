@@ -75,10 +75,15 @@ back to the model in `DAILYINFO_FALLBACK_MODEL` (default
 A missing `GLM_API_KEY` disables the fallback outright rather than retrying
 without credentials.
 
-Pipeline 6 is ingestion-only for now: it stores OpenReview submission metadata in
-`$DAILYINFO_DATA_ROOT/conference/conference.sqlite3` and writes a deterministic
-markdown listing to `briefings/conference/`. It does not call a model, rank
-relevance, fetch reviews, or push. Set `OPENREVIEW_EMAIL` and
+Pipeline 6 is ingestion-only for now: it stores OpenReview submission metadata and
+public replies in `$DAILYINFO_DATA_ROOT/conference/conference.sqlite3` and writes a
+deterministic markdown listing to `briefings/conference/`. It does not call a model,
+rank relevance, or push. Reviews are fetched in bulk with `details=replies`; only
+replies readable by `everyone` are stored. The first review run stores a one-time
+sample of the latest `reviews.sample_limit` submissions (default 50), then sets
+`reviews_watch_from_ms`; later incremental and weekly rescan passes never go before
+that cutoff. `reviews.max_pages_per_run` pauses with a resumable cursor and
+`reviews.request_interval_seconds` spaces requests. Set `OPENREVIEW_EMAIL` and
 `OPENREVIEW_PASSWORD` in `.env`; OpenReview authenticates by **email**, and
 anonymous note queries are rejected by its browser challenge. The legacy
 `OPENREVIEW_USERNAME` key is still read as a fallback. A source that is not

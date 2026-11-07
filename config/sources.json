@@ -12,10 +12,25 @@
       "watermark_overlap_hours": 48,
       "poll_interval_hours": 24,
       "full_rescan_interval_days": 7,
+      "max_pages_per_run": 100,
       "api_connect_timeout_seconds": 10,
       "api_read_timeout_seconds": 30,
       "api_rate_limit_retries": 1,
-      "api_rate_limit_max_wait_seconds": 90
+      "api_rate_limit_max_wait_seconds": 90,
+      "reviews": {
+        "enabled": true,
+        "sample_limit": 50,
+        "page_size": 200,
+        "request_interval_seconds": 1.0,
+        "max_pages_per_run": 100,
+        "rescan_interval_days": 7,
+        "rating_options": [],
+        "min_reviews_for_signal": 2,
+        "strong_threshold": 0.75,
+        "controversy_min_reviews": 3,
+        "controversy_std_threshold": 0.2,
+        "controversy_range_threshold": 0.4
+      }
     }
   },
   "prompt_templates": {
@@ -676,7 +691,10 @@
       "provider": "openreview",
       "venue_id": "ICLR.cc/2027/Conference",
       "url": "https://openreview.net/group?id=ICLR.cc%2F2027%2FConference",
-      "enabled": true
+      "enabled": true,
+      "reviews": {
+        "rating_options": ["1", "2", "3", "4"]
+      }
     },
     {
       "name": "openreview_icml_2027",

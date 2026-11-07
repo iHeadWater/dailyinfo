@@ -25,6 +25,7 @@ from conference_briefing import (
     render_briefing,
     write_briefing,
 )
+from conference_reviews import build_page_review_data
 from conference_store import ConferenceStore, SyncRun, VenueState
 from logsafe import one_line
 from openreview_provider import (
@@ -41,6 +42,7 @@ class SourceResult:
     source: str
     outcome: str
     new_papers: int = 0
+    new_replies: int = 0
     briefing_path: str | None = None
     message: str = ""
     fatal: bool = False
@@ -151,6 +153,71 @@ def _write_baseline(
     return str(path)
 
 
+def _merge_config(defaults: dict, source_cfg: dict) -> dict:
+    """Merge conference defaults with one source, keeping review defaults."""
+
+    base = defaults.get("conference_defaults", {}) or {}
+    cfg = {**base, **source_cfg}
+    cfg["reviews"] = {
+        **(base.get("reviews", {}) or {}),
+        **(source_cfg.get("reviews", {}) or {}),
+    }
+    return cfg
+
+
+def _reviews_enabled(reviews_cfg: dict) -> bool:
+    return bool(reviews_cfg.get("enabled", False))
+
+
+def _select_review_mode(
+    state: VenueState,
+    base_mode: str,
+    reviews_cfg: dict,
+    now_ms: int,
+) -> str:
+    """Pick the sample/rescan pass before the metadata pass."""
+
+    if not _reviews_enabled(reviews_cfg) or base_mode == "bootstrap":
+        return base_mode
+    sample_limit = int(reviews_cfg.get("sample_limit", 0) or 0)
+    if state.reviews_sample_completed_ms is None and sample_limit > 0:
+        return "review_sample"
+    # A due metadata full rescan must not be starved by a review rescan that
+    # shares the same interval; run it first, then review_rescan next time.
+    if base_mode == "full":
+        return base_mode
+    last_rescan = state.last_review_rescan_ms
+    interval_ms = (
+        max(0.0, float(reviews_cfg.get("rescan_interval_days", 7) or 0)) * 86_400_000
+    )
+    if last_rescan is None or now_ms - int(last_rescan) >= interval_ms:
+        return "review_rescan"
+    return base_mode
+
+
+def _review_min_cdate(
+    state: VenueState,
+    *,
+    mode: str,
+    watch_from_ms: int | None,
+    overlap_hours: float,
+) -> int | None:
+    if mode == "review_rescan":
+        return watch_from_ms
+    if mode == "incremental":
+        computed = _min_cdate(state, mode="incremental", overlap_hours=overlap_hours)
+        if watch_from_ms is not None:
+            # The streaming watermark can predate the review cutoff (the
+            # existing ICLR bootstrap ended in September).  Without this
+            # clamp, the first incremental review run would pull the entire
+            # deadline week again.
+            return (
+                max(watch_from_ms, computed) if computed is not None else watch_from_ms
+            )
+        return computed
+    return None
+
+
 def sync_source(
     *,
     source_cfg: dict,
@@ -164,7 +231,8 @@ def sync_source(
 ) -> SourceResult:
     """Ingest one OpenReview source with resumable, loss-free pagination."""
 
-    cfg = {**defaults.get("conference_defaults", {}), **source_cfg}
+    cfg = _merge_config(defaults, source_cfg)
+    reviews_cfg = cfg.get("reviews", {})
     source = str(cfg.get("name") or "").strip()
     venue_id = str(cfg.get("venue_id") or "").strip()
     display_name = str(cfg.get("display_name") or source)
@@ -180,6 +248,9 @@ def sync_source(
     store.ensure_venue(source, venue_id)
     state = store.venue_state(source)
     assert state is not None
+    watch_from = None
+    if _reviews_enabled(reviews_cfg):
+        watch_from = store.ensure_reviews_watch_from(source, now_ms)
 
     if not force and _not_due(
         state,
@@ -207,22 +278,52 @@ def sync_source(
             message=message,
         )
 
-    mode = _select_mode(
+    base_mode = _select_mode(
         state,
         full_rescan_interval_days=float(cfg.get("full_rescan_interval_days", 7)),
         now_ms=now_ms,
     )
-    page_size = max(1, min(int(cfg.get("page_size", 1000) or 1000), 1000))
+    mode = _select_review_mode(state, base_mode, reviews_cfg, now_ms)
+    include_replies = _reviews_enabled(reviews_cfg) and mode in {
+        "incremental",
+        "review_rescan",
+        "review_sample",
+    }
+    sample_limit = int(reviews_cfg.get("sample_limit", 0) or 0)
+    if mode == "review_sample":
+        page_size = max(1, min(sample_limit, 1000))
+    elif include_replies:
+        page_size = max(1, min(int(reviews_cfg.get("page_size", 200) or 200), 1000))
+    else:
+        page_size = max(1, min(int(cfg.get("page_size", 1000) or 1000), 1000))
+    min_cdate = _review_min_cdate(
+        state,
+        mode=mode,
+        watch_from_ms=watch_from,
+        overlap_hours=float(cfg.get("watermark_overlap_hours", 48)),
+    )
+    sort = "cdate" if mode == "review_sample" else "id"
+    max_pages: int | None = None
+    if mode != "review_sample":
+        # Cap metadata scans too: a shifting API window must not loop forever.
+        if include_replies:
+            configured = int(
+                reviews_cfg.get("max_pages_per_run", cfg.get("max_pages_per_run", 100))
+                or 0
+            )
+        else:
+            configured = int(cfg.get("max_pages_per_run", 100) or 0)
+        max_pages = configured if configured > 0 else None
+    interval = (
+        max(0.0, float(reviews_cfg.get("request_interval_seconds", 0) or 0))
+        if include_replies
+        else 0.0
+    )
     run: SyncRun | None = None
 
     try:
         capabilities = provider.discover_venue()
         store.ensure_venue(source, venue_id, capabilities.submission_invitation)
-        min_cdate = _min_cdate(
-            state,
-            mode=mode,
-            overlap_hours=float(cfg.get("watermark_overlap_hours", 48)),
-        )
         config_hash = _config_hash(
             capabilities=capabilities,
             mode=mode,
@@ -239,29 +340,76 @@ def sync_source(
         )
 
         new_count = 0
+        new_replies = 0
         total = run.total_expected
-        for page in provider.iter_submission_pages(
+        pages = 0
+        paused = False
+        iterator = provider.iter_submission_pages(
             capabilities,
             min_cdate=min_cdate,
             after_id=run.cursor_after,
             page_size=page_size,
             total_hint=run.total_expected,
-        ):
+            include_replies=include_replies,
+            sort=sort,
+        )
+        page = next(iterator, None)
+        while page is not None:
+            pages += 1
             candidate = max(
                 (int(paper.get("cdate") or 0) for paper in page.papers),
                 default=None,
             )
-            new_count += store.commit_page(
+            reply_rows: list[dict] = []
+            summaries: list[dict] = []
+            if include_replies and page.replies:
+                reply_rows, summaries = build_page_review_data(
+                    page.replies, capabilities, cfg
+                )
+            committed = store.commit_page(
                 run_id=run.run_id,
                 papers=page.papers,
+                replies=reply_rows,
+                summaries=summaries,
                 cursor_after=page.cursor_after,
                 candidate_watermark_ms=candidate,
                 total_expected=page.total,
                 raw_count=page.raw_count,
                 now_ms=now_ms,
             )
+            new_count += committed.new_papers
+            new_replies += committed.new_replies
             if page.total is not None:
                 total = page.total
+
+            if mode == "review_sample":
+                # The sample is exactly the latest N submissions; a second
+                # page would silently turn it into a longer backfill.
+                break
+            if max_pages is not None and pages >= max_pages:
+                paused = True
+                break
+            if interval:
+                time.sleep(interval)
+            page = next(iterator, None)
+
+        if paused:
+            store.pause_run(
+                run.run_id,
+                f"max_pages_per_run={max_pages}",
+                now_ms=now_ms,
+            )
+            message = (
+                f"{mode}: paused after {pages} pages, "
+                f"{new_count} new papers, {new_replies} new replies"
+            )
+            return SourceResult(
+                source=source,
+                outcome="PAUSED",
+                new_papers=new_count,
+                new_replies=new_replies,
+                message=message,
+            )
 
         if mode == "bootstrap":
             # Written before finish_run: if the baseline cannot be written,
@@ -290,7 +438,8 @@ def sync_source(
             flushed = None
             briefing_error = one_line(str(exc), _secret())
         message = (
-            f"{mode}: {new_count} new, " f"{total if total is not None else '?'} total"
+            f"{mode}: {new_count} new papers, {new_replies} new replies, "
+            f"{total if total is not None else '?'} total"
         )
         if briefing_error:
             message = f"{message}; briefing failed: {briefing_error}"
@@ -298,6 +447,7 @@ def sync_source(
             source=source,
             outcome="SUCCESS" if not briefing_error else "SUCCESS_BRIEFING_FAILED",
             new_papers=new_count,
+            new_replies=new_replies,
             briefing_path=flushed,
             message=message,
         )
@@ -313,7 +463,10 @@ def sync_source(
                 date=date,
             )
         except Exception as flush_exc:
-            message = f"{message}; pending briefing failed: {one_line(str(flush_exc), _secret())}"
+            message = (
+                f"{message}; pending briefing failed: "
+                f"{one_line(str(flush_exc), _secret())}"
+            )
             flushed = None
         return SourceResult(
             source=source,

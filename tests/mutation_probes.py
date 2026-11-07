@@ -1027,6 +1027,31 @@ PROBES: tuple[Probe, ...] = (
             "::test_failed_page_does_not_advance_watermark_and_resumes"
         ),
     ),
+    Probe(
+        # A reply without readers must not be stored.  Deleting the gate would
+        # let private reviews into the local record and any later briefing.
+        label="a private review reply is not stored",
+        path="scripts/conference_reviews.py",
+        old="        if not reply_is_public(reply):\n            continue",
+        new="        if False:\n            continue",
+        test=("tests/test_conference_reviews.py::test_private_reply_is_not_stored"),
+    ),
+    Probe(
+        # The streaming watermark can predate the review cutoff; without the
+        # clamp the first incremental run re-reads the historical deadline
+        # week.
+        label="incremental reviews stop at the watch_from cutoff",
+        path="scripts/conference_sync.py",
+        old=(
+            "                max(watch_from_ms, computed) if computed is not None "
+            "else watch_from_ms"
+        ),
+        new="                computed",
+        test=(
+            "tests/test_conference_sync.py"
+            "::test_incremental_reviews_never_reach_before_watch_from"
+        ),
+    ),
 )
 
 

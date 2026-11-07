@@ -13,14 +13,14 @@ this module so the ingestion path stays small and auditable.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import wraps
 import os
 import random
 import time
-from typing import Any
-
+from typing import Any, Iterable
+from urllib.parse import urlparse
 
 from paths import _read_env_value
 
@@ -55,6 +55,7 @@ class SubmissionPage:
     total: int | None
     page_number: int
     raw_count: int = 0
+    replies: list[dict] = field(default_factory=list)
 
 
 def classify_openreview_error(exc: Exception) -> str:
@@ -143,6 +144,27 @@ def note_is_public(note: Any) -> bool:
     return "everyone" in readers
 
 
+def reply_is_public(reply: Any) -> bool:
+    """Fail closed: a reply without ``readers`` is not public."""
+
+    return "everyone" in _as_list(_attr(reply, "readers", []))
+
+
+def invitation_matches(reply: dict, suffixes: Iterable[str]) -> bool:
+    """Return whether any of a reply's invitation tails is in ``suffixes``."""
+
+    normalized = {
+        str(suffix).lower().replace(" ", "_").lstrip("-/")
+        for suffix in suffixes
+        if suffix
+    }
+    for invitation in reply.get("invitations", []):
+        tail = str(invitation).rsplit("/", 1)[-1].lower().replace(" ", "_")
+        if tail in normalized:
+            return True
+    return False
+
+
 def _field_is_public(field: Any) -> bool:
     if not isinstance(field, dict):
         return True
@@ -202,6 +224,11 @@ class VenueCapabilities:
     withdrawn_venue_id: str = ""
     desk_rejected_venue_id: str = ""
     rejected_venue_id: str = ""
+    review_name: str = "Official_Review"
+    meta_review_name: str = "Meta_Review"
+    decision_name: str = "Decision"
+    rebuttal_name: str = "Rebuttal"
+    decision_field_name: str = "decision"
 
 
 class OpenReviewProvider:
@@ -217,10 +244,12 @@ class OpenReviewProvider:
         self.venue_id = str(config.get("venue_id", "")).strip()
         if not self.venue_id:
             raise OpenReviewConfigError("venue_id is required")
-        self.baseurl = config.get(
-            "baseurl",
-            _load_env_value("OPENREVIEW_API_BASEURL_V2")
-            or "https://api2.openreview.net",
+        self.baseurl = self._validated_baseurl(
+            config.get(
+                "baseurl",
+                _load_env_value("OPENREVIEW_API_BASEURL_V2")
+                or "https://api2.openreview.net",
+            )
         )
         self.public_only = bool(config.get("public_only", True))
         if not self.public_only:
@@ -236,6 +265,31 @@ class OpenReviewProvider:
             self._authenticated = bool(
                 getattr(client, "_dailyinfo_authenticated", False)
             )
+
+    @staticmethod
+    def _validated_baseurl(value: Any) -> str:
+        """Only send credentials to an HTTPS OpenReview host.
+
+        ``baseurl`` is configurable per source and through an env var; without
+        this check a typo or a malicious config could POST the login form to
+        an arbitrary host.
+        """
+
+        raw = str(value or "").strip()
+        parsed = urlparse(raw)
+        host = (parsed.hostname or "").casefold().rstrip(".")
+        if (
+            parsed.scheme != "https"
+            or not host
+            or (host != "openreview.net" and not host.endswith(".openreview.net"))
+            or parsed.username
+            or parsed.password
+            or parsed.path not in ("", "/")
+        ):
+            raise OpenReviewConfigError(
+                "OpenReview baseurl must be an https URL on openreview.net"
+            )
+        return raw.rstrip("/")
 
     def _api_timeout(self) -> tuple[float, float]:
         """Return the connect/read timeout used for every API request."""
@@ -370,10 +424,10 @@ class OpenReviewProvider:
                     return
 
     def _visible(self, note: Any) -> bool:
-        # A guest client cannot receive private notes.  An authenticated client
-        # must prove public visibility explicitly before content can leave this
-        # provider.
-        return not (self._authenticated and self.public_only) or note_is_public(note)
+        # Fail closed for every client, including injected/fake clients whose
+        # authentication state is unknown: a note without an explicit
+        # ``everyone`` reader never leaves this provider.
+        return not self.public_only or note_is_public(note)
 
     def discover_venue(self) -> VenueCapabilities:
         group = self.client.get_group(self.venue_id)
@@ -411,6 +465,15 @@ class OpenReviewProvider:
             rejected_venue_id=str(
                 content_value(content, "rejected_venue_id", "") or ""
             ),
+            review_name=str(content_value(content, "review_name", "Official_Review")),
+            meta_review_name=str(
+                content_value(content, "meta_review_name", "Meta_Review")
+            ),
+            decision_name=str(content_value(content, "decision_name", "Decision")),
+            rebuttal_name=str(content_value(content, "rebuttal_name", "Rebuttal")),
+            decision_field_name=str(
+                content_value(content, "decision_field_name", "decision")
+            ),
         )
 
     def fetch_submissions(
@@ -429,6 +492,9 @@ class OpenReviewProvider:
         after_id: str | None = None,
         page_size: int = 1000,
         total_hint: int | None = None,
+        include_replies: bool = False,
+        sort: str = "id",
+        max_pages: int | None = None,
     ):
         """Yield explicit pages so callers can checkpoint the ``after`` cursor.
 
@@ -438,20 +504,27 @@ class OpenReviewProvider:
         """
 
         if not hasattr(self.client, "get_notes"):
+            if include_replies:
+                raise OpenReviewProviderError(
+                    "client does not support paginated reply fetching; "
+                    "refusing to load every submission and reply at once"
+                )
             kwargs: dict[str, Any] = {"invitation": capabilities.submission_invitation}
             if min_cdate is not None:
                 kwargs["mintcdate"] = int(min_cdate)
+            if include_replies:
+                kwargs["details"] = "replies"
             notes = self.client.get_all_notes(**kwargs)
+            visible = [note for note in notes if self._visible(note)]
             yield SubmissionPage(
                 papers=[
-                    self.normalize_submission(note, capabilities)
-                    for note in notes
-                    if self._visible(note)
+                    self.normalize_submission(note, capabilities) for note in visible
                 ],
                 cursor_after=None,
                 total=len(notes),
                 page_number=1,
                 raw_count=len(notes),
+                replies=self._page_replies(visible),
             )
             return
 
@@ -463,12 +536,14 @@ class OpenReviewProvider:
             kwargs: dict[str, Any] = {
                 "invitation": capabilities.submission_invitation,
                 "limit": page_size,
-                "sort": "id",
+                "sort": sort,
             }
             if cursor:
                 kwargs["after"] = cursor
             if min_cdate is not None:
                 kwargs["mintcdate"] = int(min_cdate)
+            if include_replies:
+                kwargs["details"] = "replies"
             if total is None:
                 kwargs["with_count"] = True
                 notes, total = self.client.get_notes(**kwargs)
@@ -482,21 +557,50 @@ class OpenReviewProvider:
                 raise OpenReviewProviderError(
                     "OpenReview pagination cursor did not advance"
                 )
+            visible = [note for note in notes if self._visible(note)]
             yield SubmissionPage(
                 papers=[
-                    self.normalize_submission(note, capabilities)
-                    for note in notes
-                    if self._visible(note)
+                    self.normalize_submission(note, capabilities) for note in visible
                 ],
                 cursor_after=last_id,
                 total=total,
                 page_number=page_number,
                 raw_count=len(notes),
+                replies=self._page_replies(visible),
             )
+            if max_pages is not None and page_number >= max_pages:
+                return
             cursor = last_id
 
+    def _page_replies(self, notes: list) -> list[dict]:
+        """Extract public replies from ``details=replies`` on visible notes."""
+
+        replies: list[dict] = []
+        for note in notes:
+            details = _attr(note, "details", None) or {}
+            for reply in details.get("replies") or []:
+                if not reply_is_public(reply):
+                    continue
+                replies.append(self.normalize_reply(reply))
+        return replies
+
+    def normalize_reply(self, reply: Any) -> dict:
+        content = public_content(reply, enforce=self.public_only)
+        reply_id = str(_attr(reply, "id", "") or "")
+        return {
+            "id": reply_id,
+            "reply_id": reply_id,
+            "forum_id": str(_attr(reply, "forum", "") or ""),
+            "replyto": str(_attr(reply, "replyto", "") or ""),
+            "invitations": [str(x) for x in _as_list(_attr(reply, "invitations", []))],
+            "readers": [str(x) for x in _as_list(_attr(reply, "readers", []))],
+            "content": content,
+            "cdate": int(_attr(reply, "cdate", 0) or 0),
+            "mdate": int(_attr(reply, "tmdate", 0) or _attr(reply, "mdate", 0) or 0),
+        }
+
     def normalize_submission(self, note: Any, capabilities: VenueCapabilities) -> dict:
-        content = public_content(note, enforce=self._authenticated and self.public_only)
+        content = public_content(note, enforce=self.public_only)
         note_id = str(_attr(note, "id", "") or "")
         forum_id = str(_attr(note, "forum", "") or note_id)
         venue_id = str(content_value(content, "venueid", "") or "")

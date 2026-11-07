@@ -89,13 +89,15 @@ uv run mkdocs serve              # Local preview
 
 Each pipeline is independent — a failure in one does not affect the others. Common processing logic (fetch → batch → AI → merge → save) is shared via `_process_regular_source()`.
 
-Pipeline 6 is deliberately different: it ingests **submission metadata only** into `$DAILYINFO_DATA_ROOT/conference/conference.sqlite3`, writes a **deterministic markdown listing** (no AI, no relevance ranking) to `briefings/conference/`, and does not push. It does not use `DataSource`/`Item`/the canonical `PublicationStore`; `conference_sync.py` paginates OpenReview and commits each page with its cursor in one transaction, advancing the source watermark only after a complete scan.
+Pipeline 6 is deliberately different: it ingests **submission metadata and public replies** into `$DAILYINFO_DATA_ROOT/conference/conference.sqlite3`, writes a **deterministic markdown listing** (no AI, no relevance ranking) to `briefings/conference/`, and does not push. It does not use `DataSource`/`Item`/the canonical `PublicationStore`; `conference_sync.py` paginates OpenReview and commits each page with its cursor in one transaction, advancing the source watermark only after a complete scan.
+
+Reviews use `details=replies` on the same submission page (no per-forum requests). Only replies whose `readers` contain `everyone` are stored, in the `reviews` table plus a derived `paper_review_summary`. The first review run stores a one-time sample of the latest `reviews.sample_limit` submissions (default 50) and then sets `reviews_watch_from_ms`; subsequent incremental and weekly rescan passes use that cutoff, so historical reviews before it are never backfilled. `reviews.max_pages_per_run` pauses a run with a resumable cursor, and `reviews.request_interval_seconds` spaces page requests.
 
 ### Data Flow
 
 1. **Collection**: FreshRSS for RSS; `datasource.py` handles scraping/API; `openreview_provider.py` + `conference_sync.py` handle conference submissions
 2. **Processing** (`run_pipelines.py`): Fetch -> format -> call DeepSeek AI with prompt templates -> save markdown to `~/.myagentdata/dailyinfo/briefings/{category}/`
-3. **Conference store** (`conference_store.py`): SQLite is the durable record and queue; briefings are rendered from pending rows, never from a model
+3. **Conference store** (`conference_store.py`): SQLite is the durable record and queue; briefings are rendered from pending rows, never from a model; public replies are stored in `reviews` with a per-paper `paper_review_summary`
 4. **Push** (`push_to_discord.py`): Scan briefings -> POST to Discord channels -> move to `pushed/{category}/`
 
 ### DataSource Class Hierarchy

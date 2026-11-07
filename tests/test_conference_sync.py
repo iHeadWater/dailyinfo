@@ -78,6 +78,7 @@ class FakeProvider:
         after_id=None,
         page_size=1000,
         total_hint=None,
+        **kwargs,
     ):
         self.page_calls.append(
             {
@@ -85,15 +86,23 @@ class FakeProvider:
                 "after_id": after_id,
                 "page_size": page_size,
                 "total_hint": total_hint,
+                **kwargs,
             }
         )
         yield from self.pages
 
 
 def _sync(
-    tmp_path, provider, *, now_ms=10_000, force=True, defaults=None, date="2026-11-07"
+    tmp_path,
+    provider,
+    *,
+    now_ms=10_000,
+    force=True,
+    defaults=None,
+    date="2026-11-07",
+    store=None,
 ):
-    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    store = store or ConferenceStore(tmp_path / "conference.sqlite3")
     result = sync_source(
         source_cfg=SOURCE,
         defaults=defaults or DEFAULTS,
@@ -340,4 +349,427 @@ def test_unknown_source_config_is_fatal(tmp_path):
 
     assert result.fatal is True
     assert result.outcome == "INVALID_CONFIG"
+    store.close()
+
+
+REVIEW_DEFAULTS = {
+    "conference_defaults": {
+        **DEFAULTS["conference_defaults"],
+        "reviews": {
+            "enabled": True,
+            "sample_limit": 2,
+            "page_size": 2,
+            "request_interval_seconds": 0,
+            "max_pages_per_run": 100,
+            "rescan_interval_days": 7,
+            "rating_options": ["1", "2", "3", "4"],
+            "min_reviews_for_signal": 1,
+        },
+    }
+}
+
+
+def _reply(index: int, forum_id: str, *, readers=("everyone",), rating="4"):
+    return {
+        "id": f"reply-{index}",
+        "reply_id": f"reply-{index}",
+        "forum_id": forum_id,
+        "invitations": ["ICLR.cc/2027/Conference/Submission1/-/Official_Review"],
+        "readers": list(readers),
+        "content": {
+            "rating": {"value": rating},
+            "confidence": {"value": "3"},
+            "paper_summary": {"value": f"summary {index}"},
+        },
+        "cdate": 1_000 + index,
+        "mdate": 1_000 + index,
+    }
+
+
+def _page_with_replies(papers, replies, cursor, total=None, number=1):
+    return SubmissionPage(
+        papers=papers,
+        cursor_after=cursor,
+        total=total,
+        page_number=number,
+        raw_count=len(papers),
+        replies=replies,
+    )
+
+
+def _bootstrap(store, tmp_path, *, now_ms=10_000):
+    provider = FakeProvider([_page([_paper(1, 11_000)], "forum-1", total=1)])
+    return _sync(
+        tmp_path,
+        provider,
+        now_ms=now_ms,
+        defaults=DEFAULTS,
+        store=store,
+    )
+
+
+def _sample(store, tmp_path, *, now_ms=20_000, defaults=None):
+    provider = FakeProvider(
+        [
+            _page_with_replies(
+                [_paper(1, 11_000)],
+                [_reply(1, "forum-1"), _reply(2, "forum-1")],
+                "forum-1",
+                total=1,
+            )
+        ]
+    )
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults or REVIEW_DEFAULTS,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=now_ms,
+        force=True,
+    )
+    return provider, result
+
+
+def test_review_sample_uses_latest_n_and_marks_completed(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    _bootstrap(store, tmp_path)
+
+    provider, result = _sample(store, tmp_path)
+
+    assert result.outcome == "SUCCESS"
+    assert result.new_replies == 2
+    call = provider.page_calls[0]
+    assert call["sort"] == "cdate"
+    assert call["min_cdate"] is None
+    assert call["page_size"] == 2
+    assert call["include_replies"] is True
+    state = store.venue_state("iclr")
+    assert state.reviews_sample_completed_ms == 20_000
+    assert store.conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 2
+    store.close()
+
+
+def test_review_sample_does_not_repeat(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    _bootstrap(store, tmp_path)
+    _sample(store, tmp_path)
+    sample_completed = store.venue_state("iclr").reviews_sample_completed_ms
+
+    provider = FakeProvider([])
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=REVIEW_DEFAULTS,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-08",
+        now_ms=20_000 + 86_400_000,
+        force=True,
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert provider.page_calls[0]["sort"] == "id"
+    assert provider.page_calls[0]["include_replies"] is True
+    assert store.venue_state("iclr").reviews_sample_completed_ms == sample_completed
+    store.close()
+
+
+def test_review_rescan_uses_watch_from_cutoff(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    _bootstrap(store, tmp_path)
+    _sample(store, tmp_path)
+    watch_from = store.venue_state("iclr").reviews_watch_from_ms
+
+    defaults = {
+        "conference_defaults": {
+            **REVIEW_DEFAULTS["conference_defaults"],
+            "reviews": {
+                **REVIEW_DEFAULTS["conference_defaults"]["reviews"],
+                "rescan_interval_days": 0,
+            },
+        }
+    }
+    provider = FakeProvider([])
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-08",
+        now_ms=20_000 + 1_000,
+        force=True,
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert provider.page_calls[0]["min_cdate"] == watch_from
+    assert store.venue_state("iclr").last_review_rescan_ms is not None
+    store.close()
+
+
+class PagedProvider(FakeProvider):
+    def __init__(self, pages_by_after):
+        super().__init__([])
+        self.pages_by_after = pages_by_after
+        self.sequence = [None, "forum-2"]
+
+    def iter_submission_pages(self, capabilities, after_id=None, **kwargs):
+        self.page_calls.append({"after_id": after_id, **kwargs})
+        keys = [None, "forum-2"] if after_id is None else [after_id]
+        for key in keys:
+            page = self.pages_by_after.get(key)
+            if page is not None:
+                yield page
+
+
+def test_max_pages_pauses_and_next_run_resumes_cursor(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    _bootstrap(store, tmp_path)
+    _sample(store, tmp_path)
+    defaults = {
+        "conference_defaults": {
+            **REVIEW_DEFAULTS["conference_defaults"],
+            "reviews": {
+                **REVIEW_DEFAULTS["conference_defaults"]["reviews"],
+                "rescan_interval_days": 0,
+                "max_pages_per_run": 1,
+            },
+        }
+    }
+    provider = PagedProvider(
+        {
+            None: _page_with_replies(
+                [_paper(2, 12_000)],
+                [_reply(3, "forum-2")],
+                "forum-2",
+                total=2,
+            ),
+            "forum-2": _page_with_replies(
+                [_paper(3, 13_000)],
+                [_reply(4, "forum-3")],
+                "forum-3",
+                total=2,
+            ),
+        }
+    )
+
+    first = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-08",
+        now_ms=20_000 + 1_000,
+        force=True,
+    )
+
+    assert first.outcome == "PAUSED"
+    run = store.last_run("iclr")
+    assert run.status == "RUNNING"
+    assert run.cursor_after == "forum-2"
+    assert store.venue_state("iclr").watermark_ms == 11_000
+    assert store.conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 3
+
+    resume_defaults = {
+        "conference_defaults": {
+            **defaults["conference_defaults"],
+            "reviews": {
+                **defaults["conference_defaults"]["reviews"],
+                "max_pages_per_run": 2,
+            },
+        }
+    }
+    second = sync_source(
+        source_cfg=SOURCE,
+        defaults=resume_defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-08",
+        now_ms=20_000 + 2_000,
+        force=True,
+    )
+
+    assert second.outcome == "SUCCESS"
+    assert provider.page_calls[-1]["after_id"] == "forum-2"
+    assert store.venue_state("iclr").watermark_ms == 13_000
+    assert store.conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 4
+    store.close()
+
+
+def test_request_interval_between_review_pages(tmp_path, monkeypatch):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    _bootstrap(store, tmp_path)
+    _sample(store, tmp_path)
+    defaults = {
+        "conference_defaults": {
+            **REVIEW_DEFAULTS["conference_defaults"],
+            "reviews": {
+                **REVIEW_DEFAULTS["conference_defaults"]["reviews"],
+                "rescan_interval_days": 0,
+                "request_interval_seconds": 0.5,
+            },
+        }
+    }
+    provider = PagedProvider(
+        {
+            None: _page_with_replies(
+                [_paper(2, 12_000)],
+                [_reply(3, "forum-2")],
+                "forum-2",
+                total=2,
+            ),
+            "forum-2": _page_with_replies(
+                [_paper(3, 13_000)],
+                [_reply(4, "forum-3")],
+                "forum-3",
+                total=2,
+            ),
+        }
+    )
+    waits = []
+    monkeypatch.setattr("conference_sync.time.sleep", waits.append)
+
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-08",
+        now_ms=20_000 + 1_000,
+        force=True,
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert waits == [0.5, 0.5]
+    store.close()
+
+
+def test_incremental_reviews_never_reach_before_watch_from(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    _bootstrap(store, tmp_path)
+    _sample(store, tmp_path)
+    watch_from = store.venue_state("iclr").reviews_watch_from_ms
+
+    provider = FakeProvider([])
+    result = sync_source(
+        source_cfg=SOURCE,
+        defaults=REVIEW_DEFAULTS,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-08",
+        now_ms=20_000 + 86_400_000,
+        force=True,
+    )
+
+    assert result.outcome == "SUCCESS"
+    assert provider.page_calls[0]["min_cdate"] == watch_from
+    store.close()
+
+
+def test_full_rescan_is_not_starved_by_review_rescan(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    _bootstrap(store, tmp_path)
+    _sample(store, tmp_path, now_ms=100_000_000)
+    defaults = {
+        "conference_defaults": {
+            **REVIEW_DEFAULTS["conference_defaults"],
+            "full_rescan_interval_days": 1,
+            "reviews": {
+                **REVIEW_DEFAULTS["conference_defaults"]["reviews"],
+                "rescan_interval_days": 0,
+            },
+        }
+    }
+    provider = FakeProvider([])
+
+    first = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-08",
+        now_ms=100_000_001,
+        force=True,
+    )
+    assert first.outcome == "SUCCESS"
+    assert store.last_run("iclr").mode == "full"
+
+    second = sync_source(
+        source_cfg=SOURCE,
+        defaults=defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-08",
+        now_ms=100_000_002,
+        force=True,
+    )
+    assert second.outcome == "SUCCESS"
+    assert store.last_run("iclr").mode == "review_rescan"
+    store.close()
+
+
+def test_bootstrap_page_cap_pauses_and_resumes(tmp_path):
+    store = ConferenceStore(tmp_path / "conference.sqlite3")
+    capped = {
+        "conference_defaults": {
+            **DEFAULTS["conference_defaults"],
+            "max_pages_per_run": 1,
+        }
+    }
+    provider = PagedProvider(
+        {
+            None: _page([_paper(1, 11_000)], "forum-1", total=2),
+            "forum-1": _page([_paper(2, 12_000)], "forum-2", total=2),
+        }
+    )
+    provider.sequence = [None, "forum-1"]
+
+    first = sync_source(
+        source_cfg=SOURCE,
+        defaults=capped,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=10_000,
+        force=True,
+    )
+
+    assert first.outcome == "PAUSED"
+    run = store.last_run("iclr")
+    assert run.mode == "bootstrap"
+    assert run.cursor_after == "forum-1"
+    assert store.venue_state("iclr").bootstrap_completed_ms is None
+
+    resume_defaults = {
+        "conference_defaults": {
+            **DEFAULTS["conference_defaults"],
+            "max_pages_per_run": 2,
+        }
+    }
+    second = sync_source(
+        source_cfg=SOURCE,
+        defaults=resume_defaults,
+        store=store,
+        provider=provider,
+        briefings_dir=tmp_path / "briefings",
+        date="2026-11-07",
+        now_ms=20_000,
+        force=True,
+    )
+
+    assert second.outcome == "SUCCESS"
+    assert provider.page_calls[-1]["after_id"] == "forum-1"
+    assert store.venue_state("iclr").bootstrap_completed_ms == 20_000
+    assert (
+        tmp_path / "briefings" / "conference" / "iclr_baseline_2026-11-07.md"
+    ).exists()
     store.close()

@@ -37,7 +37,7 @@ def test_only_the_three_openreview_venues_are_configured():
 
 
 def test_conference_config_does_not_carry_the_deferred_features():
-    forbidden = {"filters", "retrieval", "reviews", "figures", "prompt_template"}
+    forbidden = {"filters", "retrieval", "figures", "prompt_template"}
     for source in _conference_sources():
         assert not forbidden & source.keys(), source["name"]
 
@@ -49,3 +49,10 @@ def test_conference_defaults_are_present():
     assert defaults["page_size"] == 1000
     assert defaults["full_rescan_interval_days"] >= 1
     assert defaults["watermark_overlap_hours"] >= 0
+    assert defaults["max_pages_per_run"] > 0
+    reviews = defaults["reviews"]
+    assert reviews["enabled"] is True
+    assert reviews["sample_limit"] == 50
+    assert reviews["page_size"] <= 1000
+    assert reviews["request_interval_seconds"] > 0
+    assert reviews["max_pages_per_run"] > 0

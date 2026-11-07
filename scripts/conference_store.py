@@ -21,7 +21,7 @@ import time
 import uuid
 from typing import Any, Iterable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 # A RUNNING row whose heartbeat is older than this is assumed dead.  The sync
 # layer resumes from its committed cursor instead of starting over.
 STALE_RUN_MS = 5 * 60 * 1000
@@ -45,8 +45,19 @@ class VenueState:
     last_full_sync_ms: int | None
     watermark_ms: int | None
     bootstrap_completed_ms: int | None
+    reviews_watch_from_ms: int | None
+    last_review_rescan_ms: int | None
+    reviews_sample_completed_ms: int | None
     last_outcome: str
     last_message: str
+
+
+@dataclass(frozen=True)
+class PageCommit:
+    """What one page added, so the sync layer can log and resume."""
+
+    new_papers: int
+    new_replies: int
 
 
 @dataclass(frozen=True)
@@ -61,6 +72,7 @@ class SyncRun:
     cursor_after: str | None
     watermark_candidate_ms: int | None
     total_expected: int | None
+    new_replies: int
     started_ms: int
     heartbeat_ms: int
 
@@ -106,6 +118,9 @@ class ConferenceStore:
                     last_full_sync_ms INTEGER,
                     watermark_ms INTEGER,
                     bootstrap_completed_ms INTEGER,
+                    reviews_watch_from_ms INTEGER,
+                    last_review_rescan_ms INTEGER,
+                    reviews_sample_completed_ms INTEGER,
                     last_outcome TEXT NOT NULL DEFAULT '',
                     last_message TEXT NOT NULL DEFAULT ''
                 );
@@ -132,6 +147,52 @@ class ConferenceStore:
                     briefed_date TEXT,
                     PRIMARY KEY (source, forum_id)
                 );
+                CREATE TABLE IF NOT EXISTS reviews (
+                    source TEXT NOT NULL,
+                    reply_id TEXT NOT NULL,
+                    forum_id TEXT NOT NULL,
+                    invitation TEXT NOT NULL DEFAULT '',
+                    reply_type TEXT NOT NULL DEFAULT 'other',
+                    rating TEXT NOT NULL DEFAULT '',
+                    confidence TEXT NOT NULL DEFAULT '',
+                    soundness TEXT NOT NULL DEFAULT '',
+                    presentation TEXT NOT NULL DEFAULT '',
+                    informativeness TEXT NOT NULL DEFAULT '',
+                    summary TEXT NOT NULL DEFAULT '',
+                    strengths TEXT NOT NULL DEFAULT '',
+                    weaknesses TEXT NOT NULL DEFAULT '',
+                    questions TEXT NOT NULL DEFAULT '',
+                    decision TEXT NOT NULL DEFAULT '',
+                    raw_json TEXT NOT NULL DEFAULT '{}',
+                    content_hash TEXT NOT NULL DEFAULT '',
+                    reply_cdate INTEGER NOT NULL DEFAULT 0,
+                    reply_mdate INTEGER NOT NULL DEFAULT 0,
+                    first_seen_ms INTEGER NOT NULL,
+                    first_seen_run TEXT NOT NULL,
+                    last_seen_ms INTEGER NOT NULL,
+                    PRIMARY KEY (source, reply_id)
+                );
+                CREATE TABLE IF NOT EXISTS paper_review_summary (
+                    source TEXT NOT NULL,
+                    forum_id TEXT NOT NULL,
+                    review_count INTEGER NOT NULL DEFAULT 0,
+                    rating_count INTEGER NOT NULL DEFAULT 0,
+                    rating_mean REAL,
+                    rating_median REAL,
+                    rating_std REAL,
+                    rating_min REAL,
+                    rating_max REAL,
+                    rating_range REAL,
+                    confidence_mean REAL,
+                    rating_raw_values_json TEXT NOT NULL DEFAULT '[]',
+                    confidence_raw_values_json TEXT NOT NULL DEFAULT '[]',
+                    decision TEXT NOT NULL DEFAULT '',
+                    presentation TEXT NOT NULL DEFAULT '',
+                    strong_signal INTEGER NOT NULL DEFAULT 0,
+                    controversial INTEGER NOT NULL DEFAULT 0,
+                    updated_ms INTEGER NOT NULL,
+                    PRIMARY KEY (source, forum_id)
+                );
                 CREATE TABLE IF NOT EXISTS sync_runs (
                     run_id TEXT PRIMARY KEY,
                     source TEXT NOT NULL,
@@ -148,6 +209,7 @@ class ConferenceStore:
                     fetched_count INTEGER NOT NULL DEFAULT 0,
                     scanned_count INTEGER NOT NULL DEFAULT 0,
                     new_count INTEGER NOT NULL DEFAULT 0,
+                    new_replies INTEGER NOT NULL DEFAULT 0,
                     error_count INTEGER NOT NULL DEFAULT 0,
                     message TEXT NOT NULL DEFAULT '',
                     started_ms INTEGER NOT NULL,
@@ -158,34 +220,73 @@ class ConferenceStore:
                     ON papers(source, briefed_date, first_seen_ms);
                 CREATE INDEX IF NOT EXISTS papers_cdate
                     ON papers(source, cdate);
+                CREATE INDEX IF NOT EXISTS reviews_forum
+                    ON reviews(source, forum_id);
+                CREATE INDEX IF NOT EXISTS reviews_type
+                    ON reviews(source, reply_type);
                 CREATE INDEX IF NOT EXISTS sync_runs_source_status
                     ON sync_runs(source, status, updated_ms);
                 """)
-            row = self.conn.execute(
-                "SELECT value FROM meta WHERE key = 'schema_version'"
-            ).fetchone()
-            if row is None:
-                self.conn.execute(
-                    "INSERT INTO meta(key, value) VALUES('schema_version', ?)",
-                    (str(SCHEMA_VERSION),),
-                )
-                return
-            try:
-                found = int(row["value"])
-            except (TypeError, ValueError) as exc:
-                raise ConferenceSchemaError(
-                    f"invalid conference schema version: {row['value']!r}"
-                ) from exc
-            if found > SCHEMA_VERSION:
-                raise ConferenceSchemaError(
-                    f"conference database schema v{found} is newer than this "
-                    f"code (v{SCHEMA_VERSION}); refusing to write"
-                )
-            if found < SCHEMA_VERSION:
-                raise ConferenceSchemaError(
-                    f"conference database schema v{found} needs a migration "
-                    f"to v{SCHEMA_VERSION}; none is implemented"
-                )
+        row = self.conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()
+        if row is None:
+            # A v1 database could crash after creating its tables but before
+            # writing the version row.  Treat "tables exist without the v2
+            # column" as v1 instead of stamping it as a fresh v2 database and
+            # skipping the additive migration.
+            columns = {
+                info["name"]
+                for info in self.conn.execute("PRAGMA table_info(venues)").fetchall()
+            }
+            if columns and "reviews_watch_from_ms" not in columns:
+                self._migrate_v1_to_v2()
+            else:
+                with self._tx():
+                    self.conn.execute(
+                        "INSERT INTO meta(key, value) VALUES('schema_version', ?)",
+                        (str(SCHEMA_VERSION),),
+                    )
+            return
+        try:
+            found = int(row["value"])
+        except (TypeError, ValueError) as exc:
+            raise ConferenceSchemaError(
+                f"invalid conference schema version: {row['value']!r}"
+            ) from exc
+        if found > SCHEMA_VERSION:
+            raise ConferenceSchemaError(
+                f"conference database schema v{found} is newer than this "
+                f"code (v{SCHEMA_VERSION}); refusing to write"
+            )
+        if found == 1:
+            self._migrate_v1_to_v2()
+        elif found < 1:
+            raise ConferenceSchemaError(
+                f"conference database schema v{found} is older than any "
+                f"supported version (v1)"
+            )
+
+    def _migrate_v1_to_v2(self) -> None:
+        """Additive migration: no existing paper row is rewritten."""
+
+        with self._tx():
+            self._add_column("venues", "reviews_watch_from_ms", "INTEGER")
+            self._add_column("venues", "last_review_rescan_ms", "INTEGER")
+            self._add_column("venues", "reviews_sample_completed_ms", "INTEGER")
+            self._add_column("sync_runs", "new_replies", "INTEGER NOT NULL DEFAULT 0")
+            self.conn.execute(
+                "INSERT INTO meta(key, value) VALUES('schema_version', '2') "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            )
+
+    def _add_column(self, table: str, name: str, ddl: str) -> None:
+        columns = {
+            row["name"]
+            for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if name not in columns:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     @contextmanager
     def _tx(self):
@@ -226,7 +327,9 @@ class ConferenceStore:
                 self.conn.execute(
                     "UPDATE venues SET venue_id = ?, submission_invitation = ?, "
                     "watermark_ms = NULL, bootstrap_completed_ms = NULL, "
-                    "last_full_sync_ms = NULL, last_poll_ms = NULL WHERE source = ?",
+                    "last_full_sync_ms = NULL, last_poll_ms = NULL, "
+                    "reviews_watch_from_ms = NULL, last_review_rescan_ms = NULL, "
+                    "reviews_sample_completed_ms = NULL WHERE source = ?",
                     (venue_id, invitation, source),
                 )
             elif invitation and row["submission_invitation"] != invitation:
@@ -252,9 +355,25 @@ class ConferenceStore:
             last_full_sync_ms=row["last_full_sync_ms"],
             watermark_ms=row["watermark_ms"],
             bootstrap_completed_ms=row["bootstrap_completed_ms"],
+            reviews_watch_from_ms=row["reviews_watch_from_ms"],
+            last_review_rescan_ms=row["last_review_rescan_ms"],
+            reviews_sample_completed_ms=row["reviews_sample_completed_ms"],
             last_outcome=row["last_outcome"],
             last_message=row["last_message"],
         )
+
+    def ensure_reviews_watch_from(self, source: str, now_ms: int) -> int:
+        """Set the no-history cutoff once, then return the stored value."""
+
+        with self._tx():
+            self.conn.execute(
+                "UPDATE venues SET reviews_watch_from_ms = ? "
+                "WHERE source = ? AND reviews_watch_from_ms IS NULL",
+                (now_ms, source),
+            )
+        state = self.venue_state(source)
+        assert state is not None and state.reviews_watch_from_ms is not None
+        return state.reviews_watch_from_ms
 
     def record_outcome(self, source: str, outcome: str, message: str = "") -> None:
         """Record a non-run outcome (NOT_DUE / NOT_OPEN) without moving state."""
@@ -357,6 +476,7 @@ class ConferenceStore:
             cursor_after=row["cursor_after"],
             watermark_candidate_ms=row["watermark_candidate_ms"],
             total_expected=row["total_expected"],
+            new_replies=row["new_replies"],
             started_ms=row["started_ms"],
             heartbeat_ms=row["heartbeat_ms"],
         )
@@ -370,13 +490,18 @@ class ConferenceStore:
         candidate_watermark_ms: int | None,
         total_expected: int | None,
         raw_count: int,
+        replies: Iterable[dict] = (),
+        summaries: Iterable[dict] = (),
         now_ms: int | None = None,
-    ) -> int:
-        """Upsert one page and its cursor atomically; return newly inserted count."""
+    ) -> PageCommit:
+        """Upsert one page, its replies and its cursor atomically."""
 
         now_ms = int(now_ms if now_ms is not None else time.time() * 1000)
         papers = list(papers)
+        replies = list(replies)
+        summaries = list(summaries)
         new_count = 0
+        new_replies = 0
         with self._tx():
             run = self.conn.execute(
                 "SELECT * FROM sync_runs WHERE run_id = ?", (run_id,)
@@ -460,6 +585,132 @@ class ConferenceStore:
                     ),
                 )
 
+            for reply in replies:
+                reply_id = str(reply.get("reply_id") or reply.get("id") or "")
+                forum_id = str(reply.get("forum_id") or "")
+                if not reply_id or not forum_id:
+                    continue
+                raw_json = str(reply.get("raw_json") or _json(reply))
+                content_hash = str(reply.get("content_hash") or _content_hash(reply))
+                cursor = self.conn.execute(
+                    "INSERT INTO reviews(source, reply_id, forum_id, invitation, "
+                    "reply_type, rating, confidence, soundness, presentation, "
+                    "informativeness, summary, strengths, weaknesses, questions, "
+                    "decision, raw_json, content_hash, reply_cdate, reply_mdate, "
+                    "first_seen_ms, first_seen_run, last_seen_ms) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                    "?, ?, ?, ?) ON CONFLICT(source, reply_id) DO NOTHING",
+                    (
+                        source,
+                        reply_id,
+                        forum_id,
+                        str(reply.get("invitation") or ""),
+                        str(reply.get("reply_type") or "other"),
+                        str(reply.get("rating") or ""),
+                        str(reply.get("confidence") or ""),
+                        str(reply.get("soundness") or ""),
+                        str(reply.get("presentation") or ""),
+                        str(reply.get("informativeness") or ""),
+                        str(reply.get("summary") or ""),
+                        str(reply.get("strengths") or ""),
+                        str(reply.get("weaknesses") or ""),
+                        str(reply.get("questions") or ""),
+                        str(reply.get("decision") or ""),
+                        raw_json,
+                        content_hash,
+                        int(reply.get("reply_cdate") or 0),
+                        int(reply.get("reply_mdate") or 0),
+                        now_ms,
+                        run_id,
+                        now_ms,
+                    ),
+                )
+                if cursor.rowcount:
+                    new_replies += 1
+                    continue
+                self.conn.execute(
+                    "UPDATE reviews SET forum_id = ?, invitation = ?, "
+                    "reply_type = ?, rating = ?, confidence = ?, soundness = ?, "
+                    "presentation = ?, informativeness = ?, summary = ?, "
+                    "strengths = ?, weaknesses = ?, questions = ?, decision = ?, "
+                    "raw_json = ?, content_hash = ?, reply_cdate = ?, "
+                    "reply_mdate = ?, last_seen_ms = ? "
+                    "WHERE source = ? AND reply_id = ?",
+                    (
+                        forum_id,
+                        str(reply.get("invitation") or ""),
+                        str(reply.get("reply_type") or "other"),
+                        str(reply.get("rating") or ""),
+                        str(reply.get("confidence") or ""),
+                        str(reply.get("soundness") or ""),
+                        str(reply.get("presentation") or ""),
+                        str(reply.get("informativeness") or ""),
+                        str(reply.get("summary") or ""),
+                        str(reply.get("strengths") or ""),
+                        str(reply.get("weaknesses") or ""),
+                        str(reply.get("questions") or ""),
+                        str(reply.get("decision") or ""),
+                        raw_json,
+                        content_hash,
+                        int(reply.get("reply_cdate") or 0),
+                        int(reply.get("reply_mdate") or 0),
+                        now_ms,
+                        source,
+                        reply_id,
+                    ),
+                )
+
+            for summary in summaries:
+                forum_id = str(summary.get("forum_id") or "")
+                if not forum_id:
+                    continue
+                self.conn.execute(
+                    "INSERT INTO paper_review_summary(source, forum_id, "
+                    "review_count, rating_count, rating_mean, rating_median, "
+                    "rating_std, rating_min, rating_max, rating_range, "
+                    "confidence_mean, rating_raw_values_json, "
+                    "confidence_raw_values_json, decision, presentation, "
+                    "strong_signal, controversial, updated_ms) "
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(source, forum_id) DO UPDATE SET "
+                    "review_count = excluded.review_count, "
+                    "rating_count = excluded.rating_count, "
+                    "rating_mean = excluded.rating_mean, "
+                    "rating_median = excluded.rating_median, "
+                    "rating_std = excluded.rating_std, "
+                    "rating_min = excluded.rating_min, "
+                    "rating_max = excluded.rating_max, "
+                    "rating_range = excluded.rating_range, "
+                    "confidence_mean = excluded.confidence_mean, "
+                    "rating_raw_values_json = excluded.rating_raw_values_json, "
+                    "confidence_raw_values_json = excluded.confidence_raw_values_json, "
+                    "decision = excluded.decision, "
+                    "presentation = excluded.presentation, "
+                    "strong_signal = excluded.strong_signal, "
+                    "controversial = excluded.controversial, "
+                    "updated_ms = excluded.updated_ms",
+                    (
+                        source,
+                        forum_id,
+                        int(summary.get("review_count") or 0),
+                        int(summary.get("rating_count") or 0),
+                        summary.get("rating_mean"),
+                        summary.get("rating_median"),
+                        summary.get("rating_std"),
+                        summary.get("rating_min"),
+                        summary.get("rating_max"),
+                        summary.get("rating_range"),
+                        summary.get("confidence_mean"),
+                        _json(summary.get("rating_raw_values") or []),
+                        _json(summary.get("confidence_raw_values") or []),
+                        str(summary.get("decision") or ""),
+                        str(summary.get("presentation") or ""),
+                        1 if summary.get("strong_signal") else 0,
+                        1 if summary.get("controversial") else 0,
+                        now_ms,
+                    ),
+                )
+
             scanned = sum(
                 1
                 for paper in papers
@@ -471,7 +722,8 @@ class ConferenceStore:
                 "watermark_candidate_ms ELSE MAX(COALESCE(watermark_candidate_ms, 0), ?) "
                 "END, total_expected = COALESCE(?, total_expected), "
                 "fetched_count = fetched_count + ?, scanned_count = scanned_count + ?, "
-                "new_count = new_count + ?, heartbeat_ms = ?, updated_ms = ? "
+                "new_count = new_count + ?, new_replies = new_replies + ?, "
+                "heartbeat_ms = ?, updated_ms = ? "
                 "WHERE run_id = ?",
                 (
                     cursor_after,
@@ -481,12 +733,13 @@ class ConferenceStore:
                     int(raw_count),
                     scanned,
                     new_count,
+                    new_replies,
                     now_ms,
                     now_ms,
                     run_id,
                 ),
             )
-        return new_count
+        return PageCommit(new_count, new_replies)
 
     def finish_run(self, run_id: str, now_ms: int | None = None) -> None:
         """Mark a run complete and only now advance the source watermark."""
@@ -507,7 +760,10 @@ class ConferenceStore:
             previous = venue["watermark_ms"]
             candidate = run["watermark_candidate_ms"]
             watermark = previous
-            if candidate is not None:
+            # A review sample reads the latest N submissions, not the oldest
+            # unread ones; advancing the streaming watermark from it would
+            # skip whatever lies between the sample and the real cursor.
+            if run["mode"] != "review_sample" and candidate is not None:
                 watermark = max(int(previous or 0), int(candidate))
             last_full = venue["last_full_sync_ms"]
             if run["mode"] in {"bootstrap", "full"}:
@@ -515,6 +771,15 @@ class ConferenceStore:
             bootstrap = venue["bootstrap_completed_ms"]
             if run["mode"] == "bootstrap":
                 bootstrap = now_ms
+            sample = venue["reviews_sample_completed_ms"]
+            if run["mode"] == "review_sample":
+                sample = now_ms
+            rescan = venue["last_review_rescan_ms"]
+            # A sample is also a review pass over the current venue; marking
+            # it here prevents an immediate empty review_rescan on the next
+            # invocation.
+            if run["mode"] in {"review_rescan", "review_sample"}:
+                rescan = now_ms
             self.conn.execute(
                 "UPDATE sync_runs SET status = 'COMPLETE', phase = 'done', "
                 "heartbeat_ms = ?, updated_ms = ? WHERE run_id = ?",
@@ -523,8 +788,35 @@ class ConferenceStore:
             self.conn.execute(
                 "UPDATE venues SET watermark_ms = ?, last_poll_ms = ?, "
                 "last_full_sync_ms = ?, bootstrap_completed_ms = ?, "
+                "reviews_watch_from_ms = ?, last_review_rescan_ms = ?, "
+                "reviews_sample_completed_ms = ?, "
                 "last_outcome = 'SUCCESS', last_message = '' WHERE source = ?",
-                (watermark, now_ms, last_full, bootstrap, source),
+                (
+                    watermark,
+                    now_ms,
+                    last_full,
+                    bootstrap,
+                    venue["reviews_watch_from_ms"],
+                    rescan,
+                    sample,
+                    source,
+                ),
+            )
+
+    def pause_run(
+        self,
+        run_id: str,
+        message: str = "",
+        now_ms: int | None = None,
+    ) -> None:
+        """Leave a run resumable after hitting the per-run page cap."""
+
+        now_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+        with self._tx():
+            self.conn.execute(
+                "UPDATE sync_runs SET phase = 'paused', message = ?, "
+                "heartbeat_ms = ?, updated_ms = ? WHERE run_id = ?",
+                (message, now_ms, now_ms, run_id),
             )
 
     def fail_run(

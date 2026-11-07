@@ -433,3 +433,146 @@ def test_pagination_cursor_must_advance():
 
     with pytest.raises(OpenReviewProviderError, match="cursor did not advance"):
         list(provider.iter_submission_pages(_capabilities(), page_size=1))
+
+
+def test_iter_submission_pages_include_replies_filters_private():
+    from openreview_provider import OpenReviewProvider
+
+    public_reply = {
+        "id": "r-public",
+        "forum": "note-1",
+        "readers": ["everyone"],
+        "content": {"rating": {"value": "4"}},
+        "invitations": ["Venue/2027/Conference/Submission1/-/Official_Review"],
+        "cdate": 1,
+        "mdate": 2,
+    }
+    private_reply = dict(public_reply, id="r-private", readers=["Venue/Authors"])
+    missing_readers = dict(public_reply, id="r-missing")
+    missing_readers.pop("readers")
+    note = SimpleNamespace(
+        id="note-1",
+        forum="note-1",
+        cdate=1,
+        tmdate=2,
+        readers=["everyone"],
+        content={"title": {"value": "Paper"}},
+        invitations=["Venue/2027/Conference/-/Submission"],
+        details={"replies": [public_reply, private_reply, missing_readers]},
+    )
+    calls = []
+
+    def get_notes(**kwargs):
+        calls.append(kwargs)
+        if kwargs.get("with_count"):
+            return [note], 1
+        return []
+
+    provider = OpenReviewProvider(
+        {"venue_id": "Venue/2027/Conference"},
+        client=SimpleNamespace(get_notes=get_notes),
+    )
+    pages = list(
+        provider.iter_submission_pages(
+            _capabilities(), include_replies=True, page_size=10
+        )
+    )
+
+    assert calls[0]["details"] == "replies"
+    assert [reply["reply_id"] for reply in pages[0].replies] == ["r-public"]
+    assert pages[0].replies[0]["readers"] == ["everyone"]
+
+
+def test_reply_sort_and_max_pages_are_forwarded():
+    from openreview_provider import OpenReviewProvider
+
+    note = SimpleNamespace(
+        id="note-1",
+        forum="note-1",
+        cdate=1,
+        tmdate=2,
+        readers=["everyone"],
+        content={"title": {"value": "Paper"}},
+        invitations=["Venue/2027/Conference/-/Submission"],
+        details={"replies": []},
+    )
+    calls = []
+
+    def get_notes(**kwargs):
+        calls.append(kwargs)
+        return [note], 1
+
+    provider = OpenReviewProvider(
+        {"venue_id": "Venue/2027/Conference"},
+        client=SimpleNamespace(get_notes=get_notes),
+    )
+    pages = list(
+        provider.iter_submission_pages(
+            _capabilities(),
+            include_replies=True,
+            page_size=1,
+            sort="cdate",
+            max_pages=1,
+        )
+    )
+
+    assert len(pages) == 1
+    assert calls[0]["sort"] == "cdate"
+    assert calls[0]["details"] == "replies"
+
+
+def test_reply_without_readers_is_not_public():
+    from openreview_provider import reply_is_public
+
+    assert reply_is_public({"readers": ["everyone"]}) is True
+    assert reply_is_public({"readers": ["Venue/Authors"]}) is False
+    assert reply_is_public({}) is False
+
+
+def test_baseurl_must_be_https_openreview_host():
+    from openreview_provider import OpenReviewConfigError, OpenReviewProvider
+
+    for bad in (
+        "http://api2.openreview.net",
+        "https://evil.example",
+        "https://api2.openreview.net.evil.example",
+        "https://user:pass@api2.openreview.net",
+        "https://api2.openreview.net/redirect",
+    ):
+        with pytest.raises(OpenReviewConfigError, match="baseurl"):
+            OpenReviewProvider(
+                {"venue_id": "Venue/2027/Conference", "baseurl": bad},
+                client=SimpleNamespace(),
+            )
+
+    provider = OpenReviewProvider(
+        {"venue_id": "Venue/2027/Conference", "baseurl": "https://api2.openreview.net"},
+        client=SimpleNamespace(),
+    )
+    assert provider.baseurl == "https://api2.openreview.net"
+
+
+def test_injected_client_fails_closed_for_private_notes():
+    from openreview_provider import OpenReviewProvider
+
+    public = {
+        "id": "public",
+        "forum": "public",
+        "readers": ["everyone"],
+        "content": {"title": {"value": "Public"}},
+    }
+    private = {
+        "id": "private",
+        "forum": "private",
+        "readers": ["Venue/Authors"],
+        "content": {"title": {"value": "Private"}},
+    }
+    client = SimpleNamespace(get_all_notes=lambda **_kwargs: [public, private])
+    provider = OpenReviewProvider(
+        {"venue_id": "Venue/2027/Conference", "public_only": True},
+        client=client,
+    )
+
+    assert [
+        paper["title"] for paper in provider.fetch_submissions(_capabilities())
+    ] == ["Public"]
