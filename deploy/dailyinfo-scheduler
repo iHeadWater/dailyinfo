@@ -1,0 +1,28 @@
+#!/bin/sh
+# Entrypoint for the DailyInfo scheduler container.
+#
+# 1. verify-env fails fast on a missing tzdata, a wrong local timezone, a
+#    crontab that disagrees with the job table, or a full-mode container
+#    without Discord credentials.
+# 2. catch-up replays anything scheduled for today that never succeeded, so a
+#    container that starts at noon still produces that day's briefing.
+# 3. supercronic then owns the clock until the container stops.
+set -eu
+
+mode="${DAILYINFO_SCHEDULER_JOBS:-full}"
+case "$mode" in
+    full | collect) ;;
+    *)
+        echo "invalid DAILYINFO_SCHEDULER_JOBS: $mode (expected full or collect)" >&2
+        exit 2
+        ;;
+esac
+
+crontab="/etc/dailyinfo/crontab.$mode"
+export DAILYINFO_SCHEDULER_JOBS="$mode"
+export DAILYINFO_SCHEDULER_CRONTAB="$crontab"
+
+python -m scripts.scheduler verify-env
+python -m scripts.scheduler catch-up
+
+exec supercronic -passthrough-logs "$crontab"

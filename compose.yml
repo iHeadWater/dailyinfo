@@ -1,0 +1,10 @@
+# Single entry point for a self-contained DailyInfo host.
+#
+#   docker compose up -d
+#
+# Requires Docker Compose >= 2.20 for `include`. The included files remain
+# usable on their own for collect-only deployments.
+name: dailyinfo
+include:
+  - compose.production.yml
+  - compose.mcp.yml
