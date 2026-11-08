@@ -46,10 +46,14 @@ jobs:
       - name: Validate the self-hosted compose stack
         run: |
           mkdir -p /tmp/dailyinfo-ci /tmp/mcp-secrets
-          DAILYINFO_DATA_ROOT=/tmp/dailyinfo-ci \
-          DAILYINFO_IMAGE=dailyinfo-producer:ci \
-          DAILYINFO_MCP_SECRETS_DIR=/tmp/mcp-secrets \
-          docker compose -f compose.yml config -q
+          # The decoy step above deliberately leaves a .env with invalid
+          # values. Pass an explicit env file so compose never reads it.
+          cat > /tmp/dailyinfo-compose.env <<'EOF'
+          DAILYINFO_DATA_ROOT=/tmp/dailyinfo-ci
+          DAILYINFO_IMAGE=dailyinfo-producer:ci
+          DAILYINFO_MCP_SECRETS_DIR=/tmp/mcp-secrets
+          EOF
+          docker compose --env-file /tmp/dailyinfo-compose.env -f compose.yml config -q
 
   image:
     runs-on: ubuntu-latest
