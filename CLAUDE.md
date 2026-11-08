@@ -8,7 +8,7 @@ DailyInfo is an automated research intelligence aggregation and push system for 
 
 **Core pipeline**: FreshRSS/API/OpenReview collection -> AI summary generation -> canonical PublicationBundle + legacy Markdown -> Discord push / Web publish + archive
 
-**Design principles**: Configuration-driven (`config/sources.json`) + idempotent CLI + self-hosted container scheduling (`compose.yml`, supercronic + `deploy/crontab.*`). External cron / agent runtimes remain supported for custom setups. Optional integration with myopenclaw is documented in `docs/agent-config.md`; dailyinfo itself has no runtime dependency on it.
+**Design principles**: Configuration-driven (`config/sources.json`) + idempotent CLI + self-hosted container scheduling (`compose.yml`, supercronic + `deploy/crontab.*`). The container scheduler owns the daily `run`/`push` jobs; Web publishing runs as a host-side dailyinfo launchd task (`deploy/launchd/`, 07:40) because it needs Node 22/npm and git push credentials. External cron / agent runtimes remain supported for custom setups. Optional integration with myopenclaw is documented in `docs/agent-config.md`; dailyinfo itself has no runtime dependency on it.
 
 ## Tech Stack
 
@@ -40,9 +40,14 @@ dailyinfo run -f all             # Force regenerate all sources
 dailyinfo run -f arxiv_cs_ai    # Force regenerate one source
 
 # Self-hosted scheduler (inside the compose stack)
-docker compose up -d             # fresh host: production + MCP
+docker compose up -d             # fresh host: freshrss + scheduler + MCP
+docker compose up -d freshrss scheduler  # collection + Discord only
 docker compose exec scheduler python -m scripts.scheduler status
 docker compose exec scheduler python -m scripts.scheduler healthcheck
+
+# Host-side Web publishing (macOS; Node 22/npm/git live on the host)
+./deploy/launchd/install-web-publish.sh
+./deploy/launchd/uninstall-web-publish.sh
 
 # Push to Discord
 dailyinfo push                   # Today's briefings (includes conference digest)
@@ -146,7 +151,9 @@ Scrape sources with custom parsing need matching `if self.name == "..."` dispatc
 ## Environment Variables
 
 Required: `DEEPSEEK_API_KEY`, `DISCORD_BOT_TOKEN`; `OPENREVIEW_EMAIL` + `OPENREVIEW_PASSWORD` for pipeline 6 (the API rejects anonymous note queries with a browser challenge). OpenReview authenticates by **email**, not display name; the legacy `OPENREVIEW_USERNAME` key is still read as a fallback.
-Optional: `GLM_API_KEY` (Zhipu fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `DISCORD_CHANNEL_CONFERENCE` (falls back to `DISCORD_CHANNEL_AI_NEWS`), `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`, `DAILYINFO_ENV_FILE` (**test-only** — redirects every `.env` lookup; set only by `tests/conftest.py`)
+Optional: `GLM_API_KEY` (Zhipu fallback model), `DISCORD_CHANNEL_PAPERS/AI_NEWS/CODE/RESOURCE`, `DISCORD_CHANNEL_CONFERENCE` (falls back to `DISCORD_CHANNEL_AI_NEWS`), `FRESHRSS_USER/PASSWORD`, `DAILYINFO_DATA_ROOT` (default: `~/.myagentdata/dailyinfo`), `DAILYINFO_FALLBACK_MODEL`, `DAILYINFO_ENV_FILE` (**test-only** — redirects every `.env` lookup; set only by `tests/conftest.py`).
+
+Compose reads the project `.env` directly for interpolation; there are no separate `producer.env` / `push.env` files. Compose-only FreshRSS settings: `FRESHRSS_IMAGE` (default `freshrss/freshrss:1.30.4`), `FRESHRSS_BIND_ADDRESS` (default `127.0.0.1`), `FRESHRSS_PORT` (default `8081`), `FRESHRSS_CRON_MIN` (default `*/15`), and the first-install `FRESHRSS_LANGUAGE` / `FRESHRSS_BASE_URL`. Do **not** set `FRESHRSS_USER` on the `freshrss` service: the image entrypoint passes it to `create-user.php` as CLI options; only scheduler/collector consume it as a username.
 
 Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPERS_PATH`)已随 zotero_sync 迁移至 mylibrary,本仓库不再需要。
 

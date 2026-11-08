@@ -1,5 +1,11 @@
 # 迁移到自带调度（2026-11-07）
 
+> **2026-11-08 更新**：当前 compose 直接读取项目 `.env`，
+> `DAILYINFO_PRODUCER_ENV` / `DAILYINFO_PUSH_ENV` 及 `producer.env` /
+> `push.env` 已移除；Web 发布由宿主 launchd 任务
+> `deploy/launchd/install-web-publish.sh`（每天 07:40）负责。以下正文是
+> 2026-11-07 的迁移记录，涉及旧环境文件的步骤仅作历史参考。
+
 本文是 issue #96 的切换手册：把 dailyinfo 的每日调度从宿主
 launchd / systemd 收回到 dailyinfo 自己的容器栈，并停用旧入口。仓库侧的
 compose、镜像和调度代码见 [生产部署](production.md)。

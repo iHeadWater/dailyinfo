@@ -200,8 +200,8 @@ DEEPSEEK_API_KEY=sk-your_deepseek_key_here
 DISCORD_BOT_TOKEN=your_discord_token
 OPENREVIEW_EMAIL=you@example.com
 OPENREVIEW_PASSWORD=your_openreview_password
-FRESHRSS_USER=owen
-FRESHRSS_PASSWORD=freshrss123
+FRESHRSS_USER=your_freshrss_user
+FRESHRSS_PASSWORD=your_freshrss_password
 # DAILYINFO_DATA_ROOT=   # optional override, defaults to ~/.myagentdata/dailyinfo
 ```
 
@@ -219,8 +219,14 @@ FRESHRSS_PASSWORD=freshrss123
 | `DAILYINFO_WEB_REMOTE` | Expected Web `origin` URL (default `git@github.com:iHeadWater/dailyinfo-web.git`) |
 | `DAILYINFO_WEB_BRANCH` | Expected Web branch (default `main`) |
 | `DAILYINFO_WEB_WINDOW_DAYS` | Rolling Web retention window in days (default `7`; `0` disables the sweep) |
-| `FRESHRSS_USER` | FreshRSS username (default: `$USER`) |
+| `FRESHRSS_USER` | FreshRSS username (default: `$USER`); also used by the compose stack |
 | `FRESHRSS_PASSWORD` | FreshRSS password |
+| `FRESHRSS_BIND_ADDRESS` | Production FreshRSS Web UI bind address (default `127.0.0.1`) |
+| `FRESHRSS_PORT` | Production FreshRSS Web UI port (default `8081`) |
+| `FRESHRSS_IMAGE` | FreshRSS image (default `freshrss/freshrss:1.30.4`) |
+| `FRESHRSS_CRON_MIN` | In-container RSS refresh interval (default `*/15`) |
+| `FRESHRSS_LANGUAGE` | FreshRSS install language for a new data directory (default `zh-cn`) |
+| `FRESHRSS_BASE_URL` | FreshRSS `base_url` for a new install (default `http://localhost`); keep it in sync with the published port |
 | `DAILYINFO_FALLBACK_MODEL` | Fallback LLM when the primary model returns empty (default `glm-5.3-flash`, a Zhipu model name) |
 
 ## Scheduling
@@ -240,6 +246,14 @@ FRESHRSS_PASSWORD=freshrss123
 | `push --categories papers` | 06:00 | papers push |
 | `push --categories arxiv` | 07:00 | arXiv push |
 
+Web 发布不在容器 crontab 里：它需要宿主上的 Node 22、npm 和 git push 凭据。macOS 用仓库自带的宿主任务，在 07:40 执行 `dailyinfo publish --sink web`：
+
+```bash
+./deploy/launchd/install-web-publish.sh
+```
+
+Linux 主机用等价的 systemd timer / cron 跑同一条命令即可。容器只负责采集、生成和 Discord 推送。
+
 > Pipeline 6（会议）暂未加入 `deploy/crontab.*`。在 follow-up #101 完成前，需要手动运行 `dailyinfo run -p 6` 和 `dailyinfo push -c conference`，或自己加到外部 cron。
 
 外置调度示例（包含 pipeline 6）：
@@ -255,9 +269,10 @@ FRESHRSS_PASSWORD=freshrss123
 0 6 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories papers >> logs/discord_push.log 2>&1
 0 7 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories arxiv >> logs/discord_push.log 2>&1
 30 7 * * * cd /path/to/dailyinfo && python3 scripts/push_to_discord.py --categories conference >> logs/discord_push.log 2>&1
+40 7 * * * cd /path/to/dailyinfo && python3 scripts/publish_to_web.py >> logs/web_publish.log 2>&1
 ```
 
-如果也在用 myopenclaw 的 agent 生态管理外部调度，可以参见 [Agent Config](agent-config.md)。
+如果仍选择外置调度（不用自带 scheduler 容器），可以参见 [Agent Config](agent-config.md)。
 
 ## Docker Services
 
@@ -266,8 +281,10 @@ FRESHRSS_PASSWORD=freshrss123
 ```bash
 # 开发：仅 FreshRSS
 docker compose -f docker-compose.yml up -d freshrss
-# 生产：freshrss + scheduler + collector profile + 只读 MCP
+# 生产：freshrss + scheduler + 只读 MCP（collector 需 --profile jobs 手动运行）
 docker compose up -d
+# 只启动采集与 Discord 推送，不启动 MCP：
+docker compose up -d freshrss scheduler
 docker compose exec scheduler python -m scripts.scheduler status
 ```
 

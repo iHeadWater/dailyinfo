@@ -58,6 +58,25 @@ def test_build_feed_url_map_and_resolve_feed_id():
     assert resolve_feed_id("", full_map, base_map) is None
 
 
+def test_build_feed_url_map_prefers_the_richest_duplicate():
+    from datasource import build_feed_url_map, resolve_feed_id
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE feed (id INTEGER PRIMARY KEY, url TEXT)")
+    conn.execute("CREATE TABLE entry (id INTEGER PRIMARY KEY, id_feed INTEGER)")
+    conn.execute("INSERT INTO feed VALUES (1, 'https://example.com/feed')")
+    conn.execute("INSERT INTO feed VALUES (2, 'https://example.com/feed')")
+    conn.execute("INSERT INTO entry VALUES (1, 1)")
+    conn.execute("INSERT INTO entry VALUES (2, 1)")
+    conn.execute("INSERT INTO entry VALUES (3, 2)")
+    conn.commit()
+
+    full_map, base_map = build_feed_url_map(conn)
+
+    assert full_map["https://example.com/feed"] == 1
+    assert resolve_feed_id("https://example.com/feed", full_map, base_map) == 1
+
+
 def test_date_parser_standard():
     from datasource import _parse_date_standard
 

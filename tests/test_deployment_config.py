@@ -52,6 +52,44 @@ def test_scheduler_uses_the_same_image_as_the_collector(production: dict) -> Non
     )
 
 
+def test_freshrss_reuses_the_configured_account(production: dict) -> None:
+    freshrss = production["services"]["freshrss"]
+    scheduler_env = production["services"]["scheduler"]["environment"]
+    collector_env = production["services"]["collector"]["environment"]
+    expected = "${FRESHRSS_USER:-collector}"
+
+    # An already-installed data directory ignores FRESHRSS_INSTALL, so the
+    # account must also be exported to every service that reads the SQLite DB.
+    assert expected in freshrss["environment"]["FRESHRSS_INSTALL"]
+    for env in (scheduler_env, collector_env):
+        assert env["FRESHRSS_USER"] == expected
+        assert env["USER"] == expected
+
+
+def test_freshrss_web_ui_is_loopback_by_default(production: dict) -> None:
+    ports = production["services"]["freshrss"]["ports"]
+
+    assert ports == ["${FRESHRSS_BIND_ADDRESS:-127.0.0.1}:${FRESHRSS_PORT:-8081}:80"]
+
+
+def test_freshrss_service_does_not_treat_the_username_as_cli_options(
+    production: dict,
+) -> None:
+    # The image entrypoint passes FRESHRSS_USER straight to create-user.php;
+    # a plain username there aborts the container before Apache starts.
+    assert "FRESHRSS_USER" not in production["services"]["freshrss"]["environment"]
+
+
+def test_freshrss_refresh_and_install_settings_are_env_controlled(
+    production: dict,
+) -> None:
+    env = production["services"]["freshrss"]["environment"]
+
+    assert env["CRON_MIN"] == "${FRESHRSS_CRON_MIN:-*/15}"
+    assert "${FRESHRSS_LANGUAGE:-zh-cn}" in env["FRESHRSS_INSTALL"]
+    assert "${FRESHRSS_BASE_URL:-http://localhost}" in env["FRESHRSS_INSTALL"]
+
+
 def test_scheduler_inherits_the_collector_permission_environment(
     production: dict,
 ) -> None:
@@ -100,17 +138,28 @@ def test_collector_takes_the_scheduler_lock(production: dict) -> None:
     assert command.index("exec") < command.index("scripts.cli")
 
 
-def test_scheduler_has_a_separate_optional_push_env(production: dict) -> None:
-    scheduler_files = production["services"]["scheduler"]["env_file"]
-    collector_files = production["services"]["collector"]["env_file"]
+def test_credentials_come_from_the_project_env(production: dict) -> None:
+    scheduler = production["services"]["scheduler"]
+    collector = production["services"]["collector"]
+    scheduler_env = scheduler["environment"]
+    collector_env = collector["environment"]
 
-    assert len(scheduler_files) == 2
-    assert any(
-        isinstance(entry, dict) and "DAILYINFO_PUSH_ENV" in entry["path"]
-        for entry in scheduler_files
-    )
-    assert len(collector_files) == 1
-    assert "DAILYINFO_PUSH_ENV" not in str(collector_files)
+    # One source of truth: Compose interpolates the project .env directly.
+    assert "env_file" not in scheduler
+    assert "env_file" not in collector
+    for key in (
+        "DEEPSEEK_API_KEY",
+        "GLM_API_KEY",
+        "DAILYINFO_FALLBACK_MODEL",
+        "OPENREVIEW_EMAIL",
+        "OPENREVIEW_PASSWORD",
+        "OPENREVIEW_USERNAME",
+    ):
+        assert key in scheduler_env
+        assert key in collector_env
+    assert "DISCORD_BOT_TOKEN" in scheduler_env
+    assert "DISCORD_BOT_TOKEN" not in collector_env
+    assert not any(key.startswith("DISCORD_") for key in collector_env)
 
 
 def test_scheduler_never_mounts_the_mcp_key_directory(production: dict) -> None:

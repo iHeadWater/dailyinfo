@@ -4,6 +4,9 @@
 # The recovery sweep is a no-op when every job due today has succeeded. It
 # exists because cron has no Persistent=true: a suspended container or a
 # missed minute is repaired by the next sweep.
+#
+# These jobs push Discord only. Web publishing is a separate
+# `dailyinfo publish --sink web` step; it is not scheduled in this container.
 */15 * * * * python -m scripts.scheduler catch-up
 0 3 * * * python -m scripts.scheduler run-job arxiv
 30 3 * * * python -m scripts.scheduler run-job resource

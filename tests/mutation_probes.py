@@ -117,6 +117,19 @@ PROBES: tuple[Probe, ...] = (
         ),
     ),
     Probe(
+        # Duplicate feed rows arrive from historical re-subscriptions; without
+        # the entry-count ordering the pipeline reads the last duplicate,
+        # whose history can be shorter than the richest one.
+        label="duplicate feed URLs resolve to the richest history",
+        path="scripts/datasource.py",
+        old='            "GROUP BY f.id ORDER BY entry_count DESC, f.id ASC"',
+        new='            "GROUP BY f.id ORDER BY f.id DESC"',
+        test=(
+            "tests/test_datasource_utils.py"
+            "::test_build_feed_url_map_prefers_the_richest_duplicate"
+        ),
+    ),
+    Probe(
         # A use_content template may only use placeholders the deep-content
         # path substitutes; anything else reaches the model verbatim.
         label="a use_content template stays deep-compatible",

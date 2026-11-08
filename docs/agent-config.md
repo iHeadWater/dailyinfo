@@ -66,6 +66,10 @@ docker compose ps                                       # backup-cron 是否在�
 | `0 6 * * *`  | `dailyinfo push -c papers` | 论文推送 |
 | `0 7 * * *`  | `dailyinfo push -c arxiv` | arXiv 推送 |
 | `30 7 * * *` | `dailyinfo push -c conference` | 会议速览推送 |
+| `40 7 * * *` | `dailyinfo publish --sink web` | Web 发布（需要宿主 Node 22/npm/git） |
+
+> macOS 默认不手写这条 cron：用仓库自带的宿主任务
+> `./deploy/launchd/install-web-publish.sh`，它每天 07:40 执行同一条命令。
 
 > 调度器只是"定时触发器"——它**不需要**理解 markdown 内容，**不需要**直接发 Discord。所有读取文件 + POST Discord 的逻辑都在 `scripts/push_to_discord.py`（纯 Python，无 AI 调用）。
 

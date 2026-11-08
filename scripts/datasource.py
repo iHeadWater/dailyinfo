@@ -103,18 +103,33 @@ def _normalise_url(url: str) -> str:
 
 
 def build_feed_url_map(db) -> tuple[dict, dict]:
-    """Build url→feed_id maps from FreshRSS DB for fast lookup."""
+    """Build url→feed_id maps from FreshRSS DB for fast lookup.
+
+    A URL can have more than one ``feed`` row: historical re-subscriptions left
+    duplicates whose entry histories differ. Prefer the row with the most
+    entries, otherwise the last-inserted duplicate would silently hide older
+    items from the pipeline.
+    """
+    has_entry = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entry'"
+    ).fetchone()
+    if has_entry:
+        rows = db.execute(
+            "SELECT f.id, f.url, COUNT(e.id) AS entry_count "
+            "FROM feed f LEFT JOIN entry e ON e.id_feed = f.id "
+            "GROUP BY f.id ORDER BY entry_count DESC, f.id ASC"
+        ).fetchall()
+    else:
+        rows = [(fid, url, 0) for fid, url in db.execute("SELECT id, url FROM feed")]
+
     full_map, base_map = {}, {}
-    for fid, url in db.execute("SELECT id, url FROM feed").fetchall():
+    for fid, url, _entry_count in rows:
         clean = html_lib.unescape(url)
-        full_map[clean] = fid
+        full_map.setdefault(clean, fid)
         base = clean.split("?")[0]
-        if base not in base_map:
-            base_map[base] = fid
+        base_map.setdefault(base, fid)
         # normalised key for tolerant matching (no scheme, no trailing slash)
-        nkey = _normalise_url(base)
-        if nkey not in base_map:
-            base_map[nkey] = fid
+        base_map.setdefault(_normalise_url(base), fid)
     return full_map, base_map
 
 

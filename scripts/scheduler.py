@@ -797,7 +797,7 @@ def verify_env(
     model_key = os.environ.get("DEEPSEEK_API_KEY", "")
     if not model_key or "your_" in model_key:
         raise SchedulerConfigError(
-            "DEEPSEEK_API_KEY is missing (set DAILYINFO_PRODUCER_ENV)"
+            "DEEPSEEK_API_KEY is missing (set it in the project .env)"
         )
 
     if local_offset is None:
@@ -839,7 +839,7 @@ def verify_env(
         token = os.environ.get("DISCORD_BOT_TOKEN", "")
         if not token or "your_" in token:
             raise SchedulerConfigError(
-                "full mode requires DISCORD_BOT_TOKEN (set DAILYINFO_PUSH_ENV), "
+                "full mode requires DISCORD_BOT_TOKEN (set it in the project .env), "
                 "or use DAILYINFO_SCHEDULER_JOBS=collect"
             )
         # A missing channel makes push_to_discord skip that category and still

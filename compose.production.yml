@@ -6,9 +6,18 @@ services:
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
-      CRON_MIN: "*/15"
+      CRON_MIN: "${FRESHRSS_CRON_MIN:-*/15}"
       ENABLE_ACCESS_LOG: "0"
-      FRESHRSS_INSTALL: "--default-user=collector --db-type=sqlite --language=zh-cn --base-url=http://localhost"
+      # No-op on an already-installed data directory; the account name comes
+      # from FRESHRSS_USER in .env (default: collector). Do not also set
+      # FRESHRSS_USER on this service: the image entrypoint feeds it to
+      # create-user.php as CLI options, so a plain username aborts the boot.
+      FRESHRSS_INSTALL: "--default-user=${FRESHRSS_USER:-collector} --db-type=sqlite --language=${FRESHRSS_LANGUAGE:-zh-cn} --base-url=${FRESHRSS_BASE_URL:-http://localhost}"
+    ports:
+      # Loopback by default; override FRESHRSS_BIND_ADDRESS/FRESHRSS_PORT in
+      # .env to expose or move the Web UI. DailyInfo containers reach FreshRSS
+      # over the compose network by name.
+      - "${FRESHRSS_BIND_ADDRESS:-127.0.0.1}:${FRESHRSS_PORT:-8081}:80"
     volumes:
       - type: bind
         source: ${DAILYINFO_DATA_ROOT:?Set the shared content root}/freshrss/data
@@ -23,7 +32,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
-    # FreshRSS is an internal collector; no host port is published.
     mem_limit: 512m
     cpus: 1.0
     logging:
@@ -45,25 +53,35 @@ services:
     cpus: 2.0
     # The image has no ENTRYPOINT; only this service runs the scheduler shell.
     entrypoint: ["/usr/local/bin/dailyinfo-scheduler"]
-    env_file:
-      - ${DAILYINFO_PRODUCER_ENV:?Set the restricted producer env file}
-      # Full mode needs DISCORD_BOT_TOKEN and the channel ids here. Collect-only
-      # deployments leave DAILYINFO_PUSH_ENV unset.
-      - path: ${DAILYINFO_PUSH_ENV:-/dev/null}
-        required: false
     environment:
       TZ: Asia/Shanghai
       DAILYINFO_SCHEDULER_TZ: Asia/Shanghai
       DAILYINFO_ENV: prod
       DAILYINFO_DATA_ROOT: /data
-      FRESHRSS_USER: collector
+      FRESHRSS_USER: "${FRESHRSS_USER:-collector}"
       # Existing pipeline lookup falls back to USER when sources.json is unset.
-      USER: collector
+      USER: "${FRESHRSS_USER:-collector}"
       DAILYINFO_PUBLICATION_GROUP_READ: "1"
       DAILYINFO_SCHEDULER_JOBS: ${DAILYINFO_SCHEDULER_JOBS:-full}
       # Static so the Docker healthcheck and `compose exec` see it too; the
       # entrypoint's export does not reach those processes.
       DAILYINFO_SCHEDULER_CRONTAB: /etc/dailyinfo/crontab.${DAILYINFO_SCHEDULER_JOBS:-full}
+      # Compose reads the project .env for interpolation, so credentials have a
+      # single source and are never duplicated into deploy-only files.
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      GLM_API_KEY: "${GLM_API_KEY:-}"
+      DAILYINFO_FALLBACK_MODEL: "${DAILYINFO_FALLBACK_MODEL:-}"
+      OPENREVIEW_EMAIL: "${OPENREVIEW_EMAIL:-}"
+      OPENREVIEW_PASSWORD: "${OPENREVIEW_PASSWORD:-}"
+      OPENREVIEW_USERNAME: "${OPENREVIEW_USERNAME:-}"
+      # Push credentials stay on the scheduler; the collector below omits them.
+      DISCORD_BOT_TOKEN: "${DISCORD_BOT_TOKEN:-}"
+      DISCORD_CHANNEL_PAPERS: "${DISCORD_CHANNEL_PAPERS:-}"
+      DISCORD_CHANNEL_AI_NEWS: "${DISCORD_CHANNEL_AI_NEWS:-}"
+      DISCORD_CHANNEL_ARXIV: "${DISCORD_CHANNEL_ARXIV:-}"
+      DISCORD_CHANNEL_CODE: "${DISCORD_CHANNEL_CODE:-}"
+      DISCORD_CHANNEL_RESOURCE: "${DISCORD_CHANNEL_RESOURCE:-}"
+      DISCORD_CHANNEL_CONFERENCE: "${DISCORD_CHANNEL_CONFERENCE:-}"
     volumes:
       - type: bind
         source: ${DAILYINFO_DATA_ROOT:?Set the shared content root}
@@ -100,16 +118,21 @@ services:
     pids_limit: 128
     mem_limit: 2g
     cpus: 2.0
-    env_file:
-      - ${DAILYINFO_PRODUCER_ENV:?Set the restricted producer env file}
     environment:
       TZ: Asia/Shanghai
       DAILYINFO_ENV: prod
       DAILYINFO_DATA_ROOT: /data
-      FRESHRSS_USER: collector
+      FRESHRSS_USER: "${FRESHRSS_USER:-collector}"
       # Existing pipeline lookup falls back to USER when sources.json is unset.
-      USER: collector
+      USER: "${FRESHRSS_USER:-collector}"
       DAILYINFO_PUBLICATION_GROUP_READ: "1"
+      # Same .env source as the scheduler, minus the Discord credentials.
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      GLM_API_KEY: "${GLM_API_KEY:-}"
+      DAILYINFO_FALLBACK_MODEL: "${DAILYINFO_FALLBACK_MODEL:-}"
+      OPENREVIEW_EMAIL: "${OPENREVIEW_EMAIL:-}"
+      OPENREVIEW_PASSWORD: "${OPENREVIEW_PASSWORD:-}"
+      OPENREVIEW_USERNAME: "${OPENREVIEW_USERNAME:-}"
     volumes:
       - type: bind
         source: ${DAILYINFO_DATA_ROOT:?Set the shared content root}

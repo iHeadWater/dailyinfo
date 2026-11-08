@@ -20,7 +20,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合、简报与
 │                    Collection Layer                                 │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │  FreshRSS (RSS unified collection)                           │   │
-│  │  • Docker container (port 8081)                              │   │
+│  │  • Docker container (127.0.0.1:8081 default, configurable)   │   │
 │  │  • SQLite at ~/.myagentdata/dailyinfo/freshrss/data          │   │
 │  │                                                              │   │
 │  │  Direct API / HTML scraping (code + university sources)      │   │
@@ -63,10 +63,12 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合、简报与
 │      #paper | #deeplearning | #conference | #code | #resource       │
 └─────────────────────────────────────────────────────────────────────┘
                           ▲
-                          │ triggers (e.g. 06:00 run, 07:00 push)
+                          │ triggers (e.g. 03:00 run, 05:30 push)
 ┌─────────────────────────────────────────────────────────────────────┐
-│              Scheduling Layer (self-hosted container)               │
+│              Scheduling Layer                                       │
 │  • scheduler container runs `deploy/crontab.*` via supercronic      │
+│    (run + Discord push, 03:00–07:00 Asia/Shanghai)                  │
+│  • host launchd task runs Web publish at 07:40 (Node 22 + git)      │
 │  • catch-up replays missed jobs; healthcheck turns red on staleness │
 │  • backup is handled by whatever tool watches the data root         │
 └─────────────────────────────────────────────────────────────────────┘
@@ -92,7 +94,7 @@ DailyInfo 是面向 AI for Science 研究者的自动化情报聚合、简报与
 |-------|----------------|-------------|
 | **Processing** (`run_pipelines.py`) | RSS/API/Scrape/OpenReview → LLM → Markdown/SQLite | ❌ 推送、调度 |
 | **Push** (`push_to_discord.py`) | Canonical Publication → Publisher → Discord + delivery state; conference one-line digest; maintain legacy archive | ❌ 调用 AI、调度 |
-| **Scheduling** (`scheduler` container by default) | 定时触发 `dailyinfo run` / `dailyinfo push`；外部 cron/agent runtime 可选 | ❌ 业务逻辑 |
+| **Scheduling** (`scheduler` container + host Web job by default) | 容器定时触发 `dailyinfo run` / `dailyinfo push`；宿主任务在 07:40 触发 `publish --sink web`；外部 cron/agent runtime 可选 | ❌ 业务逻辑 |
 
 `run` 仍只负责生成 canonical content，不自动 push。`push` 对新
 Publication 依据独立 delivery state 实现正常重跑 no-op；`pushed/` 仍保留

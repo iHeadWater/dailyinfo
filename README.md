@@ -35,7 +35,7 @@ You wake up to a curated digest of everything relevant to your field — no feed
 | **Configuration-driven** | Add RSS, scrape, or API sources in `config/sources.json` — no code changes required |
 | **Idempotent & safe to rerun** | Sources with today's briefing are skipped; pushed files are never re-sent |
 | **Resilient** | Retries with exponential backoff, batch splitting on partial AI responses, per-source isolation |
-| **Self-hosted scheduler** | The compose stack runs daily collection, generation and push on its own; external cron or agent runtimes remain optional |
+| **Self-hosted scheduler** | The compose stack runs daily collection, generation and Discord push on its own; Web publishing runs as a host-side dailyinfo launchd task (Node/git live on the host). External cron or agent runtimes remain optional |
 
 ## Screenshots
 
@@ -108,11 +108,14 @@ dailyinfo start
 dailyinfo run
 dailyinfo push
 
-# Production: self-hosted scheduler + collector + read-only MCP
+# Production: self-hosted scheduler + read-only MCP
 docker compose up -d
+
+# macOS: host-side Web publishing at 07:40 (requires Node 22/npm/git)
+./deploy/launchd/install-web-publish.sh
 ```
 
-`dailyinfo install` validates `.env`, creates local data directories, and installs dependencies. It never writes host crontab entries: production scheduling belongs to the compose stack, and external cron/agent runtimes remain optional. See [Production Deployment](docs/production.md).
+`dailyinfo install` validates `.env`, creates local data directories, and installs dependencies. It never writes host crontab entries: the compose stack owns the daily `run`/`push` jobs, while Web publishing is a separate host task. External cron/agent runtimes remain optional. See [Production Deployment](docs/production.md).
 
 ## Main Commands
 
@@ -158,8 +161,12 @@ docker compose exec scheduler python -m scripts.scheduler healthcheck
 | `DISCORD_BOT_TOKEN` | Discord bot token for `dailyinfo push` |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` / `_CONFERENCE` | Optional category channel IDs; conference falls back to `_AI_NEWS` |
 | `OPENREVIEW_EMAIL` / `OPENREVIEW_PASSWORD` | OpenReview credentials for pipeline 6 (email, not display name) |
-| `FRESHRSS_USER` | FreshRSS username |
+| `FRESHRSS_USER` | FreshRSS username (also used by the compose stack) |
 | `FRESHRSS_PASSWORD` | FreshRSS initial password |
+| `FRESHRSS_BIND_ADDRESS` / `FRESHRSS_PORT` | Production FreshRSS Web UI bind address/port (default `127.0.0.1:8081`) |
+| `FRESHRSS_IMAGE` | FreshRSS image (default `freshrss/freshrss:1.30.4`) |
+| `FRESHRSS_CRON_MIN` | In-container RSS refresh interval (default `*/15`) |
+| `FRESHRSS_LANGUAGE` / `FRESHRSS_BASE_URL` | FreshRSS install language/base URL for a new data directory |
 | `DAILYINFO_DATA_ROOT` | Override default data root |
 | `DAILYINFO_WEB_REPO` | Required local `dailyinfo-web` checkout for Web publishing |
 | `DAILYINFO_WEB_REMOTE` | Expected Web `origin` URL (default official repository) |
@@ -170,13 +177,14 @@ docker compose exec scheduler python -m scripts.scheduler healthcheck
 
 ## Scheduling and Agents
 
-Production scheduling is owned by the dailyinfo compose stack: the `scheduler` container reads `deploy/crontab.*` through supercronic, records job outcomes, catches up missed jobs, and exposes a healthcheck. `dailyinfo install` never writes host crontab entries.
+Production scheduling is owned by dailyinfo: the `scheduler` container reads `deploy/crontab.*` through supercronic, records job outcomes, catches up missed jobs, and exposes a healthcheck. Web publishing is a host-side dailyinfo launchd task at 07:40 because it needs Node 22/npm and git push credentials. `dailyinfo install` never writes host crontab entries.
 
 | Responsibility | Owner |
 |----------------|-------|
 | FreshRSS container and local data layout | DailyInfo |
 | `dailyinfo run` / `push` / `publish` | DailyInfo |
-| Timed execution | dailyinfo `scheduler` container (default); external cron, myopenclaw, or agent runtime optional |
+| Timed `run` / `push` | dailyinfo `scheduler` container (default); external cron, myopenclaw, or agent runtime optional |
+| Timed Web publish | dailyinfo host launchd task (macOS default); systemd timer/cron on Linux |
 
 > Pipeline 6 (conference) is not yet part of `deploy/crontab.*`. Until the scheduler follow-up lands, run it manually with `dailyinfo run -p 6` and `dailyinfo push -c conference`, or add it to an external cron.
 

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.dailyinfo.web-publish</string>
+
+    <!--
+      Web publishing stays on the host: the producer container has no Node 22
+      or git credentials, and the Web checkout's node_modules are macOS-native.
+      The scheduler container still owns the 03:00-07:00 run/push jobs.
+
+      07:40 is after every Discord push (05:30-07:00). The publisher itself
+      fetches and fast-forwards the Web checkout, validates/tests/builds, then
+      commits and pushes; it is idempotent when the day's Web delivery already
+      succeeded.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>cd "__DAILYINFO_DIR__" &amp;&amp; "__UV_BIN__" run dailyinfo publish --sink web</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__DAILYINFO_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__PATH__</string>
+        <key>DAILYINFO_DATA_ROOT</key>
+        <string>__DATA_ROOT__</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>40</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__LOG_PATH__</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_PATH__</string>
+</dict>
+</plist>

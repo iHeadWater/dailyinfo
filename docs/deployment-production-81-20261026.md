@@ -1,6 +1,8 @@
 # 81 服务器 DailyInfo 采集与生成部署记录
 
 > 2026-11-07 更新：调度已迁移到 dailyinfo 自己的容器栈，systemd timer 在本机停用。切换步骤与回滚见[迁移记录](migration-selfhosted-scheduler-20261107.md)。下文保留上线时的原始记录。
+>
+> 2026-11-08 更新：当前 compose 将 FreshRSS Web UI 绑定到 `127.0.0.1:8081`（可用 `FRESHRSS_BIND_ADDRESS` / `FRESHRSS_PORT` 覆盖）；每日 `run`/`push` 由 scheduler 容器执行，Web 发布由宿主 launchd 任务负责。
 
 日期：2026-10-26。此次按“只采集和生成、供 MCP 阅读”部署，不发送 Discord，也不发布网站。
 

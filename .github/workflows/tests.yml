@@ -41,14 +41,13 @@ jobs:
         run: uv run --frozen --extra mcp python tests/mutation_probes.py
 
       # The merged stack is what a fresh machine runs; a schema error here is
-      # invisible to the unit tests.
+      # invisible to the unit tests. CI has no .env, so this also proves the
+      # compose defaults resolve with empty credentials.
       - name: Validate the self-hosted compose stack
         run: |
           mkdir -p /tmp/dailyinfo-ci /tmp/mcp-secrets
-          : > /tmp/producer.env
           DAILYINFO_DATA_ROOT=/tmp/dailyinfo-ci \
           DAILYINFO_IMAGE=dailyinfo-producer:ci \
-          DAILYINFO_PRODUCER_ENV=/tmp/producer.env \
           DAILYINFO_MCP_SECRETS_DIR=/tmp/mcp-secrets \
           docker compose -f compose.yml config -q
 

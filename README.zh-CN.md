@@ -35,7 +35,7 @@ FreshRSS / 网页抓取 / API / OpenReview
 | **配置驱动** | 在 `config/sources.json` 中添加 RSS、网页或 API 数据源,无需改代码 |
 | **幂等,可安全重跑** | 已有今日简报的数据源自动跳过;已推送文件不会重复发送 |
 | **高容错** | 指数退避重试、AI 响应不完整时自动拆分批次、数据源级隔离 |
-| **自带调度** | 容器栈自己完成每日采集、生成与推送;外部 cron / agent runtime 仍可选用 |
+| **自带调度** | 容器栈自己完成每日采集、生成与 Discord 推送;Web 发布由同仓库的宿主 launchd 任务执行(Node/git 在宿主上);外部 cron / agent runtime 仍可选用 |
 
 ## 效果展示
 
@@ -110,9 +110,12 @@ dailyinfo push
 
 # 生产：自带调度的采集器 + 只读 MCP
 docker compose up -d
+
+# macOS：宿主侧 Web 发布任务，每天 07:40（需要 Node 22/npm/git）
+./deploy/launchd/install-web-publish.sh
 ```
 
-`dailyinfo install` 会校验 `.env`、创建本地数据目录并安装依赖,不会写入宿主 crontab;生产调度由 compose 栈负责,外部 cron / agent runtime 仍可选用。详见[生产部署](docs/production.md)。
+`dailyinfo install` 会校验 `.env`、创建本地数据目录并安装依赖,不会写入宿主 crontab;每日 `run`/`push` 由 compose 栈负责,Web 发布是独立的宿主任务,外部 cron / agent runtime 仍可选用。详见[生产部署](docs/production.md)。
 
 ## 常用命令
 
@@ -157,8 +160,12 @@ docker compose exec scheduler python -m scripts.scheduler healthcheck
 | `DISCORD_BOT_TOKEN` | `dailyinfo push` 使用的 Discord bot token |
 | `DISCORD_CHANNEL_PAPERS` / `_AI_NEWS` / `_ARXIV` / `_CODE` / `_RESOURCE` / `_CONFERENCE` | 可选分类频道 ID;会议未配置时回落到 `_AI_NEWS` |
 | `OPENREVIEW_EMAIL` / `OPENREVIEW_PASSWORD` | pipeline 6 的 OpenReview 凭据(邮箱,不是显示名) |
-| `FRESHRSS_USER` | FreshRSS 用户名 |
+| `FRESHRSS_USER` | FreshRSS 用户名(compose 栈也使用) |
 | `FRESHRSS_PASSWORD` | FreshRSS 初始密码 |
+| `FRESHRSS_BIND_ADDRESS` / `FRESHRSS_PORT` | 生产 FreshRSS Web UI 绑定地址/端口(默认 `127.0.0.1:8081`) |
+| `FRESHRSS_IMAGE` | FreshRSS 镜像(默认 `freshrss/freshrss:1.30.4`) |
+| `FRESHRSS_CRON_MIN` | 容器内 RSS 刷新周期(默认 `*/15`) |
+| `FRESHRSS_LANGUAGE` / `FRESHRSS_BASE_URL` | 新数据目录的 FreshRSS 安装语言/base URL |
 | `DAILYINFO_DATA_ROOT` | 覆盖默认数据根目录 |
 | `DAILYINFO_WEB_REPO` | 发布 Web 所需的本地 `dailyinfo-web` checkout |
 | `DAILYINFO_WEB_REMOTE` | 期望的 Web `origin` URL(默认官方仓库) |
@@ -169,13 +176,14 @@ docker compose exec scheduler python -m scripts.scheduler healthcheck
 
 ## 调度和 Agent 分工
 
-生产调度由 dailyinfo 的 compose 栈负责：`scheduler` 容器通过 supercronic 读取 `deploy/crontab.*`,记录 job 结果、补跑漏掉的任务并提供 healthcheck。`dailyinfo install` 不会写宿主 crontab。
+生产调度由 dailyinfo 自己负责：`scheduler` 容器通过 supercronic 读取 `deploy/crontab.*`,记录 job 结果、补跑漏掉的任务并提供 healthcheck。Web 发布是宿主侧的 dailyinfo launchd 任务,每天 07:40 执行,因为它需要宿主上的 Node 22/npm 和 git push 凭据。`dailyinfo install` 不会写宿主 crontab。
 
 | 职责 | 归属 |
 |------|------|
 | FreshRSS 容器和本地数据目录 | DailyInfo |
 | `dailyinfo run` / `push` / `publish` | DailyInfo |
-| 定时执行 | dailyinfo `scheduler` 容器(默认);外部 cron、myopenclaw 或 agent runtime 可选 |
+| 定时 `run` / `push` | dailyinfo `scheduler` 容器(默认);外部 cron、myopenclaw 或 agent runtime 可选 |
+| 定时 Web 发布 | dailyinfo 宿主 launchd 任务(macOS 默认);Linux 用 systemd timer/cron |
 
 > pipeline 6(会议)目前还没有加入 `deploy/crontab.*`。在调度 follow-up 完成前,需要手动运行 `dailyinfo run -p 6` 和 `dailyinfo push -c conference`,或自己加到外部 cron。
 
