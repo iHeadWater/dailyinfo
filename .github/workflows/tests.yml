@@ -47,7 +47,9 @@ jobs:
         run: |
           mkdir -p /tmp/dailyinfo-ci /tmp/mcp-secrets
           # The decoy step above deliberately leaves a .env with invalid
-          # values. Pass an explicit env file so compose never reads it.
+          # values. Compose still interpolates the project .env even when
+          # --env-file is passed, so remove the decoy before validating.
+          rm -f .env
           cat > /tmp/dailyinfo-compose.env <<'EOF'
           DAILYINFO_DATA_ROOT=/tmp/dailyinfo-ci
           DAILYINFO_IMAGE=dailyinfo-producer:ci
