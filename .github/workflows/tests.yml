@@ -1,8 +1,12 @@
 name: Tests
 
 on:
+  # Branch pushes only: a tag push runs this workflow through release.yml, which
+  # calls it as a job, so an unfiltered `push` would run the suite twice.
   push:
+    branches: ["**"]
   pull_request:
+  workflow_call:
 
 jobs:
   test:

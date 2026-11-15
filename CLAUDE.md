@@ -157,6 +157,21 @@ Compose reads the project `.env` directly for interpolation; there are no separa
 
 Zotero 相关环境变量(`ZOTERO_API_KEY`、`ZOTERO_LIBRARY_ID`、`GDRIVE_PAPERS_PATH`)已随 zotero_sync 迁移至 mylibrary,本仓库不再需要。
 
+## Releases
+
+The version lives in exactly two files: `pyproject.toml` and the `dailyinfo` entry of `uv.lock`. `CHANGELOG.md` carries the notes; `.github/workflows/release.yml` carries the mechanics.
+
+To release:
+
+1. Add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` and leave `[Unreleased]` at the top, empty.
+2. Bump `pyproject.toml`, then run `uv lock` so the `dailyinfo` entry follows.
+3. Commit as `chore: release vX.Y.Z`.
+4. `git tag -a vX.Y.Z -m "…"` then `git push origin main --follow-tags`.
+
+The tag push runs the whole `tests.yml` suite as a job of the release workflow (`tests.yml` filters on branches, so a tag does not also run it twice), asserts `vX.Y.Z == pyproject.toml` version, asserts the CHANGELOG section is non-empty, builds the sdist and wheel with `uv build`, and publishes a GitHub Release whose body is that section plus a `compare/previous...tag` link. A version mismatch or a missing section fails the run instead of publishing empty notes. Re-pushing a tag is safe: assets are re-uploaded with `--clobber` and the notes are rewritten.
+
+When bumping locally, refresh the editable install (`uv pip install -e . --reinstall`) if `dailyinfo --version` must match, and delete a stale `dailyinfo.egg-info/` in the repository root: the working directory is on `sys.path`, so that old build artifact shadows the installed metadata and makes `tests/test_cli.py::test_version_flag_prints_project_version` compare against the previous version.
+
 ## Testing Conventions
 
 - **Autouse `tmp_data_root`** in `conftest.py` redirects all filesystem writes to `tmp_path` and sets `DISCORD_BOT_TOKEN`

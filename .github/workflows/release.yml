@@ -1,0 +1,82 @@
+name: Release
+
+# A `v*` tag is the only release button. Everything the release says is decided
+# by files in the repository: the suite runs first, the tag must equal the
+# `pyproject.toml` version, and the body is the `CHANGELOG.md` section for that
+# version. Failure is loud -- an unpublished release beats an empty one.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+# One release at a time per tag; a re-pushed tag rewrites its own release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The same checks a pull request gets, called instead of copied. On a tag push
+  # the Tests workflow does not run by itself (it filters on branches), so this
+  # is the release's only gate and it must be the full one.
+  verify:
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # `git describe` needs the previous tag to build the compare link.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Assert the tag matches pyproject.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${version}"
+            exit 1
+          fi
+
+      - name: Assert CHANGELOG.md has notes for the tag
+        run: python -m scripts.changelog check "$GITHUB_REF_NAME"
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Compose the release notes
+        run: |
+          python -m scripts.changelog notes "$GITHUB_REF_NAME" > /tmp/notes.md
+          previous="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$previous" ]; then
+            printf '\n**Full Changelog**: %s/%s/compare/%s...%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$previous" "$GITHUB_REF_NAME" >> /tmp/notes.md
+          fi
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file /tmp/notes.md
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file /tmp/notes.md \
+              --verify-tag
+          fi
