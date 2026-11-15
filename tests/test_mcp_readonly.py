@@ -236,3 +236,28 @@ def test_concurrent_changes_fail_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(queries.store, "list_briefings", change)
     with pytest.raises(QueryError, match="CONTENT_CHANGED"):
         queries.list_briefings()
+
+
+def test_unstable_inode_does_not_look_like_a_change(tmp_path, monkeypatch):
+    """virtiofs 在容器内对同一文件 stat 会返回不同 st_ino，不能被当内容变化。"""
+    seed(tmp_path)
+    queries = ReadOnlyQueries(tmp_path)
+    real_stat = Path.stat
+
+    class _Stat:
+        def __init__(self, real, ino):
+            self.st_mode = real.st_mode
+            self.st_ino = ino
+            self.st_mtime_ns = real.st_mtime_ns
+            self.st_size = real.st_size
+
+    counter = iter(range(10_000))
+
+    def unstable_stat(self, *args, **kwargs):
+        real = real_stat(self, *args, **kwargs)
+        if self.name == "briefing.json":
+            return _Stat(real, next(counter))
+        return real
+
+    monkeypatch.setattr(Path, "stat", unstable_stat)
+    assert queries.list_briefings()

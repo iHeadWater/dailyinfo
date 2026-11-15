@@ -163,7 +163,9 @@ class ReadOnlyQueries:
                 entries.append(
                     (
                         str(path.relative_to(self.root)),
-                        info.st_ino,
+                        # 不要用 st_ino：Docker Desktop 的 virtiofs 绑定挂载在容器内
+                        # stat 同一文件会返回不同 inode，于是两次签名必然不相等，
+                        # 每次只读查询都退化成 CONTENT_CHANGED（2026-11-15 实测）。
                         info.st_mtime_ns,
                         info.st_size,
                     )
