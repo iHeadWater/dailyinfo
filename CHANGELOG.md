@@ -11,6 +11,8 @@ tag without a filled section here is rejected instead of shipping empty notes.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-15
+
 ### Added
 
 - Pushing a `v*` tag now publishes the GitHub Release: the workflow runs the
