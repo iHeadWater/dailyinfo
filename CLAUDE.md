@@ -170,7 +170,7 @@ To release:
 
 The tag push runs the whole `tests.yml` suite as a job of the release workflow (`tests.yml` filters on branches, so a tag does not also run it twice), asserts `vX.Y.Z == pyproject.toml` version, asserts the CHANGELOG section is non-empty, builds the sdist and wheel with `uv build`, and publishes a GitHub Release whose body is that section plus a `compare/previous...tag` link. A version mismatch or a missing section fails the run instead of publishing empty notes. Re-pushing a tag is safe: assets are re-uploaded with `--clobber` and the notes are rewritten.
 
-When bumping locally, refresh the editable install (`uv pip install -e . --reinstall`) if `dailyinfo --version` must match, and delete a stale `dailyinfo.egg-info/` in the repository root: the working directory is on `sys.path`, so that old build artifact shadows the installed metadata and makes `tests/test_cli.py::test_version_flag_prints_project_version` compare against the previous version.
+When bumping locally, run `uv pip install -e . --reinstall` so `dailyinfo --version` matches, and delete `dailyinfo.egg-info/` in the repository root. The reinstall writes the venv's `dist-info` but does not refresh that directory; because the working directory is on `sys.path`, the leftover `dailyinfo.egg-info/` shadows the installed metadata, and `tests/test_cli.py::test_version_flag_prints_project_version` then compares against the previous version (measured on the 0.3.2 bump: the suite was red until the directory was removed).
 
 ## Testing Conventions
 
